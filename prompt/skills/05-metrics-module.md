@@ -53,9 +53,9 @@
 # 经营总览
 GET    /api/v1/dashboard/overview      # 经营总览数据
 GET    /api/v1/dashboard/kpis          # KPI指标列表
-GET    /api/charts        # 图表数据
+GET    /api/v1/dashboard/charts        # 图表数据
 
-# 指标分析/v1/dashboard
+# 指标分析
 GET    /api/v1/metrics                 # 指标列表
 GET    /api/v1/metrics/{id}            # 指标详情
 GET    /api/v1/metrics/trend           # 趋势数据
@@ -108,36 +108,47 @@ GET    /api/v1/query/export            # 查询结果导出
 ## 文件位置
 
 ```
-src/api/v1/dashboard/
-├── router.py
-├── views.py
-└── schemas.py
+src/
+├── api/v1/dashboard/
+│   └── router.py
 
-src/api/v1/metrics/
-├── router.py
-├── views.py
-└── schemas.py
+├── api/v1/metrics/
+│   └── router.py
 
-src/api/v1/orders/
-├── router.py
-├── views.py
-└── schemas.py
+├── api/v1/orders/
+│   └── router.py
 
-src/api/v1/products/
-├── router.py
-├── views.py
-└── schemas.py
+├── api/v1/products/
+│   └── router.py
 
-src/api/v1/sales/
-├── router.py
-├── views.py
-└── schemas.py
+├── api/v1/sales/
+│   └── router.py
 
-src/domains/
-├── metrics/           # 指标领域
-├── orders/            # 订单领域
-├── products/          # 商品领域
-└── sales/             # 销售领域
+├── schemas/
+│   ├── dashboard.py
+│   ├── metrics.py
+│   ├── orders.py
+│   ├── products.py
+│   └── sales.py
+
+├── services/
+│   ├── dashboard_service.py
+│   ├── metric_service.py
+│   ├── order_service.py
+│   ├── product_service.py
+│   └── sales_service.py
+
+├── repositories/
+│   ├── metric_repository.py
+│   ├── order_repository.py
+│   ├── product_repository.py
+│   └── sales_repository.py
+
+└── models/
+    ├── metric.py
+    ├── order.py
+    ├── product.py
+    └── sales.py
 ```
 
 ## 实现要求

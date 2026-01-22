@@ -1,9 +1,9 @@
-# Skill: 数据库设计
+# Skill：数据库设计
 
 ## 核心数据表
 
 ```
-核心数据表:
+核心数据表：
 ├── auth_users                         # 用户表
 ├── auth_roles                         # 角色表
 ├── auth_permissions                   # 权限表
@@ -78,19 +78,25 @@
 ## ORM模型位置
 
 ```
-src/auth/models.py               # User, Role, Permission
-src/domains/{module}/models.py   # 各领域ORM模型
-
-# 公共模型
-models/base.py                   # 基类模型
-models/mixins.py                 # Mixin模型 (Timestamp, SoftDelete)
+src/models/
+├── __init__.py
+├── user.py                        # User、Role、Permission模型
+├── task.py                        # 任务相关模型
+├── metric.py                      # 指标相关模型
+├── order.py                       # 订单模型
+├── product.py                     # 商品模型
+├── sales.py                       # 销售模型
+├── alert.py                       # 预警模型
+├── report.py                      # 报表模型
+├── export.py                      # 导出模型
+└── base.py                        # 基类模型
 ```
 
 ## 数据库迁移
 
-- 使用 Alembic 进行版本管理
-- 迁移脚本: `migrations/versions/`
-- 命令: `alembic upgrade head`
+- 使用Alembic进行版本管理
+- 迁移脚本：`migrations/versions/`
+- 命令：`alembic upgrade head`
 
 ## 优化建议
 
@@ -110,4 +116,4 @@ models/mixins.py                 # Mixin模型 (Timestamp, SoftDelete)
 
 - Redis缓存热点数据
 - 设置合理过期时间
-- 缓存更新策略: Cache-Aside
+- 缓存更新策略：Cache-Aside

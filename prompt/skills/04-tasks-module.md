@@ -74,10 +74,21 @@ GET    /api/v1/tasks/logs/download     # 下载日志
 ## 文件位置
 
 ```
-src/api/v1/tasks/
-├── router.py
-├── views.py
-└── schemas.py
+src/
+├── api/v1/tasks/
+│   └── router.py                      # 路由 + 视图函数
+│
+├── schemas/
+│   └── tasks.py
+│
+├── services/
+│   └── task_service.py
+│
+├── repositories/
+│   └── task_repository.py
+│
+└── models/
+    └── task.py
 
 tasks/
 ├── __init__.py

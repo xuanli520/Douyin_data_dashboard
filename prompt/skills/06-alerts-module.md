@@ -70,17 +70,27 @@ POST   /api/v1/notifications/channels/{id}/test # 测试渠道
 ## 文件位置
 
 ```
-src/api/v1/alerts/
-├── router.py
-├── views.py
-└── schemas.py
+src/
+├── api/v1/alerts/
+│   └── router.py
 
-src/api/v1/notifications/
-├── router.py
-├── views.py
-└── schemas.py
+├── api/v1/notifications/
+│   └── router.py
 
-src/domains/alerts/            # 预警领域
+├── schemas/
+│   ├── alerts.py
+│   └── notifications.py
+
+├── services/
+│   ├── alert_service.py
+│   └── notification_service.py
+
+├── repositories/
+│   ├── alert_repository.py
+│   └── notification_repository.py
+
+└── models/
+    └── alert.py
 ```
 
 ## 实现要求

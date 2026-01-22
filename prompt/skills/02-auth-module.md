@@ -40,35 +40,30 @@ GET    /api/v1/logs/audit              # 审计日志
 GET    /api/v1/logs/login              # 登录日志
 ```
 
-## 现有文件
+## 文件位置
 
 ```
-src/auth/
-├── backend.py           # JWT认证后端
-├── manager.py           # 用户管理器
-├── models.py            # ORM模型 (User, Role, Permission)
-├── rbac.py              # RBAC权限检查
-└── schemas.py           # Pydantic Schema
+src/
+├── api/v1/auth/
+│   └── router.py                      # 路由 + 视图函数
 
-src/api/v1/auth/
-├── router.py
-└── views.py             # 登录/登出实现
+├── schemas/
+│   ├── auth.py                        # TokenRequest, TokenResponse
+│   ├── users.py                       # UserRequest, UserResponse
+│   └── roles.py                       # RoleRequest, RoleResponse
 
-src/api/v1/users/
-├── router.py
-├── views.py
-└── schemas.py
+├── services/
+│   ├── auth_service.py                # 认证逻辑
+│   ├── user_service.py                # 用户CRUD
+│   └── role_service.py                # 角色管理
 
-src/api/v1/roles/
-├── router.py
-├── views.py
-└── schemas.py
+├── repositories/
+│   ├── user_repository.py
+│   └── role_repository.py
 
-src/audit/
-├── dependencies.py
-├── schemas.py
-├── service.py
-└── __init__.py
+└── models/
+    ├── user.py
+    └── role.py
 ```
 
 ## 实现要求

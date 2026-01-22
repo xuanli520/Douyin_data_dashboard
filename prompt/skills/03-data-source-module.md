@@ -66,28 +66,38 @@ GET    /api/v1/data-quality/stats      # 数据质量统计
 POST   /api/v1/data-quality/check      # 触发质量检查
 ```
 
-## 现有文件
+## 文件位置
 
 ```
-src/api/v1/data_source/
-├── router.py
-├── views.py
-└── schemas.py
+src/
+├── api/v1/data_source/
+│   └── router.py
 
-src/api/v1/data_import/
-├── router.py
-├── views.py
-└── schemas.py
+├── api/v1/data_import/
+│   └── router.py
 
-src/api/v1/scraping/
-├── router.py
-├── views.py
-└── schemas.py
+├── api/v1/scraping/
+│   └── router.py
 
-src/domains/
-├── data_source/       # 数据源领域
-├── data_import/       # 数据导入领域
-└── scraping/          # 数据抓取领域
+├── schemas/
+│   ├── data_source.py
+│   ├── data_import.py
+│   └── scraping.py
+
+├── services/
+│   ├── data_source_service.py
+│   ├── data_import_service.py
+│   └── scraping_service.py
+
+├── repositories/
+│   ├── data_source_repository.py
+│   ├── data_import_repository.py
+│   └── scraping_repository.py
+
+└── models/
+    ├── data_source.py
+    ├── data_import.py
+    └── scraping.py
 ```
 
 ## 实现要求

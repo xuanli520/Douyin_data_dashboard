@@ -4,7 +4,7 @@
 
 | 功能 | 描述 | 角色 |
 |------|------|------|
-| 报表中心 | 日报/周报/月报生成与模板管理 | Admin/User |
+| 报表中心 | 日报、周报、月报生成与模板管理 | Admin/User |
 | 导出管理 | 导出任务、历史记录、权限控制 | Admin/User |
 
 ## 报表类型
@@ -59,18 +59,28 @@ GET    /api/v1/exports/history          # 导出历史
 ## 文件位置
 
 ```
-src/api/v1/reports/
-├── router.py
-├── views.py
-└── schemas.py
+src/
+├── api/v1/reports/
+│   └── router.py
 
-src/api/v1/exports/
-├── router.py
-├── views.py
-└── schemas.py
+├── api/v1/exports/
+│   └── router.py
 
-src/domains/reports/        # 报表领域
-src/domains/exports/        # 导出领域
+├── schemas/
+│   ├── reports.py
+│   └── exports.py
+
+├── services/
+│   ├── report_service.py
+│   └── export_service.py
+
+├── repositories/
+│   ├── report_repository.py
+│   └── export_repository.py
+
+└── models/
+    ├── report.py
+    └── export.py
 
 templates/                   # 报告模板
 ├── daily_report.html
@@ -87,20 +97,20 @@ static/
 
 ### 报表生成
 
-- 异步生成, 通过Celery任务
-- 支持HTML/PDF/Excel格式
-- 模板引擎: Jinja2
+- 异步生成，通过Celery任务
+- 支持HTML、PDF、Excel格式
+- 模板引擎：Jinja2
 - 生成后存储到文件存储
 
 ### 导出任务
 
-- 异步导出, 大数据量分片处理
-- 支持Excel/CSV格式
-- 导出文件有效期: 7天
+- 异步导出，大数据量分片处理
+- 支持Excel、CSV格式
+- 导出文件有效期：7天
 - 记录导出审计日志
 
 ### 文件存储
 
-- 使用MinIO/S3存储文件
+- 使用MinIO、S3存储文件
 - 临时文件定期清理
 - 导出文件下载URL签名

@@ -1,78 +1,78 @@
-# Skill: 部署配置
+# Skill：部署配置
 
-## Docker Compose 服务
+## Docker Compose服务
 
 ```yaml
-services:
+services：
   # 主应用
-  app:
-    build: .
-    ports:
+  app：
+    build：。
+    ports：
       - "8000:8000"
-    environment:
+    environment：
       - ENVIRONMENT=production
-    depends_on:
+    depends_on：
       - postgres
       - redis
-    volumes:
+    volumes：
       - ./logs:/app/logs
       - ./data:/app/data
 
   # Celery Worker
-  worker:
-    build: .
-    command: celery -A tasks worker -l info
-    depends_on:
+  worker：
+    build：。
+    command：celery -A tasks worker -l info
+    depends_on：
       - postgres
       - redis
-    volumes:
+    volumes：
       - ./logs:/app/logs
       - ./data:/app/data
 
-  # Celery Beat (调度器)
-  beat:
-    build: .
-    command: celery -A tasks beat -l info
-    depends_on:
+  # Celery Beat（调度器）
+  beat：
+    build：。
+    command：celery -A tasks beat -l info
+    depends_on：
       - redis
-    volumes:
+    volumes：
       - ./logs:/app/logs
 
   # PostgreSQL
-  postgres:
-    image: postgres:15
-    environment:
+  postgres：
+    image：postgres:15
+    environment：
       - POSTGRES_DB=douyin_data
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
-    volumes:
+    volumes：
       - postgres_data:/var/lib/postgresql/data
-    ports:
+    ports：
       - "5432:5432"
 
   # Redis
-  redis:
-    image: redis:7
-    ports:
+  redis：
+    image：redis:7
+    ports：
       - "6379:6379"
-    volumes:
+    volumes：
       - redis_data:/data
 
-  # Nginx (反向代理)
-  nginx:
-    image: nginx:alpine
-    ports:
+  # Nginx（反向代理）
+  nginx：
+    image：nginx:alpine
+    ports：
       - "80:80"
       - "443:443"
-    volumes:
+    volumes：
       - ./docker/nginx:/etc/nginx/conf.d
       - ./static:/var/www/static
-    depends_on:
+    depends_on：
       - app
 
-volumes:
-  postgres_data:
-  redis_data:
+volumes：
+  postgres_data：
+  redis_data：
 ```
 
 ## 配置文件
@@ -88,7 +88,7 @@ docker/
     ├── default.conf              # Nginx配置
     └── ssl/                      # SSL证书
 
-.env                              # 环境变量 (本地)
+.env                              # 环境变量（本地）
 .env.prod                         # 生产环境变量
 .env.test                         # 测试环境变量
 ```
