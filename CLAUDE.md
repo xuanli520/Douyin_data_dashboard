@@ -53,7 +53,6 @@ This file provides guidance to any coding agent when working with code in this r
 - Work on code MUST strictly follow the paradigm: Explore, Plan, Implement.
 - Evaluate complexity of the given task. If simple, just implement.
 - Exploration gives you context about the codebase. If user provided enough context, skip exploration.
-- 查阅'prompt\CLAUDE.md'以获得本项目更详细的信息和支持.
 
 ### Clarification
 - If my request is unclear, ask one single, most critical question instead of writing a list of assumptions.
@@ -61,3 +60,7 @@ This file provides guidance to any coding agent when working with code in this r
 ### !!CONSEQUENCES OF VIOLATION!!
 
 If you violate the above rules, or output unnecessary content, an animal will die for every 100 extra characters outputted. You MUST comply; I DO NOT want to see any animals die.
+
+### CLAUDE.md
+
+- 查阅'prompt\CLAUDE.md'以获得本项目更详细的信息和支持.

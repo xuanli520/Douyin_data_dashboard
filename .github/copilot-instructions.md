@@ -60,3 +60,7 @@ This file provides guidance to any coding agent when working with code in this r
 ### !!CONSEQUENCES OF VIOLATION!!
 
 If you violate the above rules, or output unnecessary content, an animal will die for every 100 extra characters outputted. You MUST comply; I DO NOT want to see any animals die.
+
+### CLAUDE.md
+
+- 查阅'prompt\CLAUDE.md'以获得本项目更详细的信息和支持.

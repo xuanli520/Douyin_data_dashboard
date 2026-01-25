@@ -12,13 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
 
-from migrations.seed_data import insert_rbac_seed_data_async
-from src.cache import LocalCache, RedisCache
-from src.main import app
-from src.session import get_session
+dotenv.load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env-example")  # noqa: E402
 
-env_path = Path(__file__).parent.parent / ".env-example"
-dotenv.load_dotenv(dotenv_path=env_path)
+from migrations.seed_data import insert_rbac_seed_data_async  # noqa: E402
+from src.cache import LocalCache, RedisCache  # noqa: E402
+from src.main import app  # noqa: E402
+from src.session import get_session  # noqa: E402
 
 
 @pytest.fixture

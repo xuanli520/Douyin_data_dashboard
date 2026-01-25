@@ -6,6 +6,7 @@ from .auth import AuthSettings
 from .cache import CacheSettings
 from .database import DatabaseSettings
 from .log import LogSettings
+from .rate_limit import RateLimitSettings
 
 
 class Settings(BaseSettings):
@@ -20,3 +21,4 @@ class Settings(BaseSettings):
     db: DatabaseSettings = Field(default_factory=DatabaseSettings)
     cache: CacheSettings = Field(default_factory=CacheSettings)
     log: LogSettings = Field(default_factory=LogSettings)
+    rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings)
