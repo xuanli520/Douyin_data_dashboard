@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from starlette.responses import Response
@@ -140,8 +142,6 @@ class TestPathNormalization:
 
             response = await client.get("/metrics")
             text = response.text
-
-            import re
 
             matches = re.findall(
                 r'http_requests_total\{endpoint="/api/users/\{\}"', text

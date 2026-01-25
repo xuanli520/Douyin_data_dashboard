@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import dotenv
 import pytest
 
 
@@ -21,8 +22,6 @@ def load_env_var(env_example_path, monkeypatch):
     Environment variables take precedence over .env file values,
     guranteed by pydantic settings.
     """
-    import dotenv
-
     dotenv.load_dotenv(dotenv_path=env_example_path)
     monkeypatch.setenv("APP__NAME", "Test App Loading env var")
 

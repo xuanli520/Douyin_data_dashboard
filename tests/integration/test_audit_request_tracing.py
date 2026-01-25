@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -180,8 +182,6 @@ async def test_rbac_audit_includes_request_id(
 async def test_concurrent_requests_have_unique_request_ids(
     test_app_with_protected_route, test_user, test_db
 ):
-    import asyncio
-
     test_client = test_app_with_protected_route
 
     login_response = await test_client.post(

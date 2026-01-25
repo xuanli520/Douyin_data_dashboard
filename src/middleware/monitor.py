@@ -8,6 +8,8 @@ from starlette.responses import Response
 
 from src.config import get_settings
 
+monitor_settings = get_settings().monitor
+
 http_requests_total = Counter(
     "http_requests_total",
     "Total number of HTTP requests",
@@ -18,22 +20,7 @@ http_request_duration_seconds = Histogram(
     "http_request_duration_seconds",
     "HTTP request duration in seconds",
     ["method", "endpoint"],
-    buckets=(
-        0.005,
-        0.01,
-        0.025,
-        0.05,
-        0.075,
-        0.1,
-        0.25,
-        0.5,
-        0.75,
-        1.0,
-        2.5,
-        5.0,
-        7.5,
-        10.0,
-    ),
+    buckets=monitor_settings.buckets,
 )
 
 http_requests_in_progress = Gauge(
@@ -48,7 +35,7 @@ http_exceptions_total = Counter(
     ["method", "endpoint", "exception_type"],
 )
 
-PATH_PARAMETER_PATTERN = re.compile(r"/[0-9]+")
+PATH_PARAMETER_PATTERN = re.compile(r"/(?:\d+|[0-9a-fA-F-]{36})")
 
 
 def normalize_path(path: str) -> str:
