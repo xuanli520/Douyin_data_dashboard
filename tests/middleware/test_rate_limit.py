@@ -1,5 +1,4 @@
-import time
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from starlette.requests import Request
@@ -46,8 +45,7 @@ class MockPipeline:
                 if key not in self.redis.data:
                     self.redis.data[key] = []
                 self.redis.data[key] = [
-                    (s, t) for s, t in self.redis.data[key]
-                    if float(s) >= float(cmd[2])
+                    (s, t) for s, t in self.redis.data[key] if float(s) >= float(cmd[2])
                 ]
                 results.append(0)
             elif cmd[0] == "zadd":
@@ -65,7 +63,9 @@ class MockPipeline:
         return results
 
 
-def create_mock_request(path: str, client_host: str = "127.0.0.1", forwarded_for: str | None = None):
+def create_mock_request(
+    path: str, client_host: str = "127.0.0.1", forwarded_for: str | None = None
+):
     request = MagicMock(spec=Request)
     request.url.path = path
     request.client.host = client_host
@@ -85,7 +85,9 @@ class TestSlidingWindow:
             global_window=60,
         )
         redis = MockRedis()
-        middleware = RateLimitMiddleware(app=MagicMock(), redis_client=redis, settings=settings)
+        middleware = RateLimitMiddleware(
+            app=MagicMock(), redis_client=redis, settings=settings
+        )
 
         async def mock_call_next(req):
             return Response(status_code=200)
@@ -107,7 +109,9 @@ class TestSlidingWindow:
             global_window=60,
         )
         redis = MockRedis()
-        middleware = RateLimitMiddleware(app=MagicMock(), redis_client=redis, settings=settings)
+        middleware = RateLimitMiddleware(
+            app=MagicMock(), redis_client=redis, settings=settings
+        )
 
         async def mock_call_next(req):
             return Response(status_code=200)
@@ -132,7 +136,9 @@ class TestClientIdentifier:
         settings = RateLimitSettings(enabled=True)
         middleware = RateLimitMiddleware(app=MagicMock(), settings=settings)
 
-        request = create_mock_request("/api/test", forwarded_for="192.168.1.100, 10.0.0.1")
+        request = create_mock_request(
+            "/api/test", forwarded_for="192.168.1.100, 10.0.0.1"
+        )
         client_id = middleware._default_client_identifier(request)
         assert client_id == "192.168.1.100"
 
@@ -166,7 +172,9 @@ class TestSkipDocsPaths:
             global_window=60,
         )
         redis = MockRedis()
-        middleware = RateLimitMiddleware(app=MagicMock(), redis_client=redis, settings=settings)
+        middleware = RateLimitMiddleware(
+            app=MagicMock(), redis_client=redis, settings=settings
+        )
 
         call_next_called = False
 
@@ -211,7 +219,9 @@ class TestDisabledRateLimit:
     async def test_disabled_rate_limit(self):
         settings = RateLimitSettings(enabled=False)
         redis = MockRedis()
-        middleware = RateLimitMiddleware(app=MagicMock(), redis_client=redis, settings=settings)
+        middleware = RateLimitMiddleware(
+            app=MagicMock(), redis_client=redis, settings=settings
+        )
 
         call_next_called = False
 
