@@ -8,6 +8,7 @@ from .database import DatabaseSettings
 from .log import LogSettings
 from .rate_limit import RateLimitSettings
 from .circuit_breaker import CircuitBreakerSettings
+from .monitor import MonitorSettings
 
 
 class Settings(BaseSettings):
@@ -26,3 +27,4 @@ class Settings(BaseSettings):
     circuit_breaker: CircuitBreakerSettings = Field(
         default_factory=CircuitBreakerSettings
     )
+    monitor: MonitorSettings = Field(default_factory=MonitorSettings)

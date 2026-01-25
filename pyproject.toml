@@ -16,6 +16,7 @@ dependencies = [
     "redis[hiredis]>=7.1.0",
     "sqlmodel>=0.0.27",
     "circuitbreaker>=2.0.0",
+    "prometheus-client>=0.21.0",
     "uvicorn[standard]>=0.32.0",
 ]
 
