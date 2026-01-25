@@ -50,9 +50,9 @@ jobs:
       - name: Pytest
         env:
           PYTHONPATH: .
-          APP__NAME: ${{ vars.CI_APP_NAME || 'DouYin-Data-Dashboard' }}
-          DB__DRIVER: ${{ vars.CI_DB_DRIVER || 'sqlite' }}
-          DB__DATABASE: ${{ vars.CI_DB_DATABASE || ':memory:' }}
-          CACHE__BACKEND: ${{ vars.CI_CACHE_BACKEND || 'local' }}
-          AUTH__JWT_SECRET: ${{ secrets.CI_JWT_SECRET || 'test-secret-key' }}
+          APP__NAME: test-app
+          DB__DRIVER: sqlite
+          DB__DATABASE: ":memory:"
+          CACHE__BACKEND: local
+          AUTH__JWT_SECRET: test-secret-key-for-ci
         run: uv run --frozen pytest --cov -q
