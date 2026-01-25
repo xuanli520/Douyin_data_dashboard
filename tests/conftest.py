@@ -100,10 +100,8 @@ async def test_db():
 
     yield async_session
 
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.drop_all)
-
     app.dependency_overrides.clear()
+    await engine.dispose()
 
 
 @pytest.fixture
