@@ -4,11 +4,12 @@ from fastapi import FastAPI, Request
 from fastapi_pagination import add_pagination
 from starlette.middleware import Middleware
 
-from src.api import auth_router, core_router, create_oauth_router
+from src.api import auth_router, core_router, create_oauth_router, monitor_router
 from src.cache import close_cache, get_cache, init_cache
 from src.config import get_settings
 from src.handlers import register_exception_handlers
 from src.logging import setup_logging
+from src.middleware.monitor import MonitorMiddleware
 from src.middleware.rate_limit import RateLimitMiddleware
 from src.responses.middleware import ResponseWrapperMiddleware
 
@@ -58,6 +59,7 @@ def create_app() -> FastAPI:
         middleware=[
             Middleware(ResponseWrapperMiddleware),
             Middleware(RateLimitMiddleware),
+            Middleware(MonitorMiddleware),
         ],
     )
 
@@ -66,6 +68,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router, prefix="/auth", tags=["auth"])
     app.include_router(create_oauth_router(settings), prefix="/auth", tags=["auth"])
     app.include_router(core_router, tags=["core"])
+    app.include_router(monitor_router, tags=["monitor"])
 
     add_pagination(app)
 
