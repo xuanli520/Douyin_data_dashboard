@@ -63,7 +63,9 @@ class TestRateLimitHeaders:
 
 class TestRateLimitExceeded:
     @pytest.mark.asyncio
-    async def test_rate_limit_returns_429_when_exceeded(self, rate_limited_app, fake_redis):
+    async def test_rate_limit_returns_429_when_exceeded(
+        self, rate_limited_app, fake_redis
+    ):
         async with AsyncClient(
             transport=ASGITransport(app=rate_limited_app), base_url="http://test"
         ) as client:
@@ -100,7 +102,9 @@ class TestRateLimitPerClient:
             lifespan=lambda _: None,
             middleware=[
                 Middleware(ResponseWrapperMiddleware),
-                Middleware(RateLimitMiddleware, redis_client=fake_redis, settings=settings),
+                Middleware(
+                    RateLimitMiddleware, redis_client=fake_redis, settings=settings
+                ),
             ],
         )
 
@@ -115,8 +119,12 @@ class TestRateLimitPerClient:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client2:
                 for _ in range(2):
-                    response = await client1.get("/api/test", headers={"X-Forwarded-For": "192.168.1.1"})
+                    response = await client1.get(
+                        "/api/test", headers={"X-Forwarded-For": "192.168.1.1"}
+                    )
                 assert response.status_code == 429
 
-                response = await client2.get("/api/test", headers={"X-Forwarded-For": "192.168.1.2"})
+                response = await client2.get(
+                    "/api/test", headers={"X-Forwarded-For": "192.168.1.2"}
+                )
                 assert response.status_code == 200
