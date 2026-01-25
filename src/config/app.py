@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings
 
 
 class AppSettings(BaseSettings):
-    name: str
+    name: str = Field(default="fastapi-boilerplate")
 
     version: str = Field(default="0.1.0")
     debug: bool = Field(default=False)
