@@ -62,6 +62,7 @@ class MonitorMiddleware(BaseHTTPMiddleware):
 
         start_time = time.perf_counter()
         exception_type = None
+        status_code = None
 
         try:
             response = await call_next(request)
@@ -71,6 +72,7 @@ class MonitorMiddleware(BaseHTTPMiddleware):
             http_exceptions_total.labels(
                 method=method, endpoint=path, exception_type=exception_type
             ).inc()
+            status_code = getattr(e, "status_code", 500)
             raise
         finally:
             duration = time.perf_counter() - start_time
@@ -78,10 +80,10 @@ class MonitorMiddleware(BaseHTTPMiddleware):
             http_request_duration_seconds.labels(method=method, endpoint=path).observe(
                 duration
             )
-
-        http_requests_total.labels(
-            method=method, endpoint=path, status_code=str(status_code)
-        ).inc()
+            if status_code is not None:
+                http_requests_total.labels(
+                    method=method, endpoint=path, status_code=str(status_code)
+                ).inc()
 
         return response
 
