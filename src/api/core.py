@@ -1,14 +1,21 @@
 import time
-from typing import Any
+from typing import Any, Annotated
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
 from loguru import logger
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.cache import cache
-from src.session import engine
+from src.cache import CacheProtocol, get_cache
 
 router = APIRouter()
+
+
+async def get_engine() -> AsyncEngine:
+    from src.session import engine
+
+    return engine
 
 
 @router.get("/test-logging")
@@ -30,7 +37,9 @@ async def test_logging_error():
         return {"message": "Exception logged, check logs"}
 
 
-async def check_database() -> dict[str, Any]:
+async def check_database(
+    engine: Annotated[AsyncEngine, Depends(get_engine)],
+) -> dict[str, Any]:
     start = time.perf_counter()
     try:
         async with engine.connect() as conn:
@@ -42,7 +51,9 @@ async def check_database() -> dict[str, Any]:
         return {"status": "unhealthy", "latency_ms": None, "error": str(e)}
 
 
-async def check_redis() -> dict[str, Any]:
+async def check_redis(
+    cache: Annotated[CacheProtocol, Depends(get_cache)],
+) -> dict[str, Any]:
     start = time.perf_counter()
     try:
         await cache.client.ping()
@@ -54,10 +65,10 @@ async def check_redis() -> dict[str, Any]:
 
 
 @router.get("/health")
-async def health_check() -> Response:
-    db_result = await check_database()
-    redis_result = await check_redis()
-
+async def health_check(
+    db_result: dict[str, Any] = Depends(check_database),
+    redis_result: dict[str, Any] = Depends(check_redis),
+) -> JSONResponse:
     components = {"database": db_result, "redis": redis_result}
 
     if all(c["status"] == "healthy" for c in components.values()):
@@ -70,7 +81,7 @@ async def health_check() -> Response:
         status = "unhealthy"
         status_code = 503
 
-    return Response(
+    return JSONResponse(
         content={
             "status": status,
             "components": components,

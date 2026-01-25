@@ -15,7 +15,7 @@ __all__ = [
     "cache",
 ]
 
-cache: CacheProtocol
+cache: CacheProtocol | None = None
 
 
 async def init_cache(
