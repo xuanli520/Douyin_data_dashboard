@@ -17,11 +17,14 @@ __all__ = [
 
 
 class CircuitBreakerPolicy:
+    failure_threshold: int
+    recovery_timeout: int
+
     def __init__(
         self,
         failure_threshold: int = 5,
         recovery_timeout: int = 60,
-    ):
+    ) -> None:
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
 
