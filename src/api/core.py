@@ -56,6 +56,10 @@ async def check_redis(
 ) -> dict[str, Any]:
     start = time.perf_counter()
     try:
+        from src.cache.local import LocalCache
+
+        if isinstance(cache, LocalCache):
+            return {"status": "healthy", "latency_ms": 0.0}
         await cache.client.ping()
         latency = (time.perf_counter() - start) * 1000
         return {"status": "healthy", "latency_ms": round(latency, 2)}
