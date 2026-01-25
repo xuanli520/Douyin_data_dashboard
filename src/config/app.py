@@ -1,4 +1,4 @@
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -10,3 +10,9 @@ class AppSettings(BaseSettings):
     host: str = Field(default="0.0.0.0")
     port: int = Field(default=8000)
     timezone: int = Field(default=8, description="UTC offset in hours")
+
+    @model_validator(mode="after")
+    def validate_name(self):
+        if not self.name:
+            self.name = "fastapi-boilerplate"
+        return self
