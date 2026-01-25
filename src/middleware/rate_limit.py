@@ -47,7 +47,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         pipe.zremrangebyscore(key, "-inf", str(window_start))
         pipe.zadd(key, {str(now): now})
         pipe.zcard(key)
-        pipe.expire(key, window + 1)
+        pipe.expire(key, int(window) + 1)
         results = await pipe.execute()
 
         current_count = results[2]
