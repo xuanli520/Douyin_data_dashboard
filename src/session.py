@@ -4,8 +4,8 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
-engine: AsyncEngine
-async_session_factory: sessionmaker[AsyncSession]
+engine: AsyncEngine | None = None
+async_session_factory: sessionmaker[AsyncSession] | None = None
 
 
 async def init_db(url: str, echo: bool = False) -> None:

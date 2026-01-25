@@ -16,7 +16,7 @@ class ResponseWrapperMiddleware(BaseHTTPMiddleware):
 
     DOC_PATH_PREFIXES = ("/docs", "/redoc")
     DOC_PATHS = {"/openapi.json", "/docs/oauth2-redirect"}
-    SKIP_PATHS = {"/auth/jwt/login", "/auth/jwt/refresh", "/auth/jwt/logout"}
+    SKIP_PATHS = {"/health", "/auth/jwt/login", "/auth/jwt/refresh", "/auth/jwt/logout"}
 
     def __init__(self, app: ASGIApp):
         super().__init__(app)
