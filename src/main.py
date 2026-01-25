@@ -1,14 +1,15 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi_pagination import add_pagination
 from starlette.middleware import Middleware
 
 from src.api import auth_router, core_router, create_oauth_router
-from src.cache import close_cache, init_cache
+from src.cache import close_cache, get_cache, init_cache
 from src.config import get_settings
 from src.handlers import register_exception_handlers
 from src.logging import setup_logging
+from src.middleware.rate_limit import RateLimitMiddleware
 from src.responses.middleware import ResponseWrapperMiddleware
 
 from .session import close_db, init_db
@@ -32,7 +33,16 @@ async def lifespan(app: FastAPI):
         max_connections=settings.cache.max_connections,
         retry_on_timeout=settings.cache.retry_on_timeout,
     )
+
+    async def add_redis_to_request(request: Request):
+        cache = get_cache()
+        request.state.redis = cache._client if hasattr(cache, "_client") else cache
+
+    app.middleware_stack = None
+    await app.router.startup()
+
     yield
+
     await close_cache()
     await close_db()
 
@@ -47,6 +57,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
         middleware=[
             Middleware(ResponseWrapperMiddleware),
+            Middleware(RateLimitMiddleware),
         ],
     )
 
