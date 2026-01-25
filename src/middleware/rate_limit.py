@@ -11,7 +11,7 @@ from src.config.rate_limit import RateLimitSettings
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    DOC_PATH_PREFIXES = ("/docs", "/redoc", "/openapi")
+    DOC_PATH_PREFIXES = ("/docs", "/redoc", "/openapi", "/health")
 
     def __init__(
         self,
@@ -52,7 +52,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         current_count = results[2]
         remaining = limit - current_count
-        return current_count >= limit, max(0, remaining)
+        return current_count >= limit, remaining
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
         settings = self._settings or get_settings().rate_limit
@@ -91,7 +91,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 status_code=429,
                 content={"code": 42901, "msg": "Rate limit exceeded", "data": None},
             )
-            response.headers["Retry-After"] = str(window)
+            response.headers["Retry-After"] = str(int(window))
 
         response.headers["X-RateLimit-Limit"] = str(limit)
         response.headers["X-RateLimit-Remaining"] = str(remaining)
