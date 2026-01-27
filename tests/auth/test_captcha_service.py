@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from src.auth.captcha import AliyunCaptchaService
 
@@ -80,13 +80,13 @@ class TestAliyunCaptchaService:
 
     @pytest.mark.asyncio
     async def test_verify_failure(self, captcha_service):
-        async def mock_verify(*args, **kwargs):
-            mock_body = MagicMock()
-            mock_body.result.verify_result = False
-            return mock_body
+        mock_body = MagicMock(spec=["result"])
+        mock_result = MagicMock()
+        mock_result.verify_result = False
+        mock_body.result = mock_result
 
-        mock_client = AsyncMock()
-        mock_client.verify_intelligent_captcha_with_options = mock_verify
+        mock_client = MagicMock()
+        mock_client.verify_intelligent_captcha_with_options.return_value = mock_body
 
         with patch("src.auth.captcha.CaptchaClient") as mock_captcha_client:
             mock_captcha_client.return_value = mock_client
@@ -108,7 +108,7 @@ class TestAliyunCaptchaService:
     @pytest.mark.asyncio
     async def test_verify_exception(self, captcha_service):
         with patch.object(captcha_service, "create_client") as mock_create:
-            mock_client = AsyncMock()
+            mock_client = MagicMock()
             mock_client.verify_intelligent_captcha_with_options.side_effect = Exception(
                 "API error"
             )
@@ -129,13 +129,11 @@ class TestAliyunCaptchaService:
 
     @pytest.mark.asyncio
     async def test_verify_no_result_body(self, captcha_service):
-        async def mock_verify(*args, **kwargs):
-            mock_body = MagicMock()
-            mock_body.result = None
-            return mock_body
+        mock_body = MagicMock(spec=["result"])
+        mock_body.result = None
 
         mock_client = MagicMock()
-        mock_client.verify_intelligent_captcha_with_options = mock_verify
+        mock_client.verify_intelligent_captcha_with_options.return_value = mock_body
 
         with patch("src.auth.captcha.CaptchaClient") as mock_captcha_client:
             mock_captcha_client.return_value = mock_client
