@@ -75,6 +75,13 @@ def register_exception_handlers(app: FastAPI) -> None:
                 data=None,
             )
             return JSONResponse(content=response.model_dump(), status_code=409)
+        elif "phone" in error_msg.lower():
+            response = Response.error(
+                code=int(ErrorCode.USER_PHONE_CONFLICT),
+                msg="Phone already registered",
+                data=None,
+            )
+            return JSONResponse(content=response.model_dump(), status_code=409)
 
         response = Response.error(
             code=409,
