@@ -1,22 +1,12 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.middleware import cors as cors_module
 from src.middleware.cors import get_cors_middleware
 
 
 @pytest.fixture
-def cors_app(monkeypatch):
+def cors_app():
     from fastapi import FastAPI
-
-    monkeypatch.setattr(cors_module, "CORS_ALLOWED_HOSTS", ["http://localhost:3000"])
-    monkeypatch.setattr(
-        cors_module,
-        "CORS_ALLOWED_METHODS",
-        ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
-    )
-    monkeypatch.setattr(cors_module, "CORS_ALLOWED_HEADERS", ["*"])
-    monkeypatch.setattr(cors_module, "CORS_ALLOW_CREDENTIALS", True)
 
     app = FastAPI(
         lifespan=lambda _: None,
@@ -71,7 +61,7 @@ class TestCorsIntegration:
             assert response.headers["access-control-allow-credentials"] == "true"
 
     @pytest.mark.asyncio
-    async def test_disallowed_origin_rejected(self, cors_app):
+    async def test_preflight_disallowed_origin_rejected(self, cors_app):
         async with AsyncClient(
             transport=ASGITransport(app=cors_app), base_url="http://localhost"
         ) as client:
@@ -84,6 +74,5 @@ class TestCorsIntegration:
             )
 
             assert response.status_code == 400
-            assert "allow-origin" not in {
-                k.lower(): v for k, v in response.headers.items()
-            }
+            headers_lower = {k.lower(): v for k, v in response.headers.items()}
+            assert "access-control-allow-origin" not in headers_lower
