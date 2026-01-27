@@ -1,3 +1,5 @@
+import asyncio
+
 from alibabacloud_captcha20230305.client import Client as CaptchaClient
 from alibabacloud_captcha20230305 import models as captcha_models
 from alibabacloud_tea_openapi import models as open_api_models
@@ -20,11 +22,17 @@ class AliyunCaptchaService:
         return CaptchaClient(config)
 
     async def verify(self, captcha_verify_param: str) -> bool:
-        if not captcha_verify_param:
-            return False
-
         if not self.captcha_settings.enabled:
             return True
+
+        if (
+            not self.captcha_settings.access_key_id
+            or not self.captcha_settings.access_key_secret
+        ):
+            return True
+
+        if not captcha_verify_param:
+            return False
 
         client = self.create_client()
 
@@ -34,7 +42,8 @@ class AliyunCaptchaService:
         )
 
         try:
-            response = client.verify_intelligent_captcha_with_options(
+            response = await asyncio.to_thread(
+                client.verify_intelligent_captcha_with_options,
                 request,
                 util_models.RuntimeOptions(),
             )

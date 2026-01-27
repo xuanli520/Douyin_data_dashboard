@@ -1,6 +1,4 @@
 from fastapi import APIRouter, Depends, Request
-from fastapi.security import OAuth2PasswordRequestForm
-
 from src.audit import AuditService, get_audit_service
 from src.audit.schemas import AuditAction, AuditResult
 from src.audit.service import extract_client_info
@@ -20,8 +18,20 @@ from src.auth.schemas import (
     UserRead,
     UserUpdate,
 )
+from pydantic import BaseModel, ConfigDict
+
 from src.shared.errors import ErrorCode
 from src.exceptions import BusinessException
+
+
+class LoginRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    username: str
+    password: str
+    captchaVerifyParam: dict | None = None
+    grant_type: str | None = None
+
 
 router = APIRouter()
 
@@ -53,7 +63,7 @@ router.include_router(
 @router.post("/jwt/login")
 async def login(
     request: Request,
-    credentials: OAuth2PasswordRequestForm = Depends(),
+    login_data: LoginRequest,
     user_manager: UserManager = Depends(get_user_manager),
     strategy=Depends(get_jwt_strategy),
     refresh_manager: RefreshTokenManager = Depends(get_refresh_token_manager),
@@ -62,17 +72,8 @@ async def login(
 ) -> TokenResponse:
     user_agent, ip = extract_client_info(request)
 
-    content_type = request.headers.get("content-type", "")
-
-    if "application/json" in content_type:
-        data = await request.json()
-        captcha_verify_param = data.get("captchaVerifyParam")
-    else:
-        form = await request.form()
-        captcha_verify_param = form.get("captchaVerifyParam")
-
     try:
-        is_human = await captcha_service.verify(captcha_verify_param)
+        is_human = await captcha_service.verify(login_data.captchaVerifyParam)
     except Exception:
         is_human = False
 
@@ -82,12 +83,17 @@ async def login(
             result=AuditResult.FAILURE,
             user_agent=user_agent,
             ip=ip,
-            extra={"username": credentials.username, "reason": "captcha_failed"},
+            extra={"username": login_data.username, "reason": "captcha_failed"},
         )
         raise BusinessException(
             ErrorCode.AUTH_INVALID_CREDENTIALS, "Captcha verification failed"
         )
 
+    credentials = type(
+        "Credentials",
+        (),
+        {"username": login_data.username, "password": login_data.password},
+    )()
     user = await user_manager.authenticate(credentials)
     if not user or not user.is_active:
         await audit_service.log(
@@ -95,7 +101,7 @@ async def login(
             result=AuditResult.FAILURE,
             user_agent=user_agent,
             ip=ip,
-            extra={"username": credentials.username},
+            extra={"username": login_data.username},
         )
         raise BusinessException(
             ErrorCode.AUTH_INVALID_CREDENTIALS, "Invalid credentials"
