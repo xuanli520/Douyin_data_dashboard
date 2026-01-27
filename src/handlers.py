@@ -3,10 +3,11 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.exceptions import HTTPException, RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 
 from src.exceptions import BusinessException
 from src.responses.base import Response
-from src.shared.errors import error_code_to_http_status
+from src.shared.errors import ErrorCode, error_code_to_http_status
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,40 @@ def register_exception_handlers(app: FastAPI) -> None:
             code=422, msg="Validation failed", data={"validation_errors": errors}
         )
         return JSONResponse(content=response.model_dump(), status_code=422)
+
+    @app.exception_handler(IntegrityError)
+    async def handle_integrity_error(
+        request: Request, exc: IntegrityError
+    ) -> JSONResponse:
+        error_msg = str(exc.orig)
+        if "username" in error_msg.lower():
+            response = Response.error(
+                code=int(ErrorCode.USER_USERNAME_CONFLICT),
+                msg="Username already registered",
+                data=None,
+            )
+            return JSONResponse(content=response.model_dump(), status_code=409)
+        elif "email" in error_msg.lower():
+            response = Response.error(
+                code=int(ErrorCode.USER_EMAIL_CONFLICT),
+                msg="Email already registered",
+                data=None,
+            )
+            return JSONResponse(content=response.model_dump(), status_code=409)
+        elif "phone" in error_msg.lower():
+            response = Response.error(
+                code=int(ErrorCode.USER_PHONE_CONFLICT),
+                msg="Phone already registered",
+                data=None,
+            )
+            return JSONResponse(content=response.model_dump(), status_code=409)
+
+        response = Response.error(
+            code=409,
+            msg="Database integrity error",
+            data={"error_type": "IntegrityError"},
+        )
+        return JSONResponse(content=response.model_dump(), status_code=409)
 
     @app.exception_handler(Exception)
     async def handle_fallback_exception(
