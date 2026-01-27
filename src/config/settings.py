@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from .app import AppSettings
 from .auth import AuthSettings
 from .cache import CacheSettings
+from .captcha import CaptchaSettings
 from .database import DatabaseSettings
 from .log import LogSettings
 from .rate_limit import RateLimitSettings
@@ -23,6 +24,7 @@ class Settings(BaseSettings):
     auth: AuthSettings = Field(default_factory=AuthSettings)
     db: DatabaseSettings = Field(default_factory=DatabaseSettings)
     cache: CacheSettings = Field(default_factory=CacheSettings)
+    captcha: CaptchaSettings = Field(default_factory=CaptchaSettings)
     log: LogSettings = Field(default_factory=LogSettings)
     rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings)
     circuit_breaker: CircuitBreakerSettings = Field(

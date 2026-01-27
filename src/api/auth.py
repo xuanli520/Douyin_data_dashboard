@@ -10,6 +10,7 @@ from src.auth.backend import (
     get_jwt_strategy,
     get_refresh_token_manager,
 )
+from src.auth.captcha import AliyunCaptchaService, get_captcha_service
 from src.auth.manager import UserManager, get_user_manager
 from src.auth.schemas import (
     AccessTokenResponse,
@@ -57,8 +58,35 @@ async def login(
     strategy=Depends(get_jwt_strategy),
     refresh_manager: RefreshTokenManager = Depends(get_refresh_token_manager),
     audit_service: AuditService = Depends(get_audit_service),
+    captcha_service: AliyunCaptchaService = Depends(get_captcha_service),
 ) -> TokenResponse:
     user_agent, ip = extract_client_info(request)
+
+    content_type = request.headers.get("content-type", "")
+
+    if "application/json" in content_type:
+        data = await request.json()
+        captcha_verify_param = data.get("captchaVerifyParam")
+    else:
+        form = await request.form()
+        captcha_verify_param = form.get("captchaVerifyParam")
+
+    try:
+        is_human = await captcha_service.verify(captcha_verify_param)
+    except Exception:
+        is_human = False
+
+    if not is_human:
+        await audit_service.log(
+            action=AuditAction.LOGIN,
+            result=AuditResult.FAILURE,
+            user_agent=user_agent,
+            ip=ip,
+            extra={"username": credentials.username, "reason": "captcha_failed"},
+        )
+        raise BusinessException(
+            ErrorCode.AUTH_INVALID_CREDENTIALS, "Captcha verification failed"
+        )
 
     user = await user_manager.authenticate(credentials)
     if not user or not user.is_active:

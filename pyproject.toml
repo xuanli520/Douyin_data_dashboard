@@ -18,6 +18,9 @@ dependencies = [
     "circuitbreaker>=2.0.0",
     "prometheus-client>=0.21.0",
     "uvicorn[standard]>=0.32.0",
+    "alibabacloud_captcha20230305>=1.0.0",
+    "alibabacloud_tea_openapi>=0.3.0",
+    "alibabacloud_tea_util>=0.3.0",
 ]
 
 [dependency-groups]
