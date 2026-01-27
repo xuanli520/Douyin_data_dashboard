@@ -15,6 +15,9 @@ class User(SQLModel, TimestampMixin, table=True):
     is_active: bool = Field(default=True)
     is_superuser: bool = Field(default=False)
     is_verified: bool = Field(default=False)
+    gender: str | None = Field(default=None, max_length=20)
+    phone: str | None = Field(default=None, max_length=20, unique=True)
+    department: str | None = Field(default=None, max_length=100)
 
 
 class OAuthAccount(SQLModel, table=True):

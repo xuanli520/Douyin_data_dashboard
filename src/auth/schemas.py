@@ -6,14 +6,23 @@ from pydantic import BaseModel
 
 class UserRead(schemas.BaseUser[int]):
     username: str
+    gender: str | None = None
+    phone: str | None = None
+    department: str | None = None
 
 
 class UserCreate(schemas.BaseUserCreate):
     username: str
+    gender: str | None = None
+    phone: str | None = None
+    department: str | None = None
 
 
 class UserUpdate(schemas.BaseUserUpdate):
     username: str | None = None
+    gender: str | None = None
+    phone: str | None = None
+    department: str | None = None
 
 
 class TokenResponse(BaseModel):
