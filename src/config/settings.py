@@ -9,6 +9,7 @@ from .log import LogSettings
 from .rate_limit import RateLimitSettings
 from .circuit_breaker import CircuitBreakerSettings
 from .monitor import MonitorSettings
+from .cors import CorsSettings
 
 
 class Settings(BaseSettings):
@@ -28,3 +29,4 @@ class Settings(BaseSettings):
         default_factory=CircuitBreakerSettings
     )
     monitor: MonitorSettings = Field(default_factory=MonitorSettings)
+    cors: CorsSettings = Field(default_factory=CorsSettings)
