@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Form, Request
 from src.audit import AuditService, get_audit_service
 from src.audit.schemas import AuditAction, AuditResult
 from src.audit.service import extract_client_info
@@ -18,19 +18,8 @@ from src.auth.schemas import (
     UserRead,
     UserUpdate,
 )
-from pydantic import BaseModel, ConfigDict
-
 from src.shared.errors import ErrorCode
 from src.exceptions import BusinessException
-
-
-class LoginRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    username: str
-    password: str
-    captchaVerifyParam: dict | None = None
-    grant_type: str | None = None
 
 
 router = APIRouter()
@@ -63,7 +52,9 @@ router.include_router(
 @router.post("/jwt/login")
 async def login(
     request: Request,
-    login_data: LoginRequest,
+    username: str = Form(...),
+    password: str = Form(...),
+    captchaVerifyParam: str | None = Form(None),
     user_manager: UserManager = Depends(get_user_manager),
     strategy=Depends(get_jwt_strategy),
     refresh_manager: RefreshTokenManager = Depends(get_refresh_token_manager),
@@ -73,7 +64,7 @@ async def login(
     user_agent, ip = extract_client_info(request)
 
     try:
-        is_human = await captcha_service.verify(login_data.captchaVerifyParam)
+        is_human = await captcha_service.verify(captchaVerifyParam)
     except Exception:
         is_human = False
 
@@ -83,7 +74,7 @@ async def login(
             result=AuditResult.FAILURE,
             user_agent=user_agent,
             ip=ip,
-            extra={"username": login_data.username, "reason": "captcha_failed"},
+            extra={"username": username, "reason": "captcha_failed"},
         )
         raise BusinessException(
             ErrorCode.AUTH_INVALID_CREDENTIALS, "Captcha verification failed"
@@ -92,7 +83,7 @@ async def login(
     credentials = type(
         "Credentials",
         (),
-        {"username": login_data.username, "password": login_data.password},
+        {"username": username, "password": password},
     )()
     user = await user_manager.authenticate(credentials)
     if not user or not user.is_active:
@@ -101,7 +92,7 @@ async def login(
             result=AuditResult.FAILURE,
             user_agent=user_agent,
             ip=ip,
-            extra={"username": login_data.username},
+            extra={"username": username},
         )
         raise BusinessException(
             ErrorCode.AUTH_INVALID_CREDENTIALS, "Invalid credentials"
