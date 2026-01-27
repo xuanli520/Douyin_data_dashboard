@@ -10,7 +10,11 @@ from src.shared.errors import ErrorCode
 async def test_login_success(test_client, test_user):
     response = await test_client.post(
         "/auth/jwt/login",
-        data={"username": "test@example.com", "password": "testpassword123"},
+        data={
+            "username": "test@example.com",
+            "password": "testpassword123",
+            "captchaVerifyParam": "valid",
+        },
     )
 
     assert response.status_code == 200
@@ -23,7 +27,11 @@ async def test_login_success(test_client, test_user):
 async def test_login_invalid_credentials(test_client, test_user):
     response = await test_client.post(
         "/auth/jwt/login",
-        data={"username": "test@example.com", "password": "wrongpassword"},
+        data={
+            "username": "test@example.com",
+            "password": "wrongpassword",
+            "captchaVerifyParam": "valid",
+        },
     )
 
     assert response.status_code == 401
@@ -45,7 +53,11 @@ async def test_login_nonexistent_user(test_client):
 async def test_refresh_token_success(test_client, test_user):
     login_response = await test_client.post(
         "/auth/jwt/login",
-        data={"username": "test@example.com", "password": "testpassword123"},
+        data={
+            "username": "test@example.com",
+            "password": "testpassword123",
+            "captchaVerifyParam": "valid",
+        },
     )
     refresh_token = login_response.json()["refresh_token"]
 
@@ -74,7 +86,11 @@ async def test_refresh_token_invalid(test_client):
 async def test_logout_success(test_client, test_user):
     login_response = await test_client.post(
         "/auth/jwt/login",
-        data={"username": "test@example.com", "password": "testpassword123"},
+        data={
+            "username": "test@example.com",
+            "password": "testpassword123",
+            "captchaVerifyParam": "valid",
+        },
     )
     refresh_token = login_response.json()["refresh_token"]
 
@@ -97,7 +113,11 @@ async def test_refresh_token_inactive_user(test_client, test_user, test_db):
 
     login_response = await test_client.post(
         "/auth/jwt/login",
-        data={"username": "test@example.com", "password": "testpassword123"},
+        data={
+            "username": "test@example.com",
+            "password": "testpassword123",
+            "captchaVerifyParam": "valid",
+        },
     )
     refresh_token = login_response.json()["refresh_token"]
 
@@ -124,7 +144,11 @@ async def test_reset_password_revokes_tokens(test_client, test_user, local_cache
     settings = get_settings()
     login_response = await test_client.post(
         "/auth/jwt/login",
-        data={"username": "test@example.com", "password": "testpassword123"},
+        data={
+            "username": "test@example.com",
+            "password": "testpassword123",
+            "captchaVerifyParam": "valid",
+        },
     )
     refresh_token = login_response.json()["refresh_token"]
 

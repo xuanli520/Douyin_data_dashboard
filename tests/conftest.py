@@ -15,6 +15,7 @@ from sqlmodel import SQLModel
 dotenv.load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env-example")  # noqa: E402
 
 from migrations.seed_data import insert_rbac_seed_data_async  # noqa: E402
+from src.auth.captcha import get_captcha_service  # noqa: E402
 from src.cache import LocalCache, RedisCache  # noqa: E402
 from src.main import app  # noqa: E402
 from src.session import get_session  # noqa: E402
@@ -145,6 +146,13 @@ async def test_user(test_db):
         yield user
 
 
+class MockCaptchaService:
+    async def verify(self, captcha_verify_param: str) -> bool:
+        if not captcha_verify_param:
+            return False
+        return True
+
+
 @pytest.fixture
 async def test_client(test_db, local_cache):
     from src.cache import get_cache
@@ -153,10 +161,12 @@ async def test_client(test_db, local_cache):
         yield local_cache
 
     app.dependency_overrides[get_cache] = override_get_cache
+    app.dependency_overrides[get_captcha_service] = lambda: MockCaptchaService()
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
         yield client
 
-    del app.dependency_overrides[get_cache]
+    app.dependency_overrides.pop(get_cache, None)
+    app.dependency_overrides.pop(get_captcha_service, None)

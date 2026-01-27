@@ -31,7 +31,11 @@ async def test_current_user_creates_audit_log(
 
     login_response = await test_client.post(
         "/auth/jwt/login",
-        data={"username": "test@example.com", "password": "testpassword123"},
+        data={
+            "username": "test@example.com",
+            "password": "testpassword123",
+            "captchaVerifyParam": "valid",
+        },
     )
     access_token = login_response.json()["access_token"]
 
@@ -67,7 +71,11 @@ async def test_protected_resource_audit_includes_request_id(
 
     login_response = await test_client.post(
         "/auth/jwt/login",
-        data={"username": "test@example.com", "password": "testpassword123"},
+        data={
+            "username": "test@example.com",
+            "password": "testpassword123",
+            "captchaVerifyParam": "valid",
+        },
     )
     access_token = login_response.json()["access_token"]
 
@@ -97,7 +105,11 @@ async def test_protected_resource_audit_includes_request_id(
 async def test_login_audit_without_request_id(test_client, test_user, test_db):
     response = await test_client.post(
         "/auth/jwt/login",
-        data={"username": "test@example.com", "password": "testpassword123"},
+        data={
+            "username": "test@example.com",
+            "password": "testpassword123",
+            "captchaVerifyParam": "valid",
+        },
     )
 
     assert response.status_code == 200
@@ -152,7 +164,11 @@ async def test_rbac_audit_includes_request_id(
 
     login_response = await test_client.post(
         "/auth/jwt/login",
-        data={"username": "test@example.com", "password": "testpassword123"},
+        data={
+            "username": "test@example.com",
+            "password": "testpassword123",
+            "captchaVerifyParam": "valid",
+        },
     )
     access_token = login_response.json()["access_token"]
 
@@ -186,7 +202,11 @@ async def test_concurrent_requests_have_unique_request_ids(
 
     login_response = await test_client.post(
         "/auth/jwt/login",
-        data={"username": "test@example.com", "password": "testpassword123"},
+        data={
+            "username": "test@example.com",
+            "password": "testpassword123",
+            "captchaVerifyParam": "valid",
+        },
     )
     access_token = login_response.json()["access_token"]
 

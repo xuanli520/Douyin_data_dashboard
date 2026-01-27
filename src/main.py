@@ -8,7 +8,7 @@ from src.api import auth_router, core_router, create_oauth_router, monitor_route
 from src.cache import close_cache, get_cache, init_cache
 from src.config import get_settings
 from src.handlers import register_exception_handlers
-from src.logging import setup_logging
+from src.loguru_setup import setup_logging
 from src.middleware.cors import get_cors_middleware
 from src.middleware.monitor import MonitorMiddleware
 from src.middleware.rate_limit import RateLimitMiddleware
