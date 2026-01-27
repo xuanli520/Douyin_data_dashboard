@@ -8,6 +8,13 @@ from src.shared.errors import ErrorCode
 from src.auth.models import Permission, RolePermission, UserRole
 
 
+class MockCaptchaService:
+    async def verify(self, captcha_verify_param: str) -> bool:
+        if not captcha_verify_param:
+            return False
+        return True
+
+
 @pytest.fixture
 async def rbac_data(test_db):
     async with test_db() as session:
@@ -115,6 +122,7 @@ async def superuser_user(test_db, rbac_data):
 @pytest.fixture
 async def rbac_client(test_db, local_cache, admin_user, regular_user, superuser_user):
     from src.api import auth_router
+    from src.auth.captcha import get_captcha_service
     from src.cache import get_cache
     from src.handlers import register_exception_handlers
     from src.responses.middleware import ResponseWrapperMiddleware
@@ -133,6 +141,7 @@ async def rbac_client(test_db, local_cache, admin_user, regular_user, superuser_
 
     app.dependency_overrides[get_session] = override_get_session
     app.dependency_overrides[get_cache] = override_get_cache
+    app.dependency_overrides[get_captcha_service] = lambda: MockCaptchaService()
 
     app.include_router(auth_router, prefix="/auth")
 
@@ -236,7 +245,7 @@ async def rbac_client(test_db, local_cache, admin_user, regular_user, superuser_
 async def get_auth_headers(client: AsyncClient, email: str, password: str) -> dict:
     response = await client.post(
         "/auth/jwt/login",
-        data={"username": email, "password": password},
+        data={"username": email, "password": password, "captchaVerifyParam": "valid"},
     )
     token = response.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}

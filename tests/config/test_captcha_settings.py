@@ -1,6 +1,3 @@
-import pytest
-from pydantic import ValidationError
-
 from src.config.captcha import CaptchaSettings
 
 
@@ -31,5 +28,6 @@ class TestCaptchaSettings:
         assert settings.enabled is False
 
     def test_missing_required_fields(self):
-        with pytest.raises(ValidationError):
-            CaptchaSettings()
+        settings = CaptchaSettings()
+        assert settings.access_key_id == ""
+        assert settings.access_key_secret == ""

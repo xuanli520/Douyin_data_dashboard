@@ -85,7 +85,7 @@ class TestAliyunCaptchaService:
             mock_body.result.verify_result = False
             return mock_body
 
-        mock_client = MagicMock()
+        mock_client = AsyncMock()
         mock_client.verify_intelligent_captcha_with_options = mock_verify
 
         with patch("src.auth.captcha.CaptchaClient") as mock_captcha_client:

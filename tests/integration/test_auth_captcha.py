@@ -51,7 +51,7 @@ async def test_login_captcha_invalid(test_client, test_user):
         assert data["msg"] == "Captcha verification failed"
         assert data["code"] == ErrorCode.AUTH_INVALID_CREDENTIALS
     finally:
-        del app.dependency_overrides[get_captcha_service]
+        app.dependency_overrides.pop(get_captcha_service, None)
 
 
 async def test_login_success_with_valid_captcha(test_client, test_user):
@@ -75,7 +75,7 @@ async def test_login_success_with_valid_captcha(test_client, test_user):
         assert "refresh_token" in data
         assert data["token_type"] == "Bearer"
     finally:
-        del app.dependency_overrides[get_captcha_service]
+        app.dependency_overrides.pop(get_captcha_service, None)
 
 
 async def test_login_wrong_password_with_valid_captcha(test_client, test_user):
@@ -97,7 +97,7 @@ async def test_login_wrong_password_with_valid_captcha(test_client, test_user):
         data = response.json()
         assert data["code"] == ErrorCode.AUTH_INVALID_CREDENTIALS
     finally:
-        del app.dependency_overrides[get_captcha_service]
+        app.dependency_overrides.pop(get_captcha_service, None)
 
 
 async def test_login_captcha_exception_failsafe(test_client, test_user):
@@ -119,4 +119,4 @@ async def test_login_captcha_exception_failsafe(test_client, test_user):
         data = response.json()
         assert data["msg"] == "Captcha verification failed"
     finally:
-        del app.dependency_overrides[get_captcha_service]
+        app.dependency_overrides.pop(get_captcha_service, None)
