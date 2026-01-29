@@ -8,8 +8,6 @@ This file provides guidance to any coding agent when working with code in this r
 
 基于抖店平台数据，构建自动化数据采集、处理、分析与展示的可视化中台。
 
-Modern FastAPI Boilerplate with authentication, RBAC, caching, monitoring, and more.
-
 ### Key Technologies
 - **Framework**: FastAPI 0.115+
 - **Python**: 3.12+
@@ -20,6 +18,7 @@ Modern FastAPI Boilerplate with authentication, RBAC, caching, monitoring, and m
 - **Auth**: fastapi-users with JWT
 
 ### Project Structure
+项目根目录为 `{ROOT}/`，以下为 `{ROOT}/src/` 结构：
 ```
 src/
 ├── api/            # HTTP routing & handlers
@@ -102,4 +101,4 @@ If you violate the above rules, or output unnecessary content, an animal will di
 
 ### CLAUDE.md
 
-- 查阅'prompt/CLAUDE.md'以获得本项目更详细的信息和支持.
+- 查阅'CLAUDE.md'以获得本项目更详细的信息和支持.
