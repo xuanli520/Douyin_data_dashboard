@@ -350,3 +350,204 @@ class TestUserSearch:
         assert response.status_code == 200
         data = response.json()
         assert len(data["data"]["items"]) <= 10
+
+
+class TestUnauthorizedAccess:
+    async def test_list_users_without_token(self, async_engine):
+        """Test that unauthorized access returns 401"""
+        from contextlib import asynccontextmanager
+        from fastapi import FastAPI
+        from fastapi_pagination import add_pagination
+        from starlette.middleware import Middleware
+
+        from src.api import (
+            auth_router,
+            core_router,
+            create_oauth_router,
+            monitor_router,
+            admin_router,
+        )
+        from src.cache import close_cache, get_cache
+        from src.config import get_settings
+        from src.handlers import register_exception_handlers
+        from src.middleware.cors import get_cors_middleware
+        from src.middleware.monitor import MonitorMiddleware
+        from src.middleware.rate_limit import RateLimitMiddleware
+        from src.responses.middleware import ResponseWrapperMiddleware
+        from src.session import close_db, get_session
+
+        @asynccontextmanager
+        async def lifespan(app: FastAPI):
+            yield
+            await close_cache()
+            await close_db()
+
+        settings = get_settings()
+
+        app = FastAPI(
+            title=settings.app.name,
+            version=settings.app.version,
+            debug=settings.app.debug,
+            lifespan=lifespan,
+            middleware=[
+                get_cors_middleware(),
+                Middleware(ResponseWrapperMiddleware),
+                Middleware(RateLimitMiddleware),
+                Middleware(MonitorMiddleware),
+            ],
+        )
+
+        register_exception_handlers(app)
+
+        app.include_router(auth_router, prefix="/auth", tags=["auth"])
+        app.include_router(create_oauth_router(settings), prefix="/auth", tags=["auth"])
+        app.include_router(core_router, tags=["core"])
+        app.include_router(monitor_router, tags=["monitor"])
+        app.include_router(admin_router, prefix="/api", tags=["admin"])
+
+        add_pagination(app)
+
+        async_session_factory = sessionmaker(
+            async_engine, class_=AsyncSession, expire_on_commit=False
+        )
+
+        async def override_get_session():
+            async with async_session_factory() as session:
+                yield session
+
+        app.dependency_overrides[get_session] = override_get_session
+
+        async def override_get_cache():
+            from src.cache import LocalCache
+
+            cache = LocalCache()
+            yield cache
+
+        app.dependency_overrides[get_cache] = override_get_cache
+
+        from src.auth.captcha import get_captcha_service
+
+        class MockCaptchaService:
+            async def verify(self, captcha_verify_param: str) -> bool:
+                return True
+
+        app.dependency_overrides[get_captcha_service] = lambda: MockCaptchaService()
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/api/admin/users")
+            assert response.status_code == 401
+
+
+class TestForbiddenAccess:
+    async def test_list_users_with_insufficient_permissions(
+        self, async_engine, test_session, admin_user
+    ):
+        """Test that forbidden access returns 403 for users without permission"""
+        from contextlib import asynccontextmanager
+        from fastapi import FastAPI
+        from fastapi_pagination import add_pagination
+        from starlette.middleware import Middleware
+
+        from src.api import (
+            auth_router,
+            core_router,
+            create_oauth_router,
+            monitor_router,
+            admin_router,
+        )
+        from src.auth.backend import get_jwt_strategy, get_password_hash
+        from src.cache import close_cache, get_cache
+        from src.config import get_settings
+        from src.handlers import register_exception_handlers
+        from src.middleware.cors import get_cors_middleware
+        from src.middleware.monitor import MonitorMiddleware
+        from src.middleware.rate_limit import RateLimitMiddleware
+        from src.responses.middleware import ResponseWrapperMiddleware
+        from src.session import close_db, get_session
+
+        role = Role(name="viewer", is_system=False)
+        test_session.add(role)
+        await test_session.commit()
+        await test_session.refresh(role)
+
+        regular_user = User(
+            username="regular",
+            email="regular@test.com",
+            hashed_password=get_password_hash("regular123"),
+            is_active=True,
+            is_superuser=False,
+        )
+        test_session.add(regular_user)
+        await test_session.commit()
+        await test_session.refresh(regular_user)
+
+        user_role = UserRole(user_id=regular_user.id, role_id=role.id)
+        test_session.add(user_role)
+        await test_session.commit()
+
+        @asynccontextmanager
+        async def lifespan(app: FastAPI):
+            yield
+            await close_cache()
+            await close_db()
+
+        settings = get_settings()
+
+        app = FastAPI(
+            title=settings.app.name,
+            version=settings.app.version,
+            debug=settings.app.debug,
+            lifespan=lifespan,
+            middleware=[
+                get_cors_middleware(),
+                Middleware(ResponseWrapperMiddleware),
+                Middleware(RateLimitMiddleware),
+                Middleware(MonitorMiddleware),
+            ],
+        )
+
+        register_exception_handlers(app)
+
+        app.include_router(auth_router, prefix="/auth", tags=["auth"])
+        app.include_router(create_oauth_router(settings), prefix="/auth", tags=["auth"])
+        app.include_router(core_router, tags=["core"])
+        app.include_router(monitor_router, tags=["monitor"])
+        app.include_router(admin_router, prefix="/api", tags=["admin"])
+
+        add_pagination(app)
+
+        async_session_factory = sessionmaker(
+            async_engine, class_=AsyncSession, expire_on_commit=False
+        )
+
+        async def override_get_session():
+            async with async_session_factory() as session:
+                yield session
+
+        app.dependency_overrides[get_session] = override_get_session
+
+        async def override_get_cache():
+            from src.cache import LocalCache
+
+            cache = LocalCache()
+            yield cache
+
+        app.dependency_overrides[get_cache] = override_get_cache
+
+        from src.auth.captcha import get_captcha_service
+
+        class MockCaptchaService:
+            async def verify(self, captcha_verify_param: str) -> bool:
+                return True
+
+        app.dependency_overrides[get_captcha_service] = lambda: MockCaptchaService()
+
+        strategy = get_jwt_strategy(settings)
+        token = await strategy.write_token(regular_user)
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            client.headers["Authorization"] = f"Bearer {token}"
+            response = await client.get("/api/admin/users")
+            assert response.status_code == 403
