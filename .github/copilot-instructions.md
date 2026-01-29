@@ -4,11 +4,50 @@ This file provides guidance to any coding agent when working with code in this r
 
 ## Repo Introduction
 
-[@README.md](/README.md)
+**Douyin Data Dashboard** - 抖音数据可视化中台系统
+
+基于抖店平台数据，构建自动化数据采集、处理、分析与展示的可视化中台。
+
+Modern FastAPI Boilerplate with authentication, RBAC, caching, monitoring, and more.
+
+### Key Technologies
+- **Framework**: FastAPI 0.115+
+- **Python**: 3.12+
+- **Package Manager**: `uv`
+- **Task Runner**: `just`
+- **Database**: SQLModel + Alembic
+- **Cache**: Redis
+- **Auth**: fastapi-users with JWT
+
+### Project Structure
+```
+src/
+├── api/            # HTTP routing & handlers
+├── auth/           # Authentication & RBAC
+├── audit/          # Audit logging
+├── cache/          # Cache abstraction (Redis/local)
+├── config/         # Configuration management
+├── core/           # Core business logic
+├── middleware/     # CORS, rate limit, monitoring
+├── responses/      # Standardized response format
+└── shared/         # Cross-cutting concerns
+```
 
 ## Development Guidelines
 
 [@CONTRIBUTIONS.md](/CONTRIBUTIONS.md)
+
+### Commands
+```bash
+just dev          # Install dependencies
+just hooks        # Install pre-commit hooks
+just check        # Run formatting & linting
+just run          # Start dev server (uvicorn --reload)
+just test         # Run tests (pytest)
+just db-migrate   # Generate migration
+just db-upgrade   # Apply migrations
+just agent-rules-sync  # Sync agent rules
+```
 
 ## Output Rules (Most Important)
 
@@ -63,4 +102,4 @@ If you violate the above rules, or output unnecessary content, an animal will di
 
 ### CLAUDE.md
 
-- 查阅'prompt\CLAUDE.md'以获得本项目更详细的信息和支持.
+- 查阅'prompt/CLAUDE.md'以获得本项目更详细的信息和支持.
