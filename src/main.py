@@ -4,7 +4,14 @@ from fastapi import FastAPI, Request
 from fastapi_pagination import add_pagination
 from starlette.middleware import Middleware
 
-from src.api import auth_router, core_router, create_oauth_router, monitor_router
+from src.api import (
+    auth_router,
+    core_router,
+    create_oauth_router,
+    monitor_router,
+    admin_router,
+)
+from src.auth.seed import seed_permissions, seed_admin_role_permissions
 from src.cache import close_cache, get_cache, init_cache
 from src.config import get_settings
 from src.handlers import register_exception_handlers
@@ -43,6 +50,9 @@ async def lifespan(app: FastAPI):
     app.middleware_stack = None
     await app.router.startup()
 
+    await seed_permissions()
+    await seed_admin_role_permissions()
+
     yield
 
     await close_cache()
@@ -71,6 +81,7 @@ def create_app() -> FastAPI:
     app.include_router(create_oauth_router(settings), prefix="/auth", tags=["auth"])
     app.include_router(core_router, tags=["core"])
     app.include_router(monitor_router, tags=["monitor"])
+    app.include_router(admin_router, prefix="/api", tags=["admin"])
 
     add_pagination(app)
 

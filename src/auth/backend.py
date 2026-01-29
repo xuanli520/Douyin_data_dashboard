@@ -10,10 +10,17 @@ from fastapi_users.authentication import (
     BearerTransport,
     JWTStrategy,
 )
+from fastapi_users.password import PasswordHelper
 
 from src.cache import CacheProtocol, get_cache
 from src.config import Settings, get_settings
 from src.shared.redis_keys import redis_keys
+
+_password_helper = PasswordHelper()
+
+
+def get_password_hash(password: str) -> str:
+    return _password_helper.hash(password)
 
 
 def get_jwt_strategy(settings=Depends(get_settings)) -> JWTStrategy:

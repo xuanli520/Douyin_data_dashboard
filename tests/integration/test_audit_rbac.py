@@ -19,20 +19,47 @@ class MockCaptchaService:
 
 @pytest.fixture
 async def rbac_data(test_db):
+    from sqlalchemy import select
+
     async with test_db() as session:
-        perm_read = Permission(id=1, code="user:read", name="Read Users", module="user")
-        perm_write = Permission(
-            id=2, code="user:write", name="Write Users", module="user"
-        )
-        session.add_all([perm_read, perm_write])
-        await session.commit()
+        result = await session.execute(select(Permission))
+        existing_perms = result.scalars().all()
+
+        perm_map = {p.code: p for p in existing_perms}
+
+        perm_read = perm_map.get("user:read")
+        perm_write = perm_map.get("user:create")
+
+        if perm_read is None or perm_write is None:
+            if perm_read is None:
+                perm_read = Permission(
+                    code="user:read", name="Read Users", module="user"
+                )
+                session.add(perm_read)
+            if perm_write is None:
+                perm_write = Permission(
+                    code="user:create", name="Create Users", module="user"
+                )
+                session.add(perm_write)
+            await session.commit()
+            await session.refresh(perm_read)
+            await session.refresh(perm_write)
 
         role_perms = [
-            RolePermission(role_id=1, permission_id=1),
-            RolePermission(role_id=1, permission_id=2),
-            RolePermission(role_id=2, permission_id=1),
+            RolePermission(role_id=1, permission_id=perm_read.id),
+            RolePermission(role_id=1, permission_id=perm_write.id),
+            RolePermission(role_id=2, permission_id=perm_read.id),
         ]
-        session.add_all(role_perms)
+        for rp in role_perms:
+            result = await session.execute(
+                select(RolePermission).where(
+                    RolePermission.role_id == rp.role_id,
+                    RolePermission.permission_id == rp.permission_id,
+                )
+            )
+            existing = result.scalar_one_or_none()
+            if not existing:
+                session.add(rp)
         await session.commit()
 
 
@@ -144,7 +171,7 @@ async def rbac_audit_client(
     router = APIRouter()
 
     @router.get(
-        "/perm-write", dependencies=[Depends(require_permissions("user:write"))]
+        "/perm-write", dependencies=[Depends(require_permissions("user:create"))]
     )
     async def perm_write():
         return {"message": "access granted"}
@@ -196,7 +223,7 @@ async def test_permission_check_granted_creates_audit_log(
         assert audit_log.actor_id == admin_user.id
         assert audit_log.extra is not None
         assert "permissions" in audit_log.extra
-        assert "user:write" in audit_log.extra["permissions"]
+        assert "user:create" in audit_log.extra["permissions"]
 
 
 @pytest.mark.asyncio
@@ -224,7 +251,7 @@ async def test_permission_check_denied_creates_audit_log(
         assert audit_log.actor_id == regular_user.id
         assert audit_log.extra is not None
         assert "permissions" in audit_log.extra
-        assert "user:write" in audit_log.extra["permissions"]
+        assert "user:create" in audit_log.extra["permissions"]
 
 
 @pytest.mark.asyncio

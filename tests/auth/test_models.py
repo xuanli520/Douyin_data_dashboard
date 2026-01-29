@@ -33,27 +33,27 @@ class TestPermissionSchema:
     async def test_create_permission(self, test_db):
         async with test_db() as session:
             perm = Permission(
-                code="user:delete",
-                name="Delete User",
-                description="Delete user accounts",
-                module="user",
+                code="test:delete",
+                name="Delete Test",
+                description="Delete test accounts",
+                module="test",
             )
             session.add(perm)
             await session.commit()
             await session.refresh(perm)
 
             assert perm.id is not None
-            assert perm.code == "user:delete"
-            assert perm.module == "user"
+            assert perm.code == "test:delete"
+            assert perm.module == "test"
             assert perm.created_at is not None
             assert perm.updated_at is not None
 
     async def test_permission_code_unique_constraint(self, test_db):
         async with test_db() as session:
-            session.add(Permission(code="user:read", name="Read User", module="user"))
+            session.add(Permission(code="test:read", name="Read Test", module="test"))
             await session.commit()
 
-            session.add(Permission(code="user:read", name="Read User 2", module="user"))
+            session.add(Permission(code="test:read", name="Read Test 2", module="test"))
             with pytest.raises(IntegrityError):
                 await session.commit()
 
