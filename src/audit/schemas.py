@@ -19,6 +19,9 @@ class AuditAction(StrEnum):
     PERMISSION_CHECK = "permission_check"
     ROLE_CHECK = "role_check"
     PROTECTED_RESOURCE_ACCESS = "protected_resource_access"
+    CREATE = "create"
+    UPDATE = "update"
+    DELETE = "delete"
 
 
 class AuditResult(StrEnum):
