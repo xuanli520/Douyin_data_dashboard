@@ -1,4 +1,5 @@
 import re
+from unittest.mock import MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -6,14 +7,26 @@ from starlette.responses import Response
 
 from src.middleware.monitor import MonitorMiddleware, generate_metrics
 from src.responses import ResponseWrapperMiddleware
+from src.auth.models import User
 
 
 @pytest.fixture
-def monitor_app():
-    from fastapi import APIRouter, FastAPI
+def mock_current_user() -> User:
+    user = MagicMock(spec=User)
+    user.id = 1
+    user.email = "test@example.com"
+    user.is_active = True
+    user.is_superuser = False
+    return user
+
+
+@pytest.fixture
+def monitor_app(mock_current_user: User):
+    from fastapi import APIRouter, FastAPI, Depends
     from starlette.middleware import Middleware
 
     from src.handlers import register_exception_handlers
+    from src.auth import current_user
 
     app = FastAPI(
         lifespan=lambda _: None,
@@ -24,6 +37,7 @@ def monitor_app():
     )
 
     register_exception_handlers(app)
+    app.dependency_overrides[current_user] = lambda: mock_current_user
 
     router = APIRouter()
 
@@ -44,7 +58,7 @@ def monitor_app():
         raise ValueError("Test error")
 
     @router.get("/metrics")
-    async def metrics():
+    async def metrics(current_user: User = Depends(current_user)):
         return Response(content=generate_metrics(), media_type="text/plain")
 
     app.include_router(router)
