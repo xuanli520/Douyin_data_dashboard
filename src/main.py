@@ -6,8 +6,10 @@ from starlette.middleware import Middleware
 
 from src.api import (
     auth_router,
+    core_router,
     create_oauth_router,
     admin_router,
+    monitor_router,
 )
 from src.auth.seed import seed_permissions, seed_admin_role_permissions
 from src.cache import close_cache, get_cache, init_cache
@@ -80,6 +82,8 @@ def create_app() -> FastAPI:
         create_oauth_router(settings), prefix="/api/v1/auth", tags=["auth"]
     )
     app.include_router(admin_router, prefix="/api/v1", tags=["admin"])
+    app.include_router(core_router)
+    app.include_router(monitor_router, prefix="/monitor")
 
     add_pagination(app)
 

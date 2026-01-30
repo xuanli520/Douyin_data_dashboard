@@ -8,6 +8,17 @@ from src.api.core import router as core_router, get_engine
 from src.cache import get_cache
 from src.responses import ResponseWrapperMiddleware
 from src.handlers import register_exception_handlers
+from src.auth.models import User
+
+
+@pytest.fixture
+def mock_current_user() -> User:
+    user = MagicMock(spec=User)
+    user.id = 1
+    user.email = "test@example.com"
+    user.is_active = True
+    user.is_superuser = False
+    return user
 
 
 @pytest.fixture
@@ -18,9 +29,12 @@ def health_app() -> FastAPI:
 
 
 @pytest.fixture
-def app_with_handlers(health_app: FastAPI) -> FastAPI:
+def app_with_handlers(health_app: FastAPI, mock_current_user: User) -> FastAPI:
+    from src.auth import current_user
+
     health_app.add_middleware(ResponseWrapperMiddleware)
     register_exception_handlers(health_app)
+    health_app.dependency_overrides[current_user] = lambda: mock_current_user
     return health_app
 
 
@@ -63,9 +77,6 @@ async def test_health_check_returns_raw_json(
         assert "components" in data
         assert "timestamp" in data
 
-    del app_with_handlers.dependency_overrides[get_cache]
-    del app_with_handlers.dependency_overrides[get_engine]
-
 
 @pytest.mark.asyncio
 async def test_health_check_contains_components(
@@ -87,9 +98,6 @@ async def test_health_check_contains_components(
         data = response.json()
         assert "database" in data["components"]
         assert "redis" in data["components"]
-
-    del app_with_handlers.dependency_overrides[get_cache]
-    del app_with_handlers.dependency_overrides[get_engine]
 
 
 @pytest.mark.asyncio
@@ -114,9 +122,6 @@ async def test_health_check_healthy_status(
         assert data["components"]["database"]["status"] == "healthy"
         assert data["components"]["redis"]["status"] == "healthy"
 
-    del app_with_handlers.dependency_overrides[get_cache]
-    del app_with_handlers.dependency_overrides[get_engine]
-
 
 @pytest.mark.asyncio
 async def test_health_check_has_latency_metrics(
@@ -138,9 +143,6 @@ async def test_health_check_has_latency_metrics(
         data = response.json()
         assert "latency_ms" in data["components"]["database"]
         assert "latency_ms" in data["components"]["redis"]
-
-    del app_with_handlers.dependency_overrides[get_cache]
-    del app_with_handlers.dependency_overrides[get_engine]
 
 
 @pytest.mark.asyncio
@@ -169,9 +171,6 @@ async def test_health_check_unhealthy_when_all_failed(
         assert data["components"]["database"]["status"] == "unhealthy"
         assert data["components"]["redis"]["status"] == "unhealthy"
 
-    del app_with_handlers.dependency_overrides[get_cache]
-    del app_with_handlers.dependency_overrides[get_engine]
-
 
 @pytest.mark.asyncio
 async def test_health_check_degraded_when_db_failed(
@@ -197,9 +196,6 @@ async def test_health_check_degraded_when_db_failed(
         assert data["status"] == "degraded"
         assert data["components"]["database"]["status"] == "unhealthy"
         assert data["components"]["redis"]["status"] == "healthy"
-
-    del app_with_handlers.dependency_overrides[get_cache]
-    del app_with_handlers.dependency_overrides[get_engine]
 
 
 @pytest.mark.asyncio
@@ -227,9 +223,6 @@ async def test_health_check_degraded_when_redis_failed(
         assert data["components"]["database"]["status"] == "healthy"
         assert data["components"]["redis"]["status"] == "unhealthy"
 
-    del app_with_handlers.dependency_overrides[get_cache]
-    del app_with_handlers.dependency_overrides[get_engine]
-
 
 @pytest.mark.asyncio
 async def test_health_check_error_details_in_response(
@@ -254,6 +247,3 @@ async def test_health_check_error_details_in_response(
         data = response.json()
         assert "error" in data["components"]["database"]
         assert db_error in data["components"]["database"]["error"]
-
-    del app_with_handlers.dependency_overrides[get_cache]
-    del app_with_handlers.dependency_overrides[get_engine]
