@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.cache import CacheProtocol, get_cache
+from src.auth import current_user, User
 
 router = APIRouter()
 
@@ -70,6 +71,7 @@ async def check_redis(
 
 @router.get("/health")
 async def health_check(
+    current_user: User = Depends(current_user),
     db_result: dict[str, Any] = Depends(check_database),
     redis_result: dict[str, Any] = Depends(check_redis),
 ) -> JSONResponse:
