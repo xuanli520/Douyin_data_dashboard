@@ -48,8 +48,6 @@ async def lifespan(app: FastAPI):
     app.middleware_stack = None
     await app.router.startup()
 
-    await seed_permissions()
-    await seed_admin_role_permissions()
 
     yield
 

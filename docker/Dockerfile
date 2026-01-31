@@ -12,7 +12,8 @@ WORKDIR /app
 # copy repository into image. .dockerignore will exclude tests, docs and other dev files
 COPY . .
 
-RUN python -m pip install --upgrade pip setuptools wheel \
+RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+    && python -m pip install --upgrade pip setuptools wheel \
     && pip install --no-cache-dir .
 
 EXPOSE 8000
