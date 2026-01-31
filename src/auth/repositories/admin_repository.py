@@ -248,12 +248,12 @@ class AdminRepository:
                 await self.session.delete(user)
 
     async def assign_user_roles(self, user_id: int, role_ids: list[int]) -> None:
-        user = await self.get_user_by_id(user_id)
-        if not user:
-            raise BusinessException(ErrorCode.USER_NOT_FOUND, "User not found")
-        await self._ensure_roles_exist(role_ids)
-
         async with self.session.begin():
+            user = await self.get_user_by_id(user_id)
+            if not user:
+                raise BusinessException(ErrorCode.USER_NOT_FOUND, "User not found")
+            await self._ensure_roles_exist(role_ids)
+
             await self.session.execute(
                 UserRole.__table__.delete().where(UserRole.user_id == user_id)
             )
@@ -285,16 +285,17 @@ class AdminRepository:
             ) from e
 
     async def update_role(self, role_id: int, data) -> Role:
-        role = await self.get_role_by_id(role_id)
-        if not role:
-            raise BusinessException(ErrorCode.ROLE_NOT_FOUND, "Role not found")
-        if role.is_system:
-            raise BusinessException(
-                ErrorCode.ROLE_CANNOT_MODIFY_SYSTEM, "Cannot modify system role"
-            )
-
         try:
             async with self.session.begin():
+                role = await self.get_role_by_id(role_id)
+                if not role:
+                    raise BusinessException(ErrorCode.ROLE_NOT_FOUND, "Role not found")
+                if role.is_system:
+                    raise BusinessException(
+                        ErrorCode.ROLE_CANNOT_MODIFY_SYSTEM,
+                        "Cannot modify system role",
+                    )
+
                 if data.name is not None:
                     role.name = data.name
                 if data.description is not None:
@@ -307,38 +308,33 @@ class AdminRepository:
             ) from e
 
     async def delete_role(self, role_id: int) -> None:
-        role = await self.get_role_by_id(role_id)
-        if not role:
-            raise BusinessException(ErrorCode.ROLE_NOT_FOUND, "Role not found")
-        if role.is_system:
-            raise BusinessException(
-                ErrorCode.ROLE_CANNOT_DELETE_SYSTEM, "Cannot delete system role"
-            )
-
         async with self.session.begin():
-            await self.session.execute(
-                RolePermission.__table__.delete().where(
-                    RolePermission.role_id == role_id
+            role = await self.get_role_by_id(role_id)
+            if not role:
+                raise BusinessException(ErrorCode.ROLE_NOT_FOUND, "Role not found")
+            if role.is_system:
+                raise BusinessException(
+                    ErrorCode.ROLE_CANNOT_DELETE_SYSTEM, "Cannot delete system role"
                 )
-            )
+
+            role.permissions = []
             await self.session.execute(
                 UserRole.__table__.delete().where(UserRole.role_id == role_id)
             )
             await self.session.delete(role)
 
     async def assign_permissions(self, role_id: int, permission_ids: list[int]) -> None:
-        role = await self.get_role_by_id(role_id)
-        if not role:
-            raise BusinessException(ErrorCode.ROLE_NOT_FOUND, "Role not found")
-        if role.is_system:
-            raise BusinessException(
-                ErrorCode.ROLE_CANNOT_MODIFY_SYSTEM, "Cannot modify system role"
-            )
-
         permission_ids = list(set(permission_ids))
-        await self._ensure_permissions_exist(permission_ids)
-
         async with self.session.begin():
+            role = await self.get_role_by_id(role_id)
+            if not role:
+                raise BusinessException(ErrorCode.ROLE_NOT_FOUND, "Role not found")
+            if role.is_system:
+                raise BusinessException(
+                    ErrorCode.ROLE_CANNOT_MODIFY_SYSTEM, "Cannot modify system role"
+                )
+
+            await self._ensure_permissions_exist(permission_ids)
             await self.session.execute(
                 RolePermission.__table__.delete().where(
                     RolePermission.role_id == role_id

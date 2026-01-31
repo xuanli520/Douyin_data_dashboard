@@ -6,9 +6,7 @@ from starlette.middleware import Middleware
 
 from src.api import (
     auth_router,
-    core_router,
     create_oauth_router,
-    monitor_router,
     admin_router,
 )
 from src.auth.seed import seed_permissions, seed_admin_role_permissions
@@ -75,11 +73,11 @@ def create_app() -> FastAPI:
 
     register_exception_handlers(app)
 
-    app.include_router(auth_router, prefix="/auth", tags=["auth"])
-    app.include_router(create_oauth_router(settings), prefix="/auth", tags=["auth"])
-    app.include_router(core_router, tags=["core"])
-    app.include_router(monitor_router, tags=["monitor"])
-    app.include_router(admin_router, prefix="/api", tags=["admin"])
+    app.include_router(auth_router, prefix="/api/v1/auth", tags=["auth"])
+    app.include_router(
+        create_oauth_router(settings), prefix="/api/v1/auth", tags=["auth"]
+    )
+    app.include_router(admin_router, prefix="/api/v1", tags=["admin"])
 
     add_pagination(app)
 
