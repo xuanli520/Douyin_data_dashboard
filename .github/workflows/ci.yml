@@ -36,6 +36,9 @@ jobs:
       - name: Sync dependencies
         run: uv sync
 
+      - name: Set auth settings
+        run: echo "AUTH__JWT_SECRET=${{ secrets.CI_JWT_SECRET }}" >> $GITHUB_ENV
+
       - name: Check Alembic migrations
         run: uv run alembic check
 
