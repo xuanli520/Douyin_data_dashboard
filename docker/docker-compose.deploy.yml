@@ -1,0 +1,75 @@
+# 服务器A: 数据库 + Redis
+# 使用: docker compose --profile infra up -d
+
+# 服务器B: 后端应用
+# 使用: docker compose --profile app up -d
+# 注意: 需要在 .env 中配置远程 DB__HOST 和 CACHE__HOST
+
+version: '3.9'
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: fastapi-boilerplate:latest
+    env_file:
+      - ../.env
+    ports:
+      - "${APP_EXPOSE_PORT:-8000}:8000"
+    profiles:
+      - app
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: fastapi-boilerplate:latest
+    env_file:
+      - ../.env
+    command: ["sh", "-c", "${WORKER_COMMAND:-sleep infinity}"]
+    profiles:
+      - app
+
+  scheduler:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: fastapi-boilerplate:latest
+    env_file:
+      - ../.env
+    command: ["sh", "-c", "${SCHEDULER_COMMAND:-sleep infinity}"]
+    profiles:
+      - app
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-appdb}
+    ports:
+      - "${DB_EXPOSE_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - infra
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "${REDIS_EXPOSE_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    profiles:
+      - infra
+
+volumes:
+  postgres_data:
+  redis_data:
