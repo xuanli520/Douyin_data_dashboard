@@ -170,7 +170,7 @@ async def rbac_client(test_db, local_cache, admin_user, regular_user, superuser_
     app.dependency_overrides[get_cache] = override_get_cache
     app.dependency_overrides[get_captcha_service] = lambda: MockCaptchaService()
 
-    app.include_router(auth_router, prefix="/auth")
+    app.include_router(auth_router, prefix="/api/v1/auth")
 
     router = APIRouter()
 
@@ -269,10 +269,10 @@ async def rbac_client(test_db, local_cache, admin_user, regular_user, superuser_
 
 async def get_auth_headers(client: AsyncClient, email: str, password: str) -> dict:
     response = await client.post(
-        "/auth/jwt/login",
+        "/api/v1/auth/jwt/login",
         data={"username": email, "password": password, "captchaVerifyParam": "valid"},
     )
-    token = response.json()["access_token"]
+    token = response.json()["data"]["access_token"]
     return {"Authorization": f"Bearer {token}"}
 
 
