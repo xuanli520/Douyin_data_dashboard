@@ -1,16 +1,55 @@
+# 服务器A: 数据库 + Redis
+# 使用: docker compose --profile infra up -d
+
+# 服务器B: 后端应用
+# 使用: docker compose --profile app up -d
+# 注意: 需要在 .env 中配置远程 DB__HOST 和 CACHE__HOST
+
 version: '3.9'
 
-
 services:
-  postgres:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: fastapi-boilerplate:latest
+    env_file:
+      - ../.env
+    ports:
+      - "${APP_EXPOSE_PORT:-8000}:8000"
+    profiles:
+      - app
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: fastapi-boilerplate:latest
+    env_file:
+      - ../.env
+    command: ["sh", "-c", "${WORKER_COMMAND:-sleep infinity}"]
+    profiles:
+      - app
+
+  scheduler:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: fastapi-boilerplate:latest
+    env_file:
+      - ../.env
+    command: ["sh", "-c", "${SCHEDULER_COMMAND:-sleep infinity}"]
+    profiles:
+      - app
+
+  db:
     image: postgres:15-alpine
-    profiles: ["server1"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-appdb}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${DB_EXPOSE_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -18,70 +57,18 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    profiles:
+      - infra
 
   redis:
     image: redis:7-alpine
-    profiles: ["server1"]
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${REDIS_EXPOSE_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
-
-  app:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    image: fastapi-boilerplate:latest
-    profiles: ["server2"]
-    env_file:
-      - ../.env
-    environment:
-      DB__HOST: ${DB__HOST:?set_db_host}
-      DB__PORT: ${DB__PORT:-5432}
-      DB__USER: ${DB__USER:-postgres}
-      DB__PASSWORD: ${DB__PASSWORD:-postgres}
-      DB__DATABASE: ${DB__DATABASE:-appdb}
-      CACHE__HOST: ${CACHE__HOST:?set_cache_host}
-      CACHE__PORT: ${CACHE__PORT:-6379}
-    ports:
-      - "${APP__PORT:-8000}:8000"
-
-  worker:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    image: fastapi-boilerplate:latest
-    profiles: ["server2"]
-    env_file:
-      - ../.env
-    environment:
-      DB__HOST: ${DB__HOST:?set_db_host}
-      DB__PORT: ${DB__PORT:-5432}
-      DB__USER: ${DB__USER:-postgres}
-      DB__PASSWORD: ${DB__PASSWORD:-postgres}
-      DB__DATABASE: ${DB__DATABASE:-appdb}
-      CACHE__HOST: ${CACHE__HOST:?set_cache_host}
-      CACHE__PORT: ${CACHE__PORT:-6379}
-    command: ["sh", "-c", "${WORKER_COMMAND:-sleep infinity}"]
-
-  scheduler:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    image: fastapi-boilerplate:latest
-    profiles: ["server2"]
-    env_file:
-      - ../.env
-    environment:
-      DB__HOST: ${DB__HOST:?set_db_host}
-      DB__PORT: ${DB__PORT:-5432}
-      DB__USER: ${DB__USER:-postgres}
-      DB__PASSWORD: ${DB__PASSWORD:-postgres}
-      DB__DATABASE: ${DB__DATABASE:-appdb}
-      CACHE__HOST: ${CACHE__HOST:?set_cache_host}
-      CACHE__PORT: ${CACHE__PORT:-6379}
-    command: ["sh", "-c", "${SCHEDULER_COMMAND:-sleep infinity}"]
+    profiles:
+      - infra
 
 volumes:
   postgres_data:
