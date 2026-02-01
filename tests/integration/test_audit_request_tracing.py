@@ -30,14 +30,14 @@ async def test_current_user_creates_audit_log(
     test_client = test_app_with_protected_route
 
     login_response = await test_client.post(
-        "/auth/jwt/login",
+        "/api/v1/auth/jwt/login",
         data={
             "username": "test@example.com",
             "password": "testpassword123",
             "captchaVerifyParam": "valid",
         },
     )
-    access_token = login_response.json()["access_token"]
+    access_token = login_response.json()["data"]["access_token"]
 
     response = await test_client.get(
         "/test/protected",
@@ -70,14 +70,14 @@ async def test_protected_resource_audit_includes_request_id(
     test_client = test_app_with_protected_route
 
     login_response = await test_client.post(
-        "/auth/jwt/login",
+        "/api/v1/auth/jwt/login",
         data={
             "username": "test@example.com",
             "password": "testpassword123",
             "captchaVerifyParam": "valid",
         },
     )
-    access_token = login_response.json()["access_token"]
+    access_token = login_response.json()["data"]["access_token"]
 
     response = await test_client.get(
         "/test/protected",
@@ -104,7 +104,7 @@ async def test_protected_resource_audit_includes_request_id(
 
 async def test_login_audit_without_request_id(test_client, test_user, test_db):
     response = await test_client.post(
-        "/auth/jwt/login",
+        "/api/v1/auth/jwt/login",
         data={
             "username": "test@example.com",
             "password": "testpassword123",
@@ -163,14 +163,14 @@ async def test_rbac_audit_includes_request_id(
     test_client = test_app_with_protected_route
 
     login_response = await test_client.post(
-        "/auth/jwt/login",
+        "/api/v1/auth/jwt/login",
         data={
             "username": "test@example.com",
             "password": "testpassword123",
             "captchaVerifyParam": "valid",
         },
     )
-    access_token = login_response.json()["access_token"]
+    access_token = login_response.json()["data"]["access_token"]
 
     response = await test_client.get(
         "/test/rbac",
@@ -201,14 +201,14 @@ async def test_concurrent_requests_have_unique_request_ids(
     test_client = test_app_with_protected_route
 
     login_response = await test_client.post(
-        "/auth/jwt/login",
+        "/api/v1/auth/jwt/login",
         data={
             "username": "test@example.com",
             "password": "testpassword123",
             "captchaVerifyParam": "valid",
         },
     )
-    access_token = login_response.json()["access_token"]
+    access_token = login_response.json()["data"]["access_token"]
 
     async def make_request():
         return await test_client.get(

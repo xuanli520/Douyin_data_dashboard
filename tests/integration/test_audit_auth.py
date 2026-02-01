@@ -6,7 +6,7 @@ from src.shared.errors import ErrorCode
 
 async def test_login_success_creates_audit_log(test_client, test_user, test_db):
     response = await test_client.post(
-        "/auth/jwt/login",
+        "/api/v1/auth/jwt/login",
         data={
             "username": "test@example.com",
             "password": "testpassword123",
@@ -33,7 +33,7 @@ async def test_login_success_creates_audit_log(test_client, test_user, test_db):
 
 async def test_login_failure_creates_audit_log(test_client, test_user, test_db):
     response = await test_client.post(
-        "/auth/jwt/login",
+        "/api/v1/auth/jwt/login",
         data={"username": "test@example.com", "password": "wrongpassword"},
     )
 
@@ -57,17 +57,17 @@ async def test_login_failure_creates_audit_log(test_client, test_user, test_db):
 
 async def test_refresh_token_success_creates_audit_log(test_client, test_user, test_db):
     login_response = await test_client.post(
-        "/auth/jwt/login",
+        "/api/v1/auth/jwt/login",
         data={
             "username": "test@example.com",
             "password": "testpassword123",
             "captchaVerifyParam": "valid",
         },
     )
-    refresh_token = login_response.json()["refresh_token"]
+    refresh_token = login_response.json()["data"]["refresh_token"]
 
     response = await test_client.post(
-        "/auth/jwt/refresh", params={"refresh_token": refresh_token}
+        "/api/v1/auth/jwt/refresh", params={"refresh_token": refresh_token}
     )
 
     assert response.status_code == 200
@@ -88,7 +88,7 @@ async def test_refresh_token_success_creates_audit_log(test_client, test_user, t
 
 async def test_refresh_token_failure_creates_audit_log(test_client, test_db):
     response = await test_client.post(
-        "/auth/jwt/refresh", params={"refresh_token": "invalid_token"}
+        "/api/v1/auth/jwt/refresh", params={"refresh_token": "invalid_token"}
     )
 
     assert response.status_code == 401
@@ -113,14 +113,14 @@ async def test_refresh_token_inactive_user_creates_audit_log(
     from src.auth.models import User
 
     login_response = await test_client.post(
-        "/auth/jwt/login",
+        "/api/v1/auth/jwt/login",
         data={
             "username": "test@example.com",
             "password": "testpassword123",
             "captchaVerifyParam": "valid",
         },
     )
-    refresh_token = login_response.json()["refresh_token"]
+    refresh_token = login_response.json()["data"]["refresh_token"]
 
     async with test_db() as session:
         user = await session.get(User, test_user.id)
@@ -129,7 +129,7 @@ async def test_refresh_token_inactive_user_creates_audit_log(
         await session.commit()
 
     response = await test_client.post(
-        "/auth/jwt/refresh", params={"refresh_token": refresh_token}
+        "/api/v1/auth/jwt/refresh", params={"refresh_token": refresh_token}
     )
 
     assert response.status_code == 403
@@ -151,17 +151,17 @@ async def test_refresh_token_inactive_user_creates_audit_log(
 
 async def test_logout_creates_audit_log(test_client, test_user, test_db):
     login_response = await test_client.post(
-        "/auth/jwt/login",
+        "/api/v1/auth/jwt/login",
         data={
             "username": "test@example.com",
             "password": "testpassword123",
             "captchaVerifyParam": "valid",
         },
     )
-    refresh_token = login_response.json()["refresh_token"]
+    refresh_token = login_response.json()["data"]["refresh_token"]
 
     response = await test_client.post(
-        "/auth/jwt/logout", params={"refresh_token": refresh_token}
+        "/api/v1/auth/jwt/logout", params={"refresh_token": refresh_token}
     )
 
     assert response.status_code == 200

@@ -61,5 +61,3 @@ markers = [
 name = "tsinghua"
 url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 
-[tool.uv]
-default-index = ["https://pypi.tuna.tsinghua.edu.cn/simple"]
