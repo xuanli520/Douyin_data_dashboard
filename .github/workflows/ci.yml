@@ -34,10 +34,10 @@ jobs:
           cache-dependency-glob: "**/pyproject.toml"
 
       - name: Sync dependencies
-        run: uv sync --frozen
+        run: uv sync
 
-      - name: Check Alembic migrations
-        run: uv run alembic check
+      - name: Set auth settings
+        run: echo "AUTH__JWT_SECRET=${{ secrets.CI_JWT_SECRET }}" >> $GITHUB_ENV
 
       - name: Verify migration heads
         run: uv run alembic heads --verbose

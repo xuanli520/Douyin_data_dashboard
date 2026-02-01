@@ -20,6 +20,7 @@ async def get_engine() -> AsyncEngine:
 
 @router.get("/test-logging")
 async def test_logging():
+    """Test logging endpoint - for development only, should be disabled in production."""
     logger.info("Application logger test")
     logger.bind(action="test", resource_type="logging", result="success").info(
         "Audit logger test"
