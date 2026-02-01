@@ -40,9 +40,17 @@ jobs:
         run: echo "AUTH__JWT_SECRET=${{ secrets.CI_JWT_SECRET }}" >> $GITHUB_ENV
 
       - name: Check Alembic migrations
+        env:
+          DB__DRIVER: ${{ vars.CI_DB_DRIVER || 'sqlite' }}
+          DB__DATABASE: ${{ vars.CI_DB_DATABASE }}
+          CACHE__BACKEND: ${{ vars.CI_CACHE_BACKEND || 'local' }}
         run: uv run alembic check
 
       - name: Verify migration heads
+        env:
+          DB__DRIVER: ${{ vars.CI_DB_DRIVER || 'sqlite' }}
+          DB__DATABASE: ${{ vars.CI_DB_DATABASE }}
+          CACHE__BACKEND: ${{ vars.CI_CACHE_BACKEND || 'local' }}
         run: uv run alembic heads --verbose
 
   test:
