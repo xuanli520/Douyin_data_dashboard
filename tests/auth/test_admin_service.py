@@ -1,5 +1,5 @@
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 from src.auth.services.admin_service import AdminService
 
@@ -7,7 +7,7 @@ pytestmark = pytest.mark.asyncio
 
 
 def create_mock_user():
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     mock_user = MagicMock()
     mock_user.id = 1
     mock_user.username = "test"
