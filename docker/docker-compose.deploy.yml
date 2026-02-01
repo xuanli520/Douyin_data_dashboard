@@ -1,0 +1,87 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    profiles: ["server1"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-appdb}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["server1"]
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: fastapi-boilerplate:latest
+    profiles: ["server2"]
+    env_file:
+      - ../.env
+    environment:
+      DB__HOST: ${DB__HOST:?set_db_host}
+      DB__PORT: ${DB__PORT:-5432}
+      DB__USER: ${DB__USER:-postgres}
+      DB__PASSWORD: ${DB__PASSWORD:-postgres}
+      DB__DATABASE: ${DB__DATABASE:-appdb}
+      CACHE__HOST: ${CACHE__HOST:?set_cache_host}
+      CACHE__PORT: ${CACHE__PORT:-6379}
+    ports:
+      - "${APP__PORT:-8000}:8000"
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: fastapi-boilerplate:latest
+    profiles: ["server2"]
+    env_file:
+      - ../.env
+    environment:
+      DB__HOST: ${DB__HOST:?set_db_host}
+      DB__PORT: ${DB__PORT:-5432}
+      DB__USER: ${DB__USER:-postgres}
+      DB__PASSWORD: ${DB__PASSWORD:-postgres}
+      DB__DATABASE: ${DB__DATABASE:-appdb}
+      CACHE__HOST: ${CACHE__HOST:?set_cache_host}
+      CACHE__PORT: ${CACHE__PORT:-6379}
+    command: ["sh", "-c", "${WORKER_COMMAND:-sleep infinity}"]
+
+  scheduler:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: fastapi-boilerplate:latest
+    profiles: ["server2"]
+    env_file:
+      - ../.env
+    environment:
+      DB__HOST: ${DB__HOST:?set_db_host}
+      DB__PORT: ${DB__PORT:-5432}
+      DB__USER: ${DB__USER:-postgres}
+      DB__PASSWORD: ${DB__PASSWORD:-postgres}
+      DB__DATABASE: ${DB__DATABASE:-appdb}
+      CACHE__HOST: ${CACHE__HOST:?set_cache_host}
+      CACHE__PORT: ${CACHE__PORT:-6379}
+    command: ["sh", "-c", "${SCHEDULER_COMMAND:-sleep infinity}"]
+
+volumes:
+  postgres_data:
+  redis_data:
