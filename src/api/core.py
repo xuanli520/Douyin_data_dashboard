@@ -8,7 +8,6 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.cache import CacheProtocol, get_cache
-from src.auth import current_user, User
 
 router = APIRouter()
 
@@ -21,6 +20,7 @@ async def get_engine() -> AsyncEngine:
 
 @router.get("/test-logging")
 async def test_logging():
+    """Test logging endpoint - for development only, should be disabled in production."""
     logger.info("Application logger test")
     logger.bind(action="test", resource_type="logging", result="success").info(
         "Audit logger test"
@@ -71,7 +71,6 @@ async def check_redis(
 
 @router.get("/health")
 async def health_check(
-    current_user: User = Depends(current_user),
     db_result: dict[str, Any] = Depends(check_database),
     redis_result: dict[str, Any] = Depends(check_redis),
 ) -> JSONResponse:
