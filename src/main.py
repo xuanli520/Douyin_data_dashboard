@@ -11,7 +11,6 @@ from src.api import (
     admin_router,
     monitor_router,
 )
-from src.auth.seed import seed_permissions, seed_admin_role_permissions
 from src.cache import close_cache, get_cache, init_cache
 from src.config import get_settings
 from src.handlers import register_exception_handlers
@@ -49,9 +48,6 @@ async def lifespan(app: FastAPI):
 
     app.middleware_stack = None
     await app.router.startup()
-
-    await seed_permissions()
-    await seed_admin_role_permissions()
 
     yield
 
