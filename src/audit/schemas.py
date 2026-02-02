@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import JSON, Column, DateTime, Text
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, Text
 from sqlmodel import Field, SQLModel
 
 from src.shared.mixins import now
@@ -46,7 +46,10 @@ class AuditLog(SQLModel, table=True):
         max_length=36,
         description="Request correlation ID - groups all audit logs from a single HTTP request",
     )
-    actor_id: int | None = Field(default=None, foreign_key="users.id", index=True)
+    actor_id: int | None = Field(
+        default=None,
+        sa_column=Column(ForeignKey("users.id", ondelete="SET NULL"), index=True),
+    )
     action: str = Field(nullable=False, max_length=64, index=True)
     resource_type: str | None = Field(default=None, max_length=64)
     resource_id: str | None = Field(default=None, sa_column=Column(Text))
