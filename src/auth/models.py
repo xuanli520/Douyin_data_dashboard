@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+from sqlalchemy import DateTime
 from sqlmodel import Field, Relationship, SQLModel
 
 from src.shared.mixins import TimestampMixin
@@ -12,6 +13,7 @@ class UserRole(SQLModel, table=True):
     role_id: int = Field(foreign_key="roles.id", primary_key=True)
     assigned_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
+        sa_type=DateTime(timezone=True),
     )
 
 
@@ -22,6 +24,7 @@ class RolePermission(SQLModel, table=True):
     permission_id: int = Field(foreign_key="permissions.id", primary_key=True)
     assigned_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
+        sa_type=DateTime(timezone=True),
     )
 
 
