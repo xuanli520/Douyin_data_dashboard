@@ -2,7 +2,7 @@
 
 Revision ID: 000000000000
 Revises:
-Create Date: 2026-02-02 22:39:08.799928
+Create Date: 2026-02-02 22:59:23.022347
 
 """
 
@@ -102,10 +102,7 @@ def upgrade() -> None:
         sa.Column("user_agent", sa.Text(), nullable=True),
         sa.Column("ip", sqlmodel.sql.sqltypes.AutoString(length=45), nullable=True),
         sa.Column("extra", sa.JSON(), nullable=True),
-        sa.ForeignKeyConstraint(
-            ["actor_id"],
-            ["users.id"],
-        ),
+        sa.ForeignKeyConstraint(["actor_id"], ["users.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
