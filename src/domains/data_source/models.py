@@ -1,17 +1,16 @@
 from datetime import datetime
-
 from sqlalchemy import DateTime, JSON
 from sqlmodel import Field, Relationship, SQLModel
 
 from src.shared.mixins import TimestampMixin
 from src.domains.data_source.enums import (
+    DataLatency,
     DataSourceStatus,
     DataSourceType,
-    ScrapingRuleStatus,
-    TargetType,
     Granularity,
     IncrementalMode,
-    DataLatency,
+    ScrapingRuleStatus,
+    TargetType,
 )
 
 
@@ -109,4 +108,4 @@ class ScrapingRule(SQLModel, TimestampMixin, table=True):
     )
     last_execution_id: str | None = Field(default=None, max_length=100)
 
-    data_source: DataSource = Relationship(back_populates="scraping_rules")
+    data_source: "DataSource" = Relationship(back_populates="scraping_rules")

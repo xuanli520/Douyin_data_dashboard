@@ -11,6 +11,7 @@ class DataSourceType(str, Enum):
     DOUYIN_SHOP = "douyin_shop"
     DOUYIN_APP = "douyin_app"
     FILE_IMPORT = "file_import"
+    SELF_HOSTED = "self_hosted"
 
 
 class ScrapingRuleStatus(str, Enum):
@@ -51,5 +52,7 @@ class IncrementalMode(str, Enum):
 class DataLatency(str, Enum):
     """数据延迟假设"""
 
+    REALTIME = "realtime"
     T_PLUS_1 = "T+1"
     T_PLUS_2 = "T+2"
+    T_PLUS_3 = "T+3"
