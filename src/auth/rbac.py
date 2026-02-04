@@ -11,13 +11,14 @@ from src.audit.service import extract_client_info
 from src.auth.models import Permission, Role, RolePermission, User, UserRole
 from src.exceptions import InsufficientPermissionException, InsufficientRoleException
 from src.session import get_session
+from src.shared.repository import BaseRepository
 
 from . import current_user
 
 
-class PermissionRepository:
+class PermissionRepository(BaseRepository):
     def __init__(self, session: AsyncSession):
-        self.session = session
+        super().__init__(session)
 
     async def get_user_permissions(self, user_id: int) -> set[str]:
         stmt = (

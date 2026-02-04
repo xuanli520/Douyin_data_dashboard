@@ -6,11 +6,12 @@ from sqlalchemy.orm import selectinload
 from src.auth.models import User, Role, Permission, UserRole, RolePermission
 from src.exceptions import BusinessException
 from src.shared.errors import ErrorCode
+from src.shared.repository import BaseRepository
 
 
-class AdminRepository:
+class AdminRepository(BaseRepository):
     def __init__(self, session: AsyncSession):
-        self.session = session
+        super().__init__(session)
 
     async def _ensure_roles_exist(self, role_ids: list[int]) -> None:
         if not role_ids:
@@ -94,28 +95,23 @@ class AdminRepository:
     async def create_user(self, data, hashed_password: str) -> User:
         await self._ensure_roles_exist(data.role_ids)
 
+        user = User(
+            username=data.username,
+            email=data.email,
+            hashed_password=hashed_password,
+            gender=data.gender,
+            phone=data.phone,
+            department=data.department,
+        )
+
+        async def _create():
+            self.session.add(user)
+            await self.session.flush()
+            for rid in set(data.role_ids):
+                self.session.add(UserRole(user_id=user.id, role_id=rid))
+
         try:
-            async with self.session.begin():
-                user = User(
-                    username=data.username,
-                    email=data.email,
-                    hashed_password=hashed_password,
-                    gender=data.gender,
-                    phone=data.phone,
-                    department=data.department,
-                )
-                self.session.add(user)
-                await self.session.flush()
-
-                for rid in set(data.role_ids):
-                    self.session.add(UserRole(user_id=user.id, role_id=rid))
-
-            stmt = (
-                select(User).options(selectinload(User.roles)).where(User.id == user.id)
-            )
-            user = (await self.session.execute(stmt)).scalar_one()
-            return user
-
+            await self._tx(_create)
         except IntegrityError as e:
             constraint_name = (
                 str(e.orig.diag.constraint_name) if e.orig and e.orig.diag else ""
@@ -135,6 +131,9 @@ class AdminRepository:
             raise BusinessException(
                 ErrorCode.USER_USERNAME_CONFLICT, "User unique conflict"
             ) from e
+
+        stmt = select(User).options(selectinload(User.roles)).where(User.id == user.id)
+        return (await self.session.execute(stmt)).scalar_one()
 
     async def update_user(
         self, user_id: int, data, hashed_password: str | None = None
@@ -146,71 +145,36 @@ class AdminRepository:
         if data.role_ids is not None:
             await self._ensure_roles_exist(data.role_ids)
 
+        async def _update():
+            if data.username is not None:
+                user.username = data.username
+            if data.email is not None:
+                user.email = data.email
+            if hashed_password is not None:
+                user.hashed_password = hashed_password
+            if data.is_active is not None:
+                user.is_active = data.is_active
+            if data.is_superuser is not None:
+                user.is_superuser = data.is_superuser
+            if data.is_verified is not None:
+                user.is_verified = data.is_verified
+            if data.gender is not None:
+                user.gender = data.gender
+            if data.phone is not None:
+                user.phone = data.phone
+            if data.department is not None:
+                user.department = data.department
+
+            if data.role_ids is not None:
+                await self.session.execute(
+                    UserRole.__table__.delete().where(UserRole.user_id == user_id)
+                )
+                for rid in set(data.role_ids):
+                    self.session.add(UserRole(user_id=user_id, role_id=rid))
+
         try:
-            in_transaction = self.session.in_transaction()
-            if in_transaction:
-                if data.username is not None:
-                    user.username = data.username
-                if data.email is not None:
-                    user.email = data.email
-                if hashed_password is not None:
-                    user.hashed_password = hashed_password
-                if data.is_active is not None:
-                    user.is_active = data.is_active
-                if data.is_superuser is not None:
-                    user.is_superuser = data.is_superuser
-                if data.is_verified is not None:
-                    user.is_verified = data.is_verified
-                if data.gender is not None:
-                    user.gender = data.gender
-                if data.phone is not None:
-                    user.phone = data.phone
-                if data.department is not None:
-                    user.department = data.department
-
-                if data.role_ids is not None:
-                    await self.session.execute(
-                        UserRole.__table__.delete().where(UserRole.user_id == user_id)
-                    )
-                    for rid in set(data.role_ids):
-                        self.session.add(UserRole(user_id=user_id, role_id=rid))
-            else:
-                async with self.session.begin():
-                    if data.username is not None:
-                        user.username = data.username
-                    if data.email is not None:
-                        user.email = data.email
-                    if hashed_password is not None:
-                        user.hashed_password = hashed_password
-                    if data.is_active is not None:
-                        user.is_active = data.is_active
-                    if data.is_superuser is not None:
-                        user.is_superuser = data.is_superuser
-                    if data.is_verified is not None:
-                        user.is_verified = data.is_verified
-                    if data.gender is not None:
-                        user.gender = data.gender
-                    if data.phone is not None:
-                        user.phone = data.phone
-                    if data.department is not None:
-                        user.department = data.department
-
-                    if data.role_ids is not None:
-                        await self.session.execute(
-                            UserRole.__table__.delete().where(
-                                UserRole.user_id == user_id
-                            )
-                        )
-                        for rid in set(data.role_ids):
-                            self.session.add(UserRole(user_id=user_id, role_id=rid))
-
-            stmt = (
-                select(User).options(selectinload(User.roles)).where(User.id == user_id)
-            )
-            user = (await self.session.execute(stmt)).scalar_one()
-            return user
+            await self._tx(_update)
         except IntegrityError as e:
-            await self.session.rollback()
             constraint_name = (
                 str(e.orig.diag.constraint_name) if e.orig and e.orig.diag else ""
             )
@@ -230,35 +194,36 @@ class AdminRepository:
                 ErrorCode.USER_USERNAME_CONFLICT, "User unique conflict"
             ) from e
 
+        stmt = select(User).options(selectinload(User.roles)).where(User.id == user_id)
+        return (await self.session.execute(stmt)).scalar_one()
+
     async def delete_user(self, user_id: int) -> None:
         user = await self.get_user_by_id(user_id)
         if not user:
             raise BusinessException(ErrorCode.USER_NOT_FOUND, "User not found")
 
-        if self.session.in_transaction():
+        async def _delete():
             await self.session.execute(
                 UserRole.__table__.delete().where(UserRole.user_id == user_id)
             )
             await self.session.delete(user)
-        else:
-            async with self.session.begin():
-                await self.session.execute(
-                    UserRole.__table__.delete().where(UserRole.user_id == user_id)
-                )
-                await self.session.delete(user)
+
+        await self._tx(_delete)
 
     async def assign_user_roles(self, user_id: int, role_ids: list[int]) -> None:
-        async with self.session.begin():
-            user = await self.get_user_by_id(user_id)
-            if not user:
-                raise BusinessException(ErrorCode.USER_NOT_FOUND, "User not found")
-            await self._ensure_roles_exist(role_ids)
+        user = await self.get_user_by_id(user_id)
+        if not user:
+            raise BusinessException(ErrorCode.USER_NOT_FOUND, "User not found")
+        await self._ensure_roles_exist(role_ids)
 
+        async def _assign():
             await self.session.execute(
                 UserRole.__table__.delete().where(UserRole.user_id == user_id)
             )
             for rid in set(role_ids):
                 self.session.add(UserRole(user_id=user_id, role_id=rid))
+
+        await self._tx(_assign)
 
     async def get_roles(self) -> list[Role]:
         stmt = select(Role).order_by(Role.created_at.desc())
@@ -273,10 +238,14 @@ class AdminRepository:
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def create_role(self, data) -> Role:
+        role = Role(name=data.name, description=data.description)
+
+        async def _create():
+            self.session.add(role)
+            return role
+
         try:
-            async with self.session.begin():
-                role = Role(name=data.name, description=data.description)
-                self.session.add(role)
+            await self._tx(_create)
             await self.session.refresh(role)
             return role
         except IntegrityError as e:
@@ -285,21 +254,23 @@ class AdminRepository:
             ) from e
 
     async def update_role(self, role_id: int, data) -> Role:
-        try:
-            async with self.session.begin():
-                role = await self.get_role_by_id(role_id)
-                if not role:
-                    raise BusinessException(ErrorCode.ROLE_NOT_FOUND, "Role not found")
-                if role.is_system:
-                    raise BusinessException(
-                        ErrorCode.ROLE_CANNOT_MODIFY_SYSTEM,
-                        "Cannot modify system role",
-                    )
+        role = await self.get_role_by_id(role_id)
+        if not role:
+            raise BusinessException(ErrorCode.ROLE_NOT_FOUND, "Role not found")
+        if role.is_system:
+            raise BusinessException(
+                ErrorCode.ROLE_CANNOT_MODIFY_SYSTEM,
+                "Cannot modify system role",
+            )
 
-                if data.name is not None:
-                    role.name = data.name
-                if data.description is not None:
-                    role.description = data.description
+        async def _update():
+            if data.name is not None:
+                role.name = data.name
+            if data.description is not None:
+                role.description = data.description
+
+        try:
+            await self._tx(_update)
             await self.session.refresh(role)
             return role
         except IntegrityError as e:
@@ -308,33 +279,35 @@ class AdminRepository:
             ) from e
 
     async def delete_role(self, role_id: int) -> None:
-        async with self.session.begin():
-            role = await self.get_role_by_id(role_id)
-            if not role:
-                raise BusinessException(ErrorCode.ROLE_NOT_FOUND, "Role not found")
-            if role.is_system:
-                raise BusinessException(
-                    ErrorCode.ROLE_CANNOT_DELETE_SYSTEM, "Cannot delete system role"
-                )
+        role = await self.get_role_by_id(role_id)
+        if not role:
+            raise BusinessException(ErrorCode.ROLE_NOT_FOUND, "Role not found")
+        if role.is_system:
+            raise BusinessException(
+                ErrorCode.ROLE_CANNOT_DELETE_SYSTEM, "Cannot delete system role"
+            )
 
+        async def _delete():
             role.permissions = []
             await self.session.execute(
                 UserRole.__table__.delete().where(UserRole.role_id == role_id)
             )
             await self.session.delete(role)
 
+        await self._tx(_delete)
+
     async def assign_permissions(self, role_id: int, permission_ids: list[int]) -> None:
         permission_ids = list(set(permission_ids))
-        async with self.session.begin():
-            role = await self.get_role_by_id(role_id)
-            if not role:
-                raise BusinessException(ErrorCode.ROLE_NOT_FOUND, "Role not found")
-            if role.is_system:
-                raise BusinessException(
-                    ErrorCode.ROLE_CANNOT_MODIFY_SYSTEM, "Cannot modify system role"
-                )
+        role = await self.get_role_by_id(role_id)
+        if not role:
+            raise BusinessException(ErrorCode.ROLE_NOT_FOUND, "Role not found")
+        if role.is_system:
+            raise BusinessException(
+                ErrorCode.ROLE_CANNOT_MODIFY_SYSTEM, "Cannot modify system role"
+            )
+        await self._ensure_permissions_exist(permission_ids)
 
-            await self._ensure_permissions_exist(permission_ids)
+        async def _assign():
             await self.session.execute(
                 RolePermission.__table__.delete().where(
                     RolePermission.role_id == role_id
@@ -342,6 +315,8 @@ class AdminRepository:
             )
             for pid in permission_ids:
                 self.session.add(RolePermission(role_id=role_id, permission_id=pid))
+
+        await self._tx(_assign)
 
     async def get_permissions(self) -> list[Permission]:
         stmt = select(Permission).order_by(Permission.module, Permission.code)
