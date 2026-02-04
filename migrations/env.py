@@ -8,7 +8,9 @@ from sqlmodel import SQLModel
 from alembic import context
 from src.config import get_settings
 
+from src.auth.models import User  # noqa: F401
 from src.audit.schemas import AuditLog  # noqa: F401
+from src.domains.data_source.models import DataSource, ScrapingRule  # noqa: F401
 
 config = context.config
 
