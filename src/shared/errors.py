@@ -32,6 +32,7 @@ class ErrorCode(IntEnum):
     DATASOURCE_NOT_FOUND = 60001
     DATASOURCE_NAME_CONFLICT = 60002
     SCRAPING_RULE_NOT_FOUND = 60003
+    # Reserved for future data source errors: 60004-60009
 
     SYS_INTERNAL_ERROR = 90003
 

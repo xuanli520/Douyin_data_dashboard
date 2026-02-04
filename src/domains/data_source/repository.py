@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, ColumnElement
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -20,7 +20,7 @@ class DataSourceRepository:
         status: DataSourceStatus | None = None,
         source_type: DataSourceType | None = None,
         name: str | None = None,
-    ) -> list:
+    ) -> list[ColumnElement[bool]]:
         conds = []
         if status is not None:
             conds.append(DataSource.status == status)
@@ -106,6 +106,8 @@ class DataSourceRepository:
         source_type: DataSourceType | None = None,
         name: str | None = None,
     ) -> tuple[list[DataSource], int]:
+        if page < 1 or size < 1:
+            raise ValueError("page and size must be positive")
         conds = self._build_conditions(status, source_type, name)
 
         stmt = (
@@ -153,7 +155,7 @@ class DataSourceRepository:
     async def update_last_used(self, data_source_id: int) -> None:
         data_source = await self.get_by_id(data_source_id)
         if data_source:
-            data_source.last_used_at = datetime.now()
+            data_source.last_used_at = datetime.now(timezone.utc)
             if self.session.in_transaction():
                 await self.session.flush()
             else:
@@ -163,7 +165,7 @@ class DataSourceRepository:
     async def record_error(self, data_source_id: int, error_msg: str) -> None:
         data_source = await self.get_by_id(data_source_id)
         if data_source:
-            data_source.last_error_at = datetime.now()
+            data_source.last_error_at = datetime.now(timezone.utc)
             data_source.last_error_msg = error_msg
             data_source.status = DataSourceStatus.ERROR
             if self.session.in_transaction():
@@ -178,17 +180,21 @@ class ScrapingRuleRepository:
         self.session = session
 
     async def create(self, data: dict) -> ScrapingRule:
-        if self.session.in_transaction():
-            rule = ScrapingRule(**data)
-            self.session.add(rule)
-            await self.session.flush()
-        else:
-            async with self.session.begin():
+        try:
+            if self.session.in_transaction():
                 rule = ScrapingRule(**data)
                 self.session.add(rule)
                 await self.session.flush()
-        await self.session.refresh(rule)
-        return rule
+            else:
+                async with self.session.begin():
+                    rule = ScrapingRule(**data)
+                    self.session.add(rule)
+                    await self.session.flush()
+            await self.session.refresh(rule)
+            return rule
+        except IntegrityError:
+            await self.session.rollback()
+            raise
 
     async def get_by_id(self, rule_id: int) -> ScrapingRule | None:
         stmt = (
