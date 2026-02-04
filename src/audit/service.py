@@ -6,12 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.audit.schemas import AuditLog
 from src.session import get_session
-from src.shared.repository import BaseRepository
 
 
-class AuditRepository(BaseRepository):
+class AuditRepository:
     def __init__(self, session: AsyncSession):
-        super().__init__(session)
+        self.session = session
 
     async def create_audit_log(
         self,
@@ -36,7 +35,8 @@ class AuditRepository(BaseRepository):
             ip=ip,
             extra=extra,
         )
-        await self._add(audit_log)
+        self.session.add(audit_log)
+        await self.session.commit()
 
 
 class AuditService:
