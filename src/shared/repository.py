@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from typing import Awaitable, TypeVar
+from typing import Any, TypeVar
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,18 +17,16 @@ class BaseRepository:
 
     async def _tx(
         self,
-        operation: Callable[[], Awaitable[T]],
-    ) -> T:
-        try:
-            if self.session.in_transaction():
-                result = await operation()
-                await self.session.flush()
-                return result
-            async with self.session.begin():
-                return await operation()
-        except IntegrityError as e:
-            await self.session.rollback()
-            return await self._handle_integrity_error(e)
+        operation: Callable[[], Any],
+    ) -> Any:
+        if self.session.in_transaction():
+            result = await operation()
+            await self.session.flush()
+            return result
+
+        async with self.session.begin():
+            result = await operation()
+            return result
 
     async def _add(self, instance: T) -> T:
         async def _do_add():
@@ -42,7 +40,7 @@ class BaseRepository:
             await self.session.flush()
         else:
             async with self.session.begin():
-                await self.session.flush()
+                pass
 
     async def _delete(self, instance: T) -> None:
         async def _do_delete():
@@ -53,7 +51,21 @@ class BaseRepository:
     async def _handle_integrity_error(
         self,
         error: IntegrityError,
-        constraint_mapping: dict[str, str] | None = None,
-        default_error: tuple[str, str] | None = None,
+        constraint_mapping: dict[str, str],
+        default_error: tuple[str, str],
     ) -> None:
-        raise error
+        from src.exceptions import BusinessException
+        from src.shared.errors import ErrorCode
+
+        constraint_name = (
+            str(error.orig.diag.constraint_name)
+            if error.orig and error.orig.diag
+            else ""
+        )
+        for key, message in constraint_mapping.items():
+            if key in constraint_name:
+                raise BusinessException(ErrorCode(message), message) from error
+
+        raise BusinessException(
+            ErrorCode(default_error[0]), default_error[1]
+        ) from error

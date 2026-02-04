@@ -145,35 +145,42 @@ class AdminRepository(BaseRepository):
         if data.role_ids is not None:
             await self._ensure_roles_exist(data.role_ids)
 
-        async def _update():
-            if data.username is not None:
-                user.username = data.username
-            if data.email is not None:
-                user.email = data.email
-            if hashed_password is not None:
-                user.hashed_password = hashed_password
-            if data.is_active is not None:
-                user.is_active = data.is_active
-            if data.is_superuser is not None:
-                user.is_superuser = data.is_superuser
-            if data.is_verified is not None:
-                user.is_verified = data.is_verified
-            if data.gender is not None:
-                user.gender = data.gender
-            if data.phone is not None:
-                user.phone = data.phone
-            if data.department is not None:
-                user.department = data.department
-
-            if data.role_ids is not None:
-                await self.session.execute(
-                    UserRole.__table__.delete().where(UserRole.user_id == user_id)
-                )
-                for rid in set(data.role_ids):
-                    self.session.add(UserRole(user_id=user_id, role_id=rid))
-
         try:
+
+            async def _update():
+                if data.username is not None:
+                    user.username = data.username
+                if data.email is not None:
+                    user.email = data.email
+                if hashed_password is not None:
+                    user.hashed_password = hashed_password
+                if data.is_active is not None:
+                    user.is_active = data.is_active
+                if data.is_superuser is not None:
+                    user.is_superuser = data.is_superuser
+                if data.is_verified is not None:
+                    user.is_verified = data.is_verified
+                if data.gender is not None:
+                    user.gender = data.gender
+                if data.phone is not None:
+                    user.phone = data.phone
+                if data.department is not None:
+                    user.department = data.department
+
+                if data.role_ids is not None:
+                    await self.session.execute(
+                        UserRole.__table__.delete().where(UserRole.user_id == user_id)
+                    )
+                    for rid in set(data.role_ids):
+                        self.session.add(UserRole(user_id=user_id, role_id=rid))
+
             await self._tx(_update)
+
+            stmt = (
+                select(User).options(selectinload(User.roles)).where(User.id == user_id)
+            )
+            user = (await self.session.execute(stmt)).scalar_one()
+            return user
         except IntegrityError as e:
             constraint_name = (
                 str(e.orig.diag.constraint_name) if e.orig and e.orig.diag else ""
