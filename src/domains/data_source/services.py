@@ -64,17 +64,24 @@ class DataSourceTypeRegistry:
     @classmethod
     def validate(cls, ds_type: DataSourceType, config: dict[str, Any]) -> None:
         validator = cls._validators.get(ds_type)
-        if validator:
-            validator(config)
+        if not validator:
+            raise BusinessException(
+                ErrorCode.DATASOURCE_UNSUPPORTED_TYPE,
+                f"No validator for type: {ds_type}",
+            )
+        validator(config)
 
     @classmethod
     def extract_config(
         cls, ds_type: DataSourceType, config: dict[str, Any]
     ) -> dict[str, Any]:
         extractor = cls._config_extractors.get(ds_type)
-        if extractor:
-            return extractor(config)
-        return {"extra_config": config}
+        if not extractor:
+            raise BusinessException(
+                ErrorCode.DATASOURCE_UNSUPPORTED_TYPE,
+                f"No config extractor for type: {ds_type}",
+            )
+        return extractor(config)
 
     @classmethod
     async def test_connection(cls, ds: DataSource) -> tuple[bool, str]:
@@ -135,7 +142,7 @@ def _extract_file_upload_config(config: dict[str, Any]) -> dict[str, Any]:
 @DataSourceTypeRegistry.register_connection_tester(ModelDataSourceType.DOUYIN_SHOP)
 async def _test_douyin_shop_connection(ds: DataSource) -> tuple[bool, str]:
     if not ds.api_key or not ds.api_secret:
-        return False, ErrorCode.DATASOURCE_CONNECTION_FAILED.name
+        return False, "Missing API credentials"
     return True, "Connection validated"
 
 
@@ -190,8 +197,7 @@ class DataSourceService:
 
         ds_data = {
             "name": data.name,
-            "source_type": self._map_schema_type_to_model_type(data.type)
-            or ModelDataSourceType.DOUYIN_SHOP,
+            "source_type": self._map_schema_type_to_model_type(data.type),
             "status": data.status,
             "description": data.description,
             "created_by_id": user_id,
@@ -272,7 +278,7 @@ class DataSourceService:
 
         if ds.status == DataSourceStatus.ACTIVE:
             raise BusinessException(
-                ErrorCode.DATA_VALIDATION_FAILED, "DataSource is already active"
+                ErrorCode.DATASOURCE_ALREADY_ACTIVE, "DataSource is already active"
             )
 
         ds = await self.ds_repo.update(
@@ -294,7 +300,7 @@ class DataSourceService:
 
         if ds.status == DataSourceStatus.INACTIVE:
             raise BusinessException(
-                ErrorCode.DATA_VALIDATION_FAILED, "DataSource is already inactive"
+                ErrorCode.DATASOURCE_ALREADY_INACTIVE, "DataSource is already inactive"
             )
 
         ds = await self.ds_repo.update(

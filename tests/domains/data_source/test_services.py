@@ -244,7 +244,7 @@ class TestDataSourceServiceUnit:
 
         with pytest.raises(BusinessException) as exc_info:
             await service.activate(1, user_id=1)
-        assert exc_info.value.code == ErrorCode.DATA_VALIDATION_FAILED
+        assert exc_info.value.code == ErrorCode.DATASOURCE_ALREADY_ACTIVE
 
     async def test_deactivate_success(self):
         mock_ds_repo = AsyncMock()
@@ -277,7 +277,7 @@ class TestDataSourceServiceUnit:
 
         with pytest.raises(BusinessException) as exc_info:
             await service.deactivate(1, user_id=1)
-        assert exc_info.value.code == ErrorCode.DATA_VALIDATION_FAILED
+        assert exc_info.value.code == ErrorCode.DATASOURCE_ALREADY_INACTIVE
 
     async def test_validate_connection_success(self):
         mock_ds_repo = AsyncMock()
