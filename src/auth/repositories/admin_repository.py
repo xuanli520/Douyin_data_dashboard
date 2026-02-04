@@ -6,11 +6,12 @@ from sqlalchemy.orm import selectinload
 from src.auth.models import User, Role, Permission, UserRole, RolePermission
 from src.exceptions import BusinessException
 from src.shared.errors import ErrorCode
+from src.shared.repository import BaseRepository
 
 
-class AdminRepository:
+class AdminRepository(BaseRepository):
     def __init__(self, session: AsyncSession):
-        self.session = session
+        super().__init__(session)
 
     async def _ensure_roles_exist(self, role_ids: list[int]) -> None:
         if not role_ids:
@@ -147,8 +148,8 @@ class AdminRepository:
             await self._ensure_roles_exist(data.role_ids)
 
         try:
-            in_transaction = self.session.in_transaction()
-            if in_transaction:
+
+            async def _update():
                 if data.username is not None:
                     user.username = data.username
                 if data.email is not None:
@@ -174,35 +175,8 @@ class AdminRepository:
                     )
                     for rid in set(data.role_ids):
                         self.session.add(UserRole(user_id=user_id, role_id=rid))
-            else:
-                async with self.session.begin():
-                    if data.username is not None:
-                        user.username = data.username
-                    if data.email is not None:
-                        user.email = data.email
-                    if hashed_password is not None:
-                        user.hashed_password = hashed_password
-                    if data.is_active is not None:
-                        user.is_active = data.is_active
-                    if data.is_superuser is not None:
-                        user.is_superuser = data.is_superuser
-                    if data.is_verified is not None:
-                        user.is_verified = data.is_verified
-                    if data.gender is not None:
-                        user.gender = data.gender
-                    if data.phone is not None:
-                        user.phone = data.phone
-                    if data.department is not None:
-                        user.department = data.department
 
-                    if data.role_ids is not None:
-                        await self.session.execute(
-                            UserRole.__table__.delete().where(
-                                UserRole.user_id == user_id
-                            )
-                        )
-                        for rid in set(data.role_ids):
-                            self.session.add(UserRole(user_id=user_id, role_id=rid))
+            await self._tx(_update)
 
             stmt = (
                 select(User).options(selectinload(User.roles)).where(User.id == user_id)
@@ -235,17 +209,13 @@ class AdminRepository:
         if not user:
             raise BusinessException(ErrorCode.USER_NOT_FOUND, "User not found")
 
-        if self.session.in_transaction():
+        async def _delete():
             await self.session.execute(
                 UserRole.__table__.delete().where(UserRole.user_id == user_id)
             )
             await self.session.delete(user)
-        else:
-            async with self.session.begin():
-                await self.session.execute(
-                    UserRole.__table__.delete().where(UserRole.user_id == user_id)
-                )
-                await self.session.delete(user)
+
+        await self._tx(_delete)
 
     async def assign_user_roles(self, user_id: int, role_ids: list[int]) -> None:
         async with self.session.begin():
