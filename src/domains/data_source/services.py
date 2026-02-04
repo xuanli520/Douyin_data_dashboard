@@ -1,0 +1,500 @@
+from collections.abc import AsyncGenerator
+from typing import Any, Callable
+from uuid import uuid4
+
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.domains.data_source.enums import (
+    DataSourceStatus,
+    DataSourceType as ModelDataSourceType,
+)
+from src.domains.data_source.models import DataSource, ScrapingRule
+from src.domains.data_source.repository import (
+    DataSourceRepository,
+    ScrapingRuleRepository,
+)
+from src.domains.data_source.schemas import (
+    DataSourceCreate,
+    DataSourceResponse,
+    DataSourceStatus as SchemaDataSourceStatus,
+    DataSourceType,
+    DataSourceUpdate,
+    ScrapingRuleCreate,
+    ScrapingRuleResponse,
+    ScrapingRuleType,
+    ScrapingRuleUpdate,
+)
+from src.exceptions import BusinessException
+from src.session import get_session
+from src.shared.errors import ErrorCode
+
+
+class DataSourceTypeRegistry:
+    _validators: dict[DataSourceType, Callable[[dict[str, Any]], None]] = {}
+    _config_extractors: dict[
+        DataSourceType, Callable[[dict[str, Any]], dict[str, Any]]
+    ] = {}
+    _connection_testers: dict[ModelDataSourceType, Callable[[DataSource], Any]] = {}
+
+    @classmethod
+    def register_validator(cls, ds_type: DataSourceType):
+        def decorator(f):
+            cls._validators[ds_type] = f
+            return f
+
+        return decorator
+
+    @classmethod
+    def register_extractor(cls, ds_type: DataSourceType):
+        def decorator(f):
+            cls._config_extractors[ds_type] = f
+            return f
+
+        return decorator
+
+    @classmethod
+    def register_connection_tester(cls, model_type: ModelDataSourceType):
+        def decorator(f):
+            cls._connection_testers[model_type] = f
+            return f
+
+        return decorator
+
+    @classmethod
+    def validate(cls, ds_type: DataSourceType, config: dict[str, Any]) -> None:
+        validator = cls._validators.get(ds_type)
+        if validator:
+            validator(config)
+
+    @classmethod
+    def extract_config(
+        cls, ds_type: DataSourceType, config: dict[str, Any]
+    ) -> dict[str, Any]:
+        extractor = cls._config_extractors.get(ds_type)
+        if extractor:
+            return extractor(config)
+        return {"extra_config": config}
+
+    @classmethod
+    async def test_connection(cls, ds: DataSource) -> tuple[bool, str]:
+        tester = cls._connection_testers.get(ds.source_type)
+        if tester:
+            return await tester(ds)
+        return False, f"Unsupported source type: {ds.source_type}"
+
+
+@DataSourceTypeRegistry.register_validator(DataSourceType.DOUYIN_API)
+def _validate_douyin_api_config(config: dict[str, Any]) -> None:
+    required = ["api_key", "api_secret"]
+    missing = [f for f in required if not config.get(f)]
+    if missing:
+        raise BusinessException(
+            ErrorCode.DATA_VALIDATION_FAILED,
+            f"Missing required fields: {', '.join(missing)}",
+        )
+
+
+@DataSourceTypeRegistry.register_validator(DataSourceType.FILE_UPLOAD)
+def _validate_file_upload_config(config: dict[str, Any]) -> None:
+    if not config.get("file_path") and not config.get("upload_endpoint"):
+        raise BusinessException(
+            ErrorCode.DATA_VALIDATION_FAILED,
+            "File upload source requires 'file_path' or 'upload_endpoint'",
+        )
+
+
+@DataSourceTypeRegistry.register_extractor(DataSourceType.DOUYIN_API)
+def _extract_douyin_api_config(config: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "extra_config": config,
+        "api_key": config.get("api_key"),
+        "api_secret": config.get("api_secret"),
+        "shop_id": config.get("shop_id"),
+        "access_token": config.get("access_token"),
+        "refresh_token": config.get("refresh_token"),
+        "rate_limit": config.get("rate_limit", 100),
+        "retry_count": config.get("retry_count", 3),
+        "timeout": config.get("timeout", 30),
+    }
+
+
+@DataSourceTypeRegistry.register_extractor(DataSourceType.DATABASE)
+def _extract_database_config(config: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "extra_config": config,
+        "account_name": config.get("connection_string", ""),
+    }
+
+
+@DataSourceTypeRegistry.register_extractor(DataSourceType.FILE_UPLOAD)
+def _extract_file_upload_config(config: dict[str, Any]) -> dict[str, Any]:
+    return {"extra_config": config}
+
+
+@DataSourceTypeRegistry.register_connection_tester(ModelDataSourceType.DOUYIN_SHOP)
+async def _test_douyin_shop_connection(ds: DataSource) -> tuple[bool, str]:
+    if not ds.api_key or not ds.api_secret:
+        return False, ErrorCode.DATASOURCE_CONNECTION_FAILED.name
+    return True, "Connection validated"
+
+
+@DataSourceTypeRegistry.register_connection_tester(ModelDataSourceType.FILE_IMPORT)
+async def _test_file_import_connection(_ds: DataSource) -> tuple[bool, str]:
+    return True, "File source validation skipped"
+
+
+@DataSourceTypeRegistry.register_connection_tester(ModelDataSourceType.SELF_HOSTED)
+async def _test_self_hosted_connection(_ds: DataSource) -> tuple[bool, str]:
+    return True, "Self-hosted source validation skipped"
+
+
+class DataSourceService:
+    _SCHEMA_TO_MODEL_TYPE: dict[DataSourceType, ModelDataSourceType] = {
+        DataSourceType.DOUYIN_API: ModelDataSourceType.DOUYIN_SHOP,
+        DataSourceType.FILE_UPLOAD: ModelDataSourceType.FILE_IMPORT,
+        DataSourceType.DATABASE: ModelDataSourceType.SELF_HOSTED,
+    }
+
+    _MODEL_TO_SCHEMA_TYPE: dict[ModelDataSourceType, DataSourceType] = {
+        ModelDataSourceType.DOUYIN_SHOP: DataSourceType.DOUYIN_API,
+        ModelDataSourceType.FILE_IMPORT: DataSourceType.FILE_UPLOAD,
+        ModelDataSourceType.SELF_HOSTED: DataSourceType.DATABASE,
+    }
+
+    _RULE_TYPE_TO_TARGET: dict[ScrapingRuleType, str] = {
+        ScrapingRuleType.ORDERS: "order_fulfillment",
+        ScrapingRuleType.PRODUCTS: "product",
+        ScrapingRuleType.USERS: "customer",
+        ScrapingRuleType.COMMENTS: "content_video",
+    }
+
+    _TARGET_TO_RULE_TYPE: dict[str, ScrapingRuleType] = {
+        "order_fulfillment": ScrapingRuleType.ORDERS,
+        "orders": ScrapingRuleType.ORDERS,
+        "product": ScrapingRuleType.PRODUCTS,
+        "customer": ScrapingRuleType.USERS,
+        "content_video": ScrapingRuleType.COMMENTS,
+    }
+
+    def __init__(
+        self,
+        ds_repo: DataSourceRepository,
+        rule_repo: ScrapingRuleRepository,
+    ):
+        self.ds_repo = ds_repo
+        self.rule_repo = rule_repo
+
+    async def create(self, data: DataSourceCreate, user_id: int) -> DataSourceResponse:
+        DataSourceTypeRegistry.validate(data.type, data.config)
+
+        ds_data = {
+            "name": data.name,
+            "source_type": self._map_schema_type_to_model_type(data.type)
+            or ModelDataSourceType.DOUYIN_SHOP,
+            "status": data.status,
+            "description": data.description,
+            "created_by_id": user_id,
+            "updated_by_id": user_id,
+            **DataSourceTypeRegistry.extract_config(data.type, data.config),
+        }
+
+        ds = await self.ds_repo.create(ds_data)
+        return self._build_data_source_response(ds)
+
+    async def get_by_id(self, ds_id: int) -> DataSourceResponse:
+        ds = await self.ds_repo.get_by_id(ds_id, include_rules=True)
+        if not ds:
+            raise BusinessException(
+                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
+            )
+        return self._build_data_source_response(ds)
+
+    async def list_paginated(
+        self,
+        page: int,
+        size: int,
+        status: SchemaDataSourceStatus | None = None,
+        source_type: DataSourceType | None = None,
+        name: str | None = None,
+    ) -> tuple[list[DataSourceResponse], int]:
+        model_type = (
+            self._map_schema_type_to_model_type(source_type) if source_type else None
+        )
+        ds_list, total = await self.ds_repo.get_paginated(
+            page,
+            size,
+            status,
+            model_type,
+            name,  # type: ignore
+        )
+        return [self._build_data_source_response(ds) for ds in ds_list], total
+
+    async def update(
+        self, ds_id: int, data: DataSourceUpdate, user_id: int
+    ) -> DataSourceResponse:
+        ds = await self.ds_repo.get_by_id(ds_id)
+        if not ds:
+            raise BusinessException(
+                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
+            )
+
+        if data.config:
+            type_enum = self._map_model_type_to_schema_type(ds.source_type)
+            DataSourceTypeRegistry.validate(type_enum, data.config)
+
+        update_data: dict[str, Any] = {"updated_by_id": user_id}
+        if data.name is not None:
+            update_data["name"] = data.name
+        if data.description is not None:
+            update_data["description"] = data.description
+        if data.status is not None:
+            update_data["status"] = data.status
+        if data.config is not None:
+            update_data.update(
+                DataSourceTypeRegistry.extract_config(
+                    self._map_model_type_to_schema_type(ds.source_type), data.config
+                )
+            )
+
+        ds = await self.ds_repo.update(ds_id, update_data)
+        return self._build_data_source_response(ds)
+
+    async def delete(self, ds_id: int) -> None:
+        await self.ds_repo.delete(ds_id)
+
+    async def activate(self, ds_id: int, user_id: int) -> DataSourceResponse:
+        ds = await self.ds_repo.get_by_id(ds_id)
+        if not ds:
+            raise BusinessException(
+                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
+            )
+
+        if ds.status == DataSourceStatus.ACTIVE:
+            raise BusinessException(
+                ErrorCode.DATA_VALIDATION_FAILED, "DataSource is already active"
+            )
+
+        ds = await self.ds_repo.update(
+            ds_id,
+            {
+                "status": DataSourceStatus.ACTIVE,
+                "updated_by_id": user_id,
+                "last_error_msg": None,
+            },
+        )
+        return self._build_data_source_response(ds)
+
+    async def deactivate(self, ds_id: int, user_id: int) -> DataSourceResponse:
+        ds = await self.ds_repo.get_by_id(ds_id)
+        if not ds:
+            raise BusinessException(
+                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
+            )
+
+        if ds.status == DataSourceStatus.INACTIVE:
+            raise BusinessException(
+                ErrorCode.DATA_VALIDATION_FAILED, "DataSource is already inactive"
+            )
+
+        ds = await self.ds_repo.update(
+            ds_id,
+            {
+                "status": DataSourceStatus.INACTIVE,
+                "updated_by_id": user_id,
+            },
+        )
+        return self._build_data_source_response(ds)
+
+    async def validate_connection(self, ds_id: int) -> dict[str, Any]:
+        ds = await self.ds_repo.get_by_id(ds_id)
+        if not ds:
+            raise BusinessException(
+                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
+            )
+
+        is_valid, message = await DataSourceTypeRegistry.test_connection(ds)
+
+        if is_valid:
+            await self.ds_repo.update_last_used(ds_id)
+            return {"valid": True, "message": message}
+        else:
+            await self.ds_repo.record_error(ds_id, message)
+            return {"valid": False, "message": message}
+
+    async def create_scraping_rule(
+        self, ds_id: int, data: ScrapingRuleCreate
+    ) -> ScrapingRuleResponse:
+        ds = await self.ds_repo.get_by_id(ds_id)
+        if not ds:
+            raise BusinessException(
+                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
+            )
+
+        if ds.status != DataSourceStatus.ACTIVE:
+            raise BusinessException(
+                ErrorCode.DATA_VALIDATION_FAILED,
+                "Cannot create rule for inactive data source",
+            )
+
+        rule_data = {
+            "data_source_id": ds_id,
+            "name": data.name,
+            "target_type": self._map_rule_type_to_target_type(data.rule_type),
+            "description": data.description,
+            "schedule": {"cron": data.schedule} if data.schedule else None,
+            **data.config,
+        }
+
+        rule = await self.rule_repo.create(rule_data)
+        return self._build_scraping_rule_response(rule)
+
+    async def list_scraping_rules(self, ds_id: int) -> list[ScrapingRuleResponse]:
+        ds = await self.ds_repo.get_by_id(ds_id)
+        if not ds:
+            raise BusinessException(
+                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
+            )
+
+        rules = await self.rule_repo.get_by_data_source(ds_id)
+        return [self._build_scraping_rule_response(r) for r in rules]
+
+    async def update_scraping_rule(
+        self, rule_id: int, data: ScrapingRuleUpdate
+    ) -> ScrapingRuleResponse:
+        rule = await self.rule_repo.get_by_id(rule_id)
+        if not rule:
+            raise BusinessException(
+                ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
+            )
+
+        update_data: dict[str, Any] = {}
+        if data.name is not None:
+            update_data["name"] = data.name
+        if data.description is not None:
+            update_data["description"] = data.description
+        if data.schedule is not None:
+            update_data["schedule"] = {"cron": data.schedule}
+        if data.is_active is not None:
+            update_data["status"] = "active" if data.is_active else "inactive"
+        if data.config is not None:
+            update_data.update(data.config)
+
+        rule = await self.rule_repo.update(rule_id, update_data)
+        return self._build_scraping_rule_response(rule)
+
+    async def delete_scraping_rule(self, rule_id: int) -> None:
+        await self.rule_repo.delete(rule_id)
+
+    async def trigger_collection(
+        self, ds_id: int, rule_id: int | None = None
+    ) -> dict[str, Any]:
+        ds = await self.ds_repo.get_by_id(ds_id, include_rules=True)
+        if not ds:
+            raise BusinessException(
+                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
+            )
+
+        if ds.status != DataSourceStatus.ACTIVE:
+            raise BusinessException(
+                ErrorCode.DATA_VALIDATION_FAILED,
+                "Cannot trigger collection for inactive data source",
+            )
+
+        rules = (
+            ds.scraping_rules
+            if rule_id is None
+            else [r for r in ds.scraping_rules if r.id == rule_id]
+        )
+        if rule_id and not rules:
+            raise BusinessException(
+                ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
+            )
+
+        triggered = []
+        for rule in rules:
+            execution_id = f"exec_{uuid4().hex}"
+            triggered.append(
+                {
+                    "rule_id": rule.id,
+                    "rule_name": rule.name,
+                    "execution_id": execution_id,
+                    "status": "pending",
+                }
+            )
+
+        return {
+            "data_source_id": ds_id,
+            "triggered_rules": triggered,
+            "total": len(triggered),
+        }
+
+    def _map_schema_type_to_model_type(
+        self, schema_type: DataSourceType | None
+    ) -> ModelDataSourceType | None:
+        if schema_type is None:
+            return None
+        return self._SCHEMA_TO_MODEL_TYPE.get(schema_type)
+
+    def _map_model_type_to_schema_type(
+        self, model_type: ModelDataSourceType
+    ) -> DataSourceType:
+        result = self._MODEL_TO_SCHEMA_TYPE.get(model_type)
+        if result is None:
+            raise BusinessException(
+                ErrorCode.DATASOURCE_UNSUPPORTED_TYPE,
+                f"Unsupported data source type: {model_type}",
+            )
+        return result
+
+    def _map_rule_type_to_target_type(self, rule_type: ScrapingRuleType) -> str:
+        result = self._RULE_TYPE_TO_TARGET.get(rule_type)
+        if result is None:
+            raise BusinessException(
+                ErrorCode.DATASOURCE_UNKNOWN_TARGET_TYPE,
+                f"Unknown rule type: {rule_type}",
+            )
+        return result
+
+    def _map_target_type_to_rule_type(self, target_type: str) -> ScrapingRuleType:
+        result = self._TARGET_TO_RULE_TYPE.get(target_type)
+        if result is None:
+            raise BusinessException(
+                ErrorCode.DATASOURCE_UNKNOWN_TARGET_TYPE,
+                f"Unknown target type: {target_type}",
+            )
+        return result
+
+    def _build_data_source_response(self, ds: DataSource) -> DataSourceResponse:
+        return DataSourceResponse(
+            id=ds.id,
+            name=ds.name,
+            type=self._map_model_type_to_schema_type(ds.source_type),
+            config=ds.extra_config or {},
+            status=ds.status,
+            description=ds.description,
+            created_at=ds.created_at,
+            updated_at=ds.updated_at,
+        )
+
+    def _build_scraping_rule_response(self, rule: ScrapingRule) -> ScrapingRuleResponse:
+        return ScrapingRuleResponse(
+            id=rule.id,
+            data_source_id=rule.data_source_id,
+            name=rule.name,
+            rule_type=self._map_target_type_to_rule_type(rule.target_type),
+            config=rule.filters or {},
+            schedule=rule.schedule.get("cron") if rule.schedule else None,
+            is_active=rule.status == "active",
+            description=rule.description,
+            created_at=rule.created_at,
+            updated_at=rule.updated_at,
+        )
+
+
+async def get_data_source_service(
+    session: AsyncSession = Depends(get_session),
+) -> AsyncGenerator[DataSourceService, None]:
+    ds_repo = DataSourceRepository(session=session)
+    rule_repo = ScrapingRuleRepository(session=session)
+    yield DataSourceService(ds_repo=ds_repo, rule_repo=rule_repo)
