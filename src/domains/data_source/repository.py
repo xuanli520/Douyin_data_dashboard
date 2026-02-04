@@ -32,9 +32,15 @@ class DataSourceRepository:
 
     async def create(self, data: dict) -> DataSource:
         try:
-            async with self.session.begin():
+            if self.session.in_transaction():
                 data_source = DataSource(**data)
                 self.session.add(data_source)
+                await self.session.flush()
+            else:
+                async with self.session.begin():
+                    data_source = DataSource(**data)
+                    self.session.add(data_source)
+                    await self.session.flush()
             await self.session.refresh(data_source)
             return data_source
         except IntegrityError as e:
@@ -58,39 +64,39 @@ class DataSourceRepository:
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def update(self, data_source_id: int, data: dict) -> DataSource:
-        async with self.session.begin():
-            data_source = await self.get_by_id(data_source_id)
-            if not data_source:
-                raise BusinessException(
-                    ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
-                )
+        data_source = await self.get_by_id(data_source_id)
+        if not data_source:
+            raise BusinessException(
+                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
+            )
 
+        if self.session.in_transaction():
             for key, value in data.items():
                 if value is not None:
                     setattr(data_source, key, value)
+            await self.session.flush()
+        else:
+            async with self.session.begin():
+                for key, value in data.items():
+                    if value is not None:
+                        setattr(data_source, key, value)
+                await self.session.flush()
 
-        try:
-            await self.session.refresh(data_source)
-            return data_source
-        except IntegrityError as e:
-            await self.session.rollback()
-            constraint_name = (
-                str(e.orig.diag.constraint_name) if e.orig and e.orig.diag else ""
-            )
-            if "name" in constraint_name:
-                raise BusinessException(
-                    ErrorCode.DATASOURCE_NAME_CONFLICT, "DataSource name already exists"
-                ) from e
-            raise
+        await self.session.refresh(data_source)
+        return data_source
 
     async def delete(self, data_source_id: int) -> None:
-        async with self.session.begin():
-            data_source = await self.get_by_id(data_source_id)
-            if not data_source:
-                raise BusinessException(
-                    ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
-                )
+        data_source = await self.get_by_id(data_source_id)
+        if not data_source:
+            raise BusinessException(
+                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
+            )
+
+        if self.session.in_transaction():
             await self.session.delete(data_source)
+        else:
+            async with self.session.begin():
+                await self.session.delete(data_source)
 
     async def get_paginated(
         self,
@@ -145,18 +151,26 @@ class DataSourceRepository:
         return await self.update(data_source_id, {"status": status})
 
     async def update_last_used(self, data_source_id: int) -> None:
-        async with self.session.begin():
-            data_source = await self.get_by_id(data_source_id)
-            if data_source:
-                data_source.last_used_at = datetime.now()
+        data_source = await self.get_by_id(data_source_id)
+        if data_source:
+            data_source.last_used_at = datetime.now()
+            if self.session.in_transaction():
+                await self.session.flush()
+            else:
+                async with self.session.begin():
+                    await self.session.flush()
 
     async def record_error(self, data_source_id: int, error_msg: str) -> None:
-        async with self.session.begin():
-            data_source = await self.get_by_id(data_source_id)
-            if data_source:
-                data_source.last_error_at = datetime.now()
-                data_source.last_error_msg = error_msg
-                data_source.status = DataSourceStatus.ERROR
+        data_source = await self.get_by_id(data_source_id)
+        if data_source:
+            data_source.last_error_at = datetime.now()
+            data_source.last_error_msg = error_msg
+            data_source.status = DataSourceStatus.ERROR
+            if self.session.in_transaction():
+                await self.session.flush()
+            else:
+                async with self.session.begin():
+                    await self.session.flush()
 
 
 class ScrapingRuleRepository:
@@ -164,9 +178,15 @@ class ScrapingRuleRepository:
         self.session = session
 
     async def create(self, data: dict) -> ScrapingRule:
-        async with self.session.begin():
+        if self.session.in_transaction():
             rule = ScrapingRule(**data)
             self.session.add(rule)
+            await self.session.flush()
+        else:
+            async with self.session.begin():
+                rule = ScrapingRule(**data)
+                self.session.add(rule)
+                await self.session.flush()
         await self.session.refresh(rule)
         return rule
 
@@ -187,25 +207,36 @@ class ScrapingRuleRepository:
         return list((await self.session.execute(stmt)).scalars().all())
 
     async def update(self, rule_id: int, data: dict) -> ScrapingRule:
-        async with self.session.begin():
-            rule = await self.get_by_id(rule_id)
-            if not rule:
-                raise BusinessException(
-                    ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
-                )
+        rule = await self.get_by_id(rule_id)
+        if not rule:
+            raise BusinessException(
+                ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
+            )
 
+        if self.session.in_transaction():
             for key, value in data.items():
                 if value is not None:
                     setattr(rule, key, value)
+            await self.session.flush()
+        else:
+            async with self.session.begin():
+                for key, value in data.items():
+                    if value is not None:
+                        setattr(rule, key, value)
+                await self.session.flush()
 
         await self.session.refresh(rule)
         return rule
 
     async def delete(self, rule_id: int) -> None:
-        async with self.session.begin():
-            rule = await self.get_by_id(rule_id)
-            if not rule:
-                raise BusinessException(
-                    ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
-                )
+        rule = await self.get_by_id(rule_id)
+        if not rule:
+            raise BusinessException(
+                ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
+            )
+
+        if self.session.in_transaction():
             await self.session.delete(rule)
+        else:
+            async with self.session.begin():
+                await self.session.delete(rule)
