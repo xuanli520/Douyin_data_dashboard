@@ -53,7 +53,7 @@ class DataSourceResponse(BaseModel):
 
 
 class ScrapingRuleCreate(BaseModel):
-    data_source_id: int
+    data_source_id: int = Field(..., gt=0)
     name: str = Field(..., min_length=1, max_length=100)
     rule_type: ScrapingRuleType
     config: dict[str, Any] = Field(default_factory=dict)
