@@ -33,22 +33,27 @@ class DataSourceRepository(BaseRepository):
 
     async def create(self, data: dict) -> DataSource:
         data_source = DataSource(**data)
-        try:
 
-            async def _create():
-                self.session.add(data_source)
-                return data_source
-
-            await self._tx(_create)
-            await self.session.refresh(data_source)
+        async def _create():
+            self.session.add(data_source)
             return data_source
+
+        try:
+            await self._tx(_create)
         except IntegrityError as e:
-            await self.session.rollback()
-            await self._handle_integrity_error(
-                e,
-                {"name": ErrorCode.DATASOURCE_NAME_CONFLICT},
-                (ErrorCode.DATASOURCE_NAME_CONFLICT, "DataSource name already exists"),
+            constraint_name = (
+                str(e.orig.diag.constraint_name) if e.orig and e.orig.diag else ""
             )
+            if "name" in constraint_name:
+                raise BusinessException(
+                    ErrorCode.DATASOURCE_NAME_CONFLICT, "DataSource name already exists"
+                ) from e
+            raise BusinessException(
+                ErrorCode.DATASOURCE_NAME_CONFLICT, "DataSource unique conflict"
+            ) from e
+
+        await self.session.refresh(data_source)
+        return data_source
 
     async def get_by_id(
         self, data_source_id: int, include_rules: bool = False
@@ -72,14 +77,19 @@ class DataSourceRepository(BaseRepository):
 
         try:
             await self._flush()
-            return data_source
         except IntegrityError as e:
-            await self.session.rollback()
-            await self._handle_integrity_error(
-                e,
-                {"name": ErrorCode.DATASOURCE_NAME_CONFLICT},
-                (ErrorCode.DATASOURCE_NAME_CONFLICT, "DataSource name already exists"),
+            constraint_name = (
+                str(e.orig.diag.constraint_name) if e.orig and e.orig.diag else ""
             )
+            if "name" in constraint_name:
+                raise BusinessException(
+                    ErrorCode.DATASOURCE_NAME_CONFLICT, "DataSource name already exists"
+                ) from e
+            raise BusinessException(
+                ErrorCode.DATASOURCE_NAME_CONFLICT, "DataSource unique conflict"
+            ) from e
+
+        return data_source
 
     async def delete(self, data_source_id: int) -> None:
         data_source = await self.get_by_id(data_source_id)
