@@ -52,6 +52,14 @@ class DataImportRecord(SQLModel, TimestampMixin, table=True):
 
 
 class DataImportDetail(SQLModel, TimestampMixin, table=True):
+    """
+    Individual row import result.
+
+    Note: ImportStatus.PARTIAL is not expected for individual details.
+    Each row is either SUCCESS or FAILED. PARTIAL only applies to
+    the parent DataImportRecord's aggregate status.
+    """
+
     __tablename__ = "data_import_details"
 
     id: int | None = Field(default=None, primary_key=True)

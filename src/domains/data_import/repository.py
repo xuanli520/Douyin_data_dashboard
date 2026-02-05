@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -9,7 +9,7 @@ from src.domains.data_import.enums import ImportStatus
 from src.domains.data_import.models import DataImportDetail, DataImportRecord
 from src.exceptions import BusinessException
 from src.shared.errors import ErrorCode
-from src.shared.repository import BaseRepository
+from src.shared.repository import BaseRepository, UNSET
 
 
 class DataImportRecordRepository(BaseRepository):
@@ -58,7 +58,7 @@ class DataImportRecordRepository(BaseRepository):
             raise BusinessException(ErrorCode.NOT_FOUND, "DataImportRecord not found")
 
         for key, value in data.items():
-            if value is not None:
+            if value is not UNSET:
                 setattr(record, key, value)
 
         await self._flush()
@@ -97,15 +97,18 @@ class DataImportRecordRepository(BaseRepository):
         return records, int(total)
 
     async def update_status(
-        self, record_id: int, status: ImportStatus, error_message: str | None = None
+        self,
+        record_id: int,
+        status: ImportStatus,
+        error_message: str | None = UNSET,
     ) -> DataImportRecord:
-        return await self.update(
-            record_id,
-            {
-                "status": status,
-                "error_message": error_message,
-            },
-        )
+        data: dict[str, Any] = {
+            "status": status,
+            "error_message": error_message,
+        }
+        if status == ImportStatus.PROCESSING:
+            data["started_at"] = datetime.now(timezone.utc)
+        return await self.update(record_id, data)
 
     async def update_counts(
         self,
@@ -165,8 +168,8 @@ class DataImportDetailRepository(BaseRepository):
             return entities
 
         await self._tx(_bulk_create)
-        for entity in entities:
-            await self.session.refresh(entity)
+        await self.session.flush()
+        self.session.expire_all()
         return entities
 
     async def get_by_id(self, detail_id: int) -> DataImportDetail | None:
@@ -214,8 +217,8 @@ class DataImportDetailRepository(BaseRepository):
         return detail
 
     async def delete_by_import_record(self, import_record_id: int) -> int:
-        details = await self.get_by_import_record(import_record_id)
-        count = len(details)
-        for detail in details:
-            await self._delete(detail)
-        return count
+        stmt = delete(DataImportDetail).where(
+            DataImportDetail.import_record_id == import_record_id
+        )
+        result = await self.session.execute(stmt)
+        return result.rowcount
