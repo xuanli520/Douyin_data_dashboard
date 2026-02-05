@@ -15,8 +15,11 @@ class CSVParser:
         self._row_count: int | None = None
 
     def _detect_encoding(self) -> str:
+        sample_size = min(4 * 1024 * 1024, self.file_path.stat().st_size)
         with open(self.file_path, "rb") as f:
-            raw_data = f.read(1024 * 1024)
+            raw_data = f.read(sample_size)
+            if not raw_data:
+                return "utf-8"
             result = chardet.detect(raw_data)
             encoding = result.get("encoding", "utf-8")
             if encoding is None or encoding.lower() in (

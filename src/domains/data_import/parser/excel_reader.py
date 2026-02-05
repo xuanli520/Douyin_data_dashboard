@@ -25,6 +25,8 @@ class ExcelParser:
         ws,
         start_row: int = 0,
     ) -> Generator[dict[str, str], None, None]:
+        if ws.max_row <= 1:
+            return
         headers = [cell.value for cell in ws[1]]
         for row_index in range(2, ws.max_row + 1):
             if row_index - 1 < start_row:

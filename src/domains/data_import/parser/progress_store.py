@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
 from typing import NamedTuple
+from json import JSONDecodeError
 
 
 class ProgressData(NamedTuple):
@@ -46,8 +47,11 @@ class ParseProgressStore:
         raw = await self._cache.get(self._key(file_id))
         if not raw:
             return None
-        data = json.loads(raw)
-        return ProgressData(**data)
+        try:
+            data = json.loads(raw)
+            return ProgressData(**data)
+        except (JSONDecodeError, KeyError):
+            return None
 
     async def delete_progress(self, file_id: str) -> None:
         await self._cache.delete(self._key(file_id))
