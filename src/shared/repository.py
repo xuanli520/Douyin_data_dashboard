@@ -7,6 +7,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 T = TypeVar("T")
 
 
+class _Unset:
+    """Sentinel value to distinguish between None and unset."""
+
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self):
+        return "UNSET"
+
+
+UNSET = _Unset()
+
+
 class TransactionError(Exception):
     pass
 
