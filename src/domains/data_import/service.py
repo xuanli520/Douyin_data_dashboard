@@ -32,12 +32,10 @@ class ImportService:
     def _get_cancel_key(self, import_id: int) -> str:
         return f"{self.IMPORT_PREFIX}{import_id}:{self.CANCEL_KEY}"
 
-    def _is_cancelled(self, import_id: int) -> bool:
+    async def _is_cancelled(self, import_id: int) -> bool:
         if not self.redis:
             return False
-        import asyncio
-
-        return asyncio.run(self.redis.exists(self._get_cancel_key(import_id)))
+        return await self.redis.exists(self._get_cancel_key(import_id))
 
     async def upload_file(
         self,
@@ -45,8 +43,8 @@ class ImportService:
         file_name: str,
         file_size: int,
         data_source_id: int,
-        user_id: int,
         batch_no: str,
+        user_id: int | None = None,
     ) -> DataImportRecord:
         record = await self.repo.create(
             {
@@ -125,7 +123,7 @@ class ImportService:
         await self.session.commit()
 
     async def validate_data(
-        self, import_id: int, rows: list[dict[str, Any]]
+        self, import_id: int, rows: list[dict[str, Any]], data_type: str = "order"
     ) -> dict[str, Any]:
         record = await self.repo.get_by_id(import_id)
         if not record:
@@ -143,7 +141,7 @@ class ImportService:
 
         mapped_rows = [mapper.transform_data(row) for row in rows]
 
-        results = ValidationService.validate_and_summarize("order", mapped_rows)
+        results = ValidationService.validate_and_summarize(data_type, mapped_rows)
 
         await self.repo.update_status(import_id, ImportStatus.SUCCESS)
         await self.session.commit()
@@ -166,7 +164,7 @@ class ImportService:
         await self.repo.update_status(import_id, ImportStatus.PROCESSING)
         await self.session.commit()
 
-        if self._is_cancelled(import_id):
+        if await self._is_cancelled(import_id):
             await self.repo.update_status(import_id, ImportStatus.FAILED)
             await self.session.commit()
             return {"cancelled": True}
@@ -185,7 +183,7 @@ class ImportService:
 
         for i, row in enumerate(rows):
             if i % batch_size == 0:
-                if self._is_cancelled(import_id):
+                if await self._is_cancelled(import_id):
                     await self.repo.update_status(import_id, ImportStatus.FAILED)
                     await self.session.commit()
                     break
@@ -196,14 +194,6 @@ class ImportService:
                     failed_rows=failed,
                 )
                 await self.session.commit()
-
-            try:
-                mapped_row = mapper.transform_data(row)
-                await self._save_row(mapped_row)
-                success += 1
-            except Exception as e:
-                failed += 1
-                errors.append({"row": i + 1, "error": str(e)})
 
             processed += 1
 
@@ -223,19 +213,20 @@ class ImportService:
             "errors": errors[:100],
         }
 
-    async def _save_row(self, row: dict[str, Any]) -> None:
-        pass
+    async def get_import_record(self, import_id: int) -> DataImportRecord | None:
+        return await self.repo.get_by_id(import_id)
 
     async def get_import_detail(self, import_id: int) -> DataImportRecord | None:
-        return await self.repo.get_by_id(import_id)
+        return await self.repo.get_by_id(import_id, include_details=True)
 
     async def list_import_history(
         self,
-        user_id: int,
+        user_id: int | None = None,
         page: int = 1,
         size: int = 20,
     ) -> tuple[list[dict[str, Any]], int]:
         records, total = await self.repo.get_paginated(
+            user_id=user_id,
             page=page,
             size=size,
         )

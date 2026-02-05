@@ -15,6 +15,7 @@ from src.domains.data_import.schemas import (
     ImportValidateResponse,
     ImportConfirmResponse,
     ImportHistoryResponse,
+    ImportHistoryItem,
     ImportDetailResponse,
     ImportCancelResponse,
 )
@@ -52,8 +53,7 @@ async def upload_file(
     with open(file_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
-    content = await file.read()
-    file_size = len(content)
+    file_size = os.path.getsize(file_path)
 
     batch_no = f"IMP-{uuid.uuid4().hex[:8].upper()}"
 
@@ -62,13 +62,13 @@ async def upload_file(
         file_name=filename,
         file_size=file_size,
         data_source_id=data_source_id,
-        user_id=current_user.id,
+        user_id=current_user.id or 0,
         batch_no=batch_no,
     )
 
     return Response.success(
         data=ImportUploadResponse(
-            id=record.id,
+            id=record.id or 0,
             file_name=record.file_name,
             file_size=record.file_size,
             status=record.status.value,
@@ -83,7 +83,7 @@ async def parse_file(
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
 ):
-    record = await service.repo.get_by_id(import_id)
+    record = await service.get_import_record(import_id)
     if not record:
         return Response.error(code=404, msg="Import record not found")
 
@@ -110,7 +110,7 @@ async def apply_mapping(
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
 ):
-    record = await service.repo.get_by_id(import_id)
+    record = await service.get_import_record(import_id)
     if not record:
         return Response.error(code=404, msg="Import record not found")
 
@@ -132,7 +132,7 @@ async def validate_data(
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
 ):
-    record = await service.repo.get_by_id(import_id)
+    record = await service.get_import_record(import_id)
     if not record:
         return Response.error(code=404, msg="Import record not found")
 
@@ -160,7 +160,7 @@ async def confirm_import(
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
 ):
-    record = await service.repo.get_by_id(import_id)
+    record = await service.get_import_record(import_id)
     if not record:
         return Response.error(code=404, msg="Import record not found")
 
@@ -189,14 +189,17 @@ async def list_import_history(
     service: ImportService = Depends(get_import_service),
 ):
     items, total = await service.list_import_history(
-        user_id=current_user.id,
+        user_id=current_user.id or 0,
         page=page,
         size=size,
     )
 
     return Response.success(
         data=ImportHistoryResponse(
-            items=items,
+            items=[
+                ImportHistoryItem(**item) if isinstance(item, dict) else item
+                for item in items
+            ],
             total=total,
             page=page,
             size=size,
@@ -219,7 +222,7 @@ async def get_import_detail(
 
     return Response.success(
         data=ImportDetailResponse(
-            id=record.id,
+            id=record.id or 0,
             file_name=record.file_name,
             file_path=record.file_path,
             file_size=record.file_size,
@@ -241,7 +244,7 @@ async def cancel_import(
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
 ):
-    record = await service.repo.get_by_id(import_id)
+    record = await service.get_import_record(import_id)
     if not record:
         return Response.error(code=404, msg="Import record not found")
 

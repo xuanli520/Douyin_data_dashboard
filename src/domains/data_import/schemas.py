@@ -8,7 +8,6 @@ class ImportUploadResponse(BaseModel):
     id: int
     file_name: str
     file_size: int
-    data_type: str
     status: str
     created_at: datetime
 
@@ -49,7 +48,6 @@ class ImportConfirmResponse(BaseModel):
 class ImportHistoryItem(BaseModel):
     id: int
     file_name: str
-    data_type: str
     status: str
     total_rows: int
     success_rows: int
@@ -69,7 +67,6 @@ class ImportDetailResponse(BaseModel):
     file_name: str
     file_path: str
     file_size: int
-    data_type: str
     status: str
     field_mapping: dict[str, str] | None
     total_rows: int
@@ -87,4 +84,4 @@ class ImportCancelResponse(BaseModel):
 
 
 class ImportUploadRequest(BaseModel):
-    data_type: str
+    pass
