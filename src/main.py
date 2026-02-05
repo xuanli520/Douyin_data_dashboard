@@ -10,6 +10,7 @@ from src.api import (
     create_oauth_router,
     admin_router,
     monitor_router,
+    data_import,
 )
 from src.cache import close_cache, get_cache, init_cache
 from src.config import get_settings
@@ -80,6 +81,9 @@ def create_app() -> FastAPI:
     app.include_router(admin_router, prefix="/api/v1", tags=["admin"])
     app.include_router(core_router)
     app.include_router(monitor_router, prefix="/monitor")
+    app.include_router(
+        data_import.router, prefix="/api/v1/data-import", tags=["data-import"]
+    )
 
     add_pagination(app)
 
