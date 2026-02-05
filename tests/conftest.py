@@ -106,6 +106,33 @@ async def test_db():
 
 
 @pytest.fixture
+async def import_test_db():
+    """Test database fixture for data_import tests with all dependencies."""
+
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        echo=False,
+        connect_args={"check_same_thread": False},
+    )
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with engine.connect() as conn:
+        await conn.execute(text("PRAGMA foreign_keys=ON"))
+        await conn.commit()
+
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+
+    async with engine.connect() as conn:
+        await insert_rbac_seed_data_async(conn)
+
+    async with async_session() as session:
+        yield session
+
+    await engine.dispose()
+
+
+@pytest.fixture
 async def local_cache():
     cache = LocalCache()
     yield cache
