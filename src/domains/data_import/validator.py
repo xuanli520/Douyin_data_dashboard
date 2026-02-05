@@ -118,6 +118,14 @@ class DataValidator(BaseModel):
     def get_rules_for_field(self, field_name: str) -> list[ValidationRule]:
         return [r for r in self.rules if r.target_field == field_name and r.enabled]
 
+    def _get_field_value(self, row: dict[str, Any], field_name: str) -> Any:
+        if field_name in row:
+            return row[field_name]
+        for alias in self.aliases.get(field_name, []):
+            if alias in row:
+                return row[alias]
+        return None
+
     def validate_row(
         self, row: dict[str, Any], row_index: int | None = None
     ) -> ValidationResult:
@@ -125,11 +133,7 @@ class DataValidator(BaseModel):
         for rule in self.rules:
             if not rule.enabled:
                 continue
-            field_value = row.get(rule.target_field)
-            for alias in self.aliases.get(rule.target_field, []):
-                if alias in row:
-                    field_value = row.get(alias)
-                    break
+            field_value = self._get_field_value(row, rule.target_field)
             if rule.validate_func:
                 passed, message = rule.validate_func(field_value, rule.rule_params)
                 if not passed:
@@ -305,38 +309,26 @@ class OrderValidator(DataValidator):
 
     def validate_batch(self, rows: list[dict[str, Any]]) -> list[ValidationResult]:
         seen_order_ids: set[str] = set()
-        for row in rows:
-            order_id = row.get("order_id")
-            for alias in self.aliases.get("order_id", []):
-                if alias in row:
-                    order_id = row.get(alias)
-                    break
+        duplicate_indices: set[int] = set()
+        for i, row in enumerate(rows):
+            order_id = self._get_field_value(row, "order_id")
             if order_id:
                 str_order_id = str(order_id)
                 if str_order_id in seen_order_ids:
-                    row["_duplicate_order_id"] = True
+                    duplicate_indices.add(i)
                 else:
                     seen_order_ids.add(str_order_id)
-        return super().validate_batch(rows)
-
-    def validate_row(
-        self, row: dict[str, Any], row_index: int | None = None
-    ) -> ValidationResult:
-        result = super().validate_row(row, row_index)
-        if row.get("_duplicate_order_id"):
-            order_id = row.get("order_id")
-            for alias in self.aliases.get("order_id", []):
-                if alias in row:
-                    order_id = row.get(alias)
-                    break
-            result.add_error(
+        results = super().validate_batch(rows)
+        for i in duplicate_indices:
+            order_id = self._get_field_value(rows[i], "order_id")
+            results[i].add_error(
                 field_name="order_id",
                 message=f"Duplicate order ID: {order_id}",
                 rule_name="order_id_unique",
                 value=order_id,
                 severity=ValidationSeverity.ERROR,
             )
-        return result
+        return results
 
 
 class ProductValidator(DataValidator):
@@ -413,38 +405,26 @@ class ProductValidator(DataValidator):
 
     def validate_batch(self, rows: list[dict[str, Any]]) -> list[ValidationResult]:
         seen_skus: set[str] = set()
-        for row in rows:
-            sku = row.get("sku")
-            for alias in self.aliases.get("sku", []):
-                if alias in row:
-                    sku = row.get(alias)
-                    break
+        duplicate_indices: set[int] = set()
+        for i, row in enumerate(rows):
+            sku = self._get_field_value(row, "sku")
             if sku:
                 str_sku = str(sku)
                 if str_sku in seen_skus:
-                    row["_duplicate_sku"] = True
+                    duplicate_indices.add(i)
                 else:
                     seen_skus.add(str_sku)
-        return super().validate_batch(rows)
-
-    def validate_row(
-        self, row: dict[str, Any], row_index: int | None = None
-    ) -> ValidationResult:
-        result = super().validate_row(row, row_index)
-        if row.get("_duplicate_sku"):
-            sku = row.get("sku")
-            for alias in self.aliases.get("sku", []):
-                if alias in row:
-                    sku = row.get(alias)
-                    break
-            result.add_error(
+        results = super().validate_batch(rows)
+        for i in duplicate_indices:
+            sku = self._get_field_value(rows[i], "sku")
+            results[i].add_error(
                 field_name="sku",
                 message=f"Duplicate SKU: {sku}",
                 rule_name="sku_unique",
                 value=sku,
                 severity=ValidationSeverity.ERROR,
             )
-        return result
+        return results
 
 
 class ConfigurableValidator(DataValidator):

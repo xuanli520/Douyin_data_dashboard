@@ -61,63 +61,65 @@ class IMappingRepository(ABC):
     async def delete(self, template_id: int) -> bool: ...
 
 
-class FieldNormalizer:
-    _normalize_pattern = re.compile(r"[\s\-_]+")
-    _synonym_map: dict[str, list[str]] = {
-        "order": ["订单", "order_no", "order_id", "ordernum"],
-        "product": ["商品", "product_id", "goods", "item"],
-        "amount": ["金额", "price", "total", "money", "sum"],
-        "date": ["日期", "时间", "time", "dt", "day"],
-        "quantity": ["数量", "num", "count", "qty"],
-        "sku": ["sku_code", "skucode", "goods_sn"],
-        "name": ["名称", "title", "goods_name"],
-        "status": ["状态", "state"],
-    }
+_NORMALIZE_PATTERN = re.compile(r"[\s\-_]+")
+_SYNONYM_MAP: dict[str, tuple[str, ...]] = {
+    "order": ("订单", "order_no", "order_id", "ordernum"),
+    "product": ("商品", "product_id", "goods", "item"),
+    "amount": ("金额", "price", "total", "money", "sum"),
+    "date": ("日期", "时间", "time", "dt", "day"),
+    "quantity": ("数量", "num", "count", "qty"),
+    "sku": ("sku_code", "skucode", "goods_sn"),
+    "name": ("名称", "title", "goods_name"),
+    "status": ("状态", "state"),
+}
 
-    @classmethod
-    def normalize(cls, field_name: str) -> str:
-        normalized = cls._normalize_pattern.sub("", field_name.lower())
+
+class FieldNormalizer:
+    @staticmethod
+    def normalize(field_name: str) -> str:
+        normalized = _NORMALIZE_PATTERN.sub("", field_name.lower())
         return normalized
 
     @classmethod
     def get_synonyms(cls, field_name: str) -> set[str]:
         normalized = cls.normalize(field_name)
         synonyms = {normalized, field_name.lower()}
-        for key, variants in cls._synonym_map.items():
+        for key, variants in _SYNONYM_MAP.items():
             if key in normalized or any(key in v for v in variants):
                 synonyms.update(variants)
                 synonyms.add(key)
         return synonyms
 
 
-class FieldSimilarityMatcher:
-    _common_fields: dict[str, list[str]] = {
-        "order": ["order_id", "order_no", "order_number", "订单号", "tid", "trade_id"],
-        "product": [
-            "product_id",
-            "product_no",
-            "goods_id",
-            "item_id",
-            "商品编号",
-            "sku_id",
-        ],
-        "amount": [
-            "amount",
-            "total_amount",
-            "pay_amount",
-            "order_amount",
-            "金额",
-            "总价",
-        ],
-        "price": ["price", "unit_price", "sale_price", "goods_price", "单价"],
-        "quantity": ["quantity", "num", "count", "num_count", "数量", "件数"],
-        "sku": ["sku", "sku_code", "skucode", "goods_sn", "商品编码"],
-        "name": ["name", "product_name", "goods_name", "title", "商品名称"],
-        "status": ["status", "order_status", "state", "订单状态"],
-        "date": ["order_date", "created_at", "date", "下单日期", "交易时间"],
-        "customer": ["buyer_id", "user_id", "customer_id", "买家ID"],
-    }
+_COMMON_FIELDS: dict[str, tuple[str, ...]] = {
+    "order": ("order_id", "order_no", "order_number", "订单号", "tid", "trade_id"),
+    "product": (
+        "product_id",
+        "product_no",
+        "goods_id",
+        "item_id",
+        "商品编号",
+        "sku_id",
+    ),
+    "amount": (
+        "amount",
+        "total_amount",
+        "pay_amount",
+        "order_amount",
+        "金额",
+        "总价",
+    ),
+    "price": ("price", "unit_price", "sale_price", "goods_price", "单价"),
+    "quantity": ("quantity", "num", "count", "num_count", "数量", "件数"),
+    "sku": ("sku", "sku_code", "skucode", "goods_sn", "商品编码"),
+    "name": ("name", "product_name", "goods_name", "title", "商品名称"),
+    "status": ("status", "order_status", "state", "订单状态"),
+    "date": ("order_date", "created_at", "date", "下单日期", "交易时间"),
+    "customer": ("buyer_id", "user_id", "customer_id", "买家ID"),
+}
 
+
+class FieldSimilarityMatcher:
     @classmethod
     def calculate_similarity(cls, field1: str, field2: str) -> float:
         normalized1 = FieldNormalizer.normalize(field1)
@@ -127,7 +129,7 @@ class FieldSimilarityMatcher:
     @classmethod
     def find_best_match(
         cls, source_field: str, target_fields: list[str], threshold: float = 0.6
-    ) -> tuple[str | None, float] | None:
+    ) -> tuple[str, float] | None:
         if not target_fields:
             return None
         best_match = None
@@ -137,14 +139,14 @@ class FieldSimilarityMatcher:
             if score > best_score:
                 best_score = score
                 best_match = target
-        if best_score >= threshold:
+        if best_score >= threshold and best_match is not None:
             return (best_match, best_score)
         return None
 
     @classmethod
     def get_field_category(cls, field_name: str) -> str | None:
         normalized = FieldNormalizer.normalize(field_name)
-        for category, variants in cls._common_fields.items():
+        for category, variants in _COMMON_FIELDS.items():
             normalized_variants = [FieldNormalizer.normalize(v) for v in variants]
             if normalized in normalized_variants:
                 return category
@@ -225,7 +227,6 @@ class FieldMapper:
 
             if best_match:
                 target, score = best_match
-                assert target is not None
                 confidence = FieldSimilarityMatcher.get_confidence(score)
                 is_required = target in required_set
                 mapping = FieldMapping(
