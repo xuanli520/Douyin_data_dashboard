@@ -71,6 +71,24 @@ def insert_rbac_seed_data_sync(conn: Connection) -> None:
         )
     conn.commit()
 
+    user_permissions = [
+        "data_import:view",
+        "task:view",
+    ]
+    for code in user_permissions:
+        conn.execute(
+            text(
+                """
+                INSERT INTO role_permissions (role_id, permission_id, assigned_at)
+                SELECT r.id, p.id, CURRENT_TIMESTAMP FROM roles r, permissions p
+                WHERE r.name = 'user' AND p.code = :code
+                ON CONFLICT (role_id, permission_id) DO NOTHING
+                """
+            ),
+            {"code": code},
+        )
+    conn.commit()
+
 
 async def insert_rbac_seed_data_async(conn: AsyncConnection) -> None:
     await conn.execute(
@@ -134,6 +152,24 @@ async def insert_rbac_seed_data_async(conn: AsyncConnection) -> None:
                 INSERT INTO role_permissions (role_id, permission_id, assigned_at)
                 SELECT r.id, p.id, CURRENT_TIMESTAMP FROM roles r, permissions p
                 WHERE r.name = 'admin' AND p.code = :code
+                ON CONFLICT (role_id, permission_id) DO NOTHING
+                """
+            ),
+            {"code": code},
+        )
+    await conn.commit()
+
+    user_permissions = [
+        "data_import:view",
+        "task:view",
+    ]
+    for code in user_permissions:
+        await conn.execute(
+            text(
+                """
+                INSERT INTO role_permissions (role_id, permission_id, assigned_at)
+                SELECT r.id, p.id, CURRENT_TIMESTAMP FROM roles r, permissions p
+                WHERE r.name = 'user' AND p.code = :code
                 ON CONFLICT (role_id, permission_id) DO NOTHING
                 """
             ),

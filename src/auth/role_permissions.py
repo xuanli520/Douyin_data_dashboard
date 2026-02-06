@@ -18,8 +18,6 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
     "admin": {
         "data_source:view",
         "data_source:create",
-        "data_source:update",
-        "data_source:delete",
         "data_import:view",
         "data_import:upload",
         "data_import:parse",

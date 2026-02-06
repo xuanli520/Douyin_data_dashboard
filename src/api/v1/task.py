@@ -13,7 +13,7 @@ router = APIRouter(prefix="/tasks", tags=["task"])
 @router.get("", response_model=Response[list[dict[str, Any]]])
 async def list_tasks(
     user: User = Depends(current_user),
-    _=Depends(require_permissions(TaskPermission.VIEW)),
+    _=Depends(require_permissions(TaskPermission.VIEW, bypass_superuser=True)),
 ) -> Response[list[dict[str, Any]]]:
     return Response.success(data=[])
 
@@ -22,7 +22,7 @@ async def list_tasks(
 async def create_task(
     data: dict[str, Any],
     user: User = Depends(current_user),
-    _=Depends(require_permissions(TaskPermission.CREATE)),
+    _=Depends(require_permissions(TaskPermission.CREATE, bypass_superuser=True)),
 ) -> Response[dict[str, Any]]:
     return Response.success(
         data={
@@ -41,7 +41,7 @@ async def create_task(
 async def run_task(
     task_id: int,
     user: User = Depends(current_user),
-    _=Depends(require_permissions(TaskPermission.EXECUTE)),
+    _=Depends(require_permissions(TaskPermission.EXECUTE, bypass_superuser=True)),
 ) -> Response[dict[str, Any]]:
     return Response.success(data={"execution_id": "exec_123", "status": "running"})
 
@@ -50,6 +50,6 @@ async def run_task(
 async def get_task_executions(
     task_id: int,
     user: User = Depends(current_user),
-    _=Depends(require_permissions(TaskPermission.VIEW)),
+    _=Depends(require_permissions(TaskPermission.VIEW, bypass_superuser=True)),
 ) -> Response[list[dict[str, Any]]]:
     return Response.success(data=[])

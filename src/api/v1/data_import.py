@@ -51,7 +51,7 @@ async def upload_file(
     data_source_id: int = Form(...),
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
-    _=Depends(require_permissions(DataImportPermission.UPLOAD)),
+    _=Depends(require_permissions(DataImportPermission.UPLOAD, bypass_superuser=True)),
 ):
     upload_dir = Path("uploads/imports")
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -122,7 +122,7 @@ async def parse_file(
     import_id: int,
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
-    _=Depends(require_permissions(DataImportPermission.PARSE)),
+    _=Depends(require_permissions(DataImportPermission.PARSE, bypass_superuser=True)),
 ):
     record = await service.get_import_record(import_id)
     if not record:
@@ -158,7 +158,7 @@ async def apply_mapping(
     request: FieldMappingRequest,
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
-    _=Depends(require_permissions(DataImportPermission.PARSE)),
+    _=Depends(require_permissions(DataImportPermission.PARSE, bypass_superuser=True)),
 ):
     record = await service.get_import_record(import_id)
     if not record:
@@ -184,7 +184,9 @@ async def validate_data(
     ),
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
-    _=Depends(require_permissions(DataImportPermission.VALIDATE)),
+    _=Depends(
+        require_permissions(DataImportPermission.VALIDATE, bypass_superuser=True)
+    ),
 ):
     record = await service.get_import_record(import_id)
     if not record:
@@ -218,7 +220,7 @@ async def confirm_import(
     import_id: int,
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
-    _=Depends(require_permissions(DataImportPermission.CONFIRM)),
+    _=Depends(require_permissions(DataImportPermission.CONFIRM, bypass_superuser=True)),
 ):
     record = await service.get_import_record(import_id)
     if not record:
@@ -264,7 +266,7 @@ async def get_import_history(
     page_size: int = Query(20, ge=1, le=100),
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
-    _=Depends(require_permissions(DataImportPermission.VIEW)),
+    _=Depends(require_permissions(DataImportPermission.VIEW, bypass_superuser=True)),
 ) -> Response[ImportHistoryResponse]:
     histories, total = await service.list_import_history(
         user_id=current_user.id or 0, page=page, size=page_size
@@ -298,7 +300,7 @@ async def get_import_detail(
     import_id: int,
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
-    _=Depends(require_permissions(DataImportPermission.VIEW)),
+    _=Depends(require_permissions(DataImportPermission.VIEW, bypass_superuser=True)),
 ):
     record = await service.get_import_record(import_id)
     if not record:
@@ -329,7 +331,7 @@ async def cancel_import(
     import_id: int,
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
-    _=Depends(require_permissions(DataImportPermission.CANCEL)),
+    _=Depends(require_permissions(DataImportPermission.CANCEL, bypass_superuser=True)),
 ):
     record = await service.get_import_record(import_id)
     if not record:

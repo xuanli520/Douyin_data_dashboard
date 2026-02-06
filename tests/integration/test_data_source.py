@@ -20,8 +20,9 @@ async def test_session(test_db):
 
 @pytest.fixture
 async def authenticated_user(test_session):
-    """Create test authenticated user with admin role (role_id=1)"""
+    """Create test authenticated user with admin role"""
     from fastapi_users.password import PasswordHelper
+    from sqlalchemy import text
 
     password_helper = PasswordHelper()
     hashed_password = password_helper.hash("user123")
@@ -38,7 +39,33 @@ async def authenticated_user(test_session):
     await test_session.refresh(user)
 
     assert user.id is not None, "User ID should be set after commit"
-    user_role = UserRole(user_id=user.id, role_id=1)
+
+    role_result = await test_session.execute(
+        text("SELECT id FROM roles WHERE name = 'admin'")
+    )
+    admin_role_id = role_result.scalar()
+
+    if admin_role_id is None:
+        await test_session.execute(
+            text(
+                "INSERT INTO roles (name, description, is_system) VALUES ('admin', 'Admin role', true)"
+            )
+        )
+        await test_session.commit()
+        role_result = await test_session.execute(
+            text("SELECT id FROM roles WHERE name = 'admin'")
+        )
+        admin_role_id = role_result.scalar()
+
+    assert admin_role_id is not None
+
+    user_role = UserRole(user_id=user.id, role_id=admin_role_id)
+    test_session.add(user_role)
+    await test_session.commit()
+
+    return user
+
+    user_role = UserRole(user_id=user.id, role_id=admin_role_id)
     test_session.add(user_role)
     await test_session.commit()
 
@@ -290,13 +317,118 @@ class TestDataImportAPI:
         assert "id" in response.json().get("data", {})
 
     async def test_parse_file(self, test_client):
-        pass  # Requires existing import record
+        import os
+
+        os.makedirs("uploads/imports", exist_ok=True)
+
+        ds_response = await test_client.post(
+            "/api/v1/data-sources",
+            json={
+                "name": "Import Test DS",
+                "type": "file_upload",
+                "config": {"path": "/uploads"},
+            },
+        )
+        assert ds_response.status_code == 200
+        ds_id = ds_response.json()["data"]["id"]
+
+        upload_response = await test_client.post(
+            "/api/v1/data-import/upload",
+            files={"file": ("test.csv", b"col1,col2\nval1,val2", "text/csv")},
+            data={"data_source_id": ds_id},
+        )
+        assert upload_response.status_code == 200
+        import_id = upload_response.json()["data"]["id"]
+
+        response = await test_client.post(
+            "/api/v1/data-import/parse", params={"import_id": import_id}
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert "total_rows" in data
+        assert "preview" in data
 
     async def test_validate_data(self, test_client):
-        pass  # Requires existing import record
+        import os
+
+        os.makedirs("uploads/imports", exist_ok=True)
+
+        ds_response = await test_client.post(
+            "/api/v1/data-sources",
+            json={
+                "name": "Import Test DS",
+                "type": "file_upload",
+                "config": {"path": "/uploads"},
+            },
+        )
+        assert ds_response.status_code == 200
+        ds_id = ds_response.json()["data"]["id"]
+
+        upload_response = await test_client.post(
+            "/api/v1/data-import/upload",
+            files={"file": ("test.csv", b"col1,col2\nval1,val2", "text/csv")},
+            data={"data_source_id": ds_id},
+        )
+        assert upload_response.status_code == 200
+        import_id = upload_response.json()["data"]["id"]
+
+        await test_client.post(
+            "/api/v1/data-import/parse", params={"import_id": import_id}
+        )
+
+        response = await test_client.post(
+            "/api/v1/data-import/validate",
+            params={"import_id": import_id},
+            data={"data_type": "order"},
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert "total_rows" in data
+        assert "passed" in data
+        assert "failed" in data
 
     async def test_confirm_import(self, test_client):
-        pass  # Requires existing import record
+        import os
+
+        os.makedirs("uploads/imports", exist_ok=True)
+
+        ds_response = await test_client.post(
+            "/api/v1/data-sources",
+            json={
+                "name": "Import Test DS",
+                "type": "file_upload",
+                "config": {"path": "/uploads"},
+            },
+        )
+        assert ds_response.status_code == 200
+        ds_id = ds_response.json()["data"]["id"]
+
+        upload_response = await test_client.post(
+            "/api/v1/data-import/upload",
+            files={"file": ("test.csv", b"col1,col2\nval1,val2", "text/csv")},
+            data={"data_source_id": ds_id},
+        )
+        assert upload_response.status_code == 200
+        import_id = upload_response.json()["data"]["id"]
+
+        await test_client.post(
+            "/api/v1/data-import/parse", params={"import_id": import_id}
+        )
+
+        await test_client.post(
+            "/api/v1/data-import/validate",
+            params={"import_id": import_id},
+            data={"data_type": "order"},
+        )
+
+        response = await test_client.post(
+            "/api/v1/data-import/confirm", params={"import_id": import_id}
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert "total" in data
+        assert "success" in data
+        assert "failed" in data
 
     async def test_get_import_history(self, test_client):
         response = await test_client.get("/api/v1/data-import/history")
