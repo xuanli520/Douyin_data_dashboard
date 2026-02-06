@@ -1,7 +1,7 @@
 import pytest
 import tempfile
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
@@ -96,7 +96,7 @@ class TestFullImportWorkflow:
             mock_record.file_name = "orders.csv"
             mock_record.file_size = 1024
             mock_record.status = ImportStatus.PENDING
-            mock_record.created_at = datetime.utcnow()
+            mock_record.created_at = datetime.now(timezone.utc)
             mock_record.field_mapping = None
             mock_create.return_value = mock_record
 

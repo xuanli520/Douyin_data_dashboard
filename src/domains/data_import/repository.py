@@ -94,18 +94,6 @@ class DataImportRecordRepository(BaseRepository):
             and_(*conds) if conds else True
         )
 
-        stmt = (
-            select(DataImportRecord)
-            .where(and_(*conds) if conds else True)
-            .order_by(DataImportRecord.created_at.desc())
-            .offset((page - 1) * size)
-            .limit(size)
-        )
-
-        count_stmt = select(func.count(DataImportRecord.id)).where(
-            and_(*conds) if conds else True
-        )
-
         records = list((await self.session.execute(stmt)).scalars().all())
         total = (await self.session.execute(count_stmt)).scalar_one()
 

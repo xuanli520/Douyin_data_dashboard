@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import MagicMock
-from datetime import datetime
+from datetime import datetime, timezone
 
 from src.domains.data_import.enums import ImportStatus
 
@@ -52,7 +52,7 @@ class TestDataImportSchemas:
             "file_name": "test.csv",
             "file_size": 1024,
             "status": "pending",
-            "created_at": datetime.utcnow(),
+            "created_at": datetime.now(timezone.utc),
         }
         response = ImportUploadResponse(**data)
         assert response.id == 1
@@ -125,7 +125,7 @@ class TestDataImportSchemas:
                 total_rows=100,
                 success_rows=100,
                 failed_rows=0,
-                created_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
             )
         ]
         response = ImportHistoryResponse(items=items, total=1, page=1, size=20)
@@ -146,8 +146,8 @@ class TestDataImportSchemas:
             "success_rows": 98,
             "failed_rows": 2,
             "error_message": None,
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow(),
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc),
         }
         response = ImportDetailResponse(**data)
         assert response.file_name == "test.csv"

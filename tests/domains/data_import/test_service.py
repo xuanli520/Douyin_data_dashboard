@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime
+from datetime import datetime, timezone
 
 from src.domains.data_import.service import ImportService
 from src.domains.data_import.enums import ImportStatus
@@ -52,7 +52,7 @@ class TestImportServiceUnit:
             mock_record.file_name = "test.csv"
             mock_record.file_size = 1024
             mock_record.status = ImportStatus.PENDING
-            mock_record.created_at = datetime.utcnow()
+            mock_record.created_at = datetime.now(timezone.utc)
             mock_create.return_value = mock_record
 
             _ = await import_service.upload_file(
@@ -193,7 +193,7 @@ class TestImportServiceUnit:
                 total_rows=100,
                 success_rows=100,
                 failed_rows=0,
-                created_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
             ),
             MagicMock(
                 id=2,
@@ -202,7 +202,7 @@ class TestImportServiceUnit:
                 total_rows=0,
                 success_rows=0,
                 failed_rows=0,
-                created_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
             ),
         ]
 
