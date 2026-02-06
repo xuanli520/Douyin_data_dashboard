@@ -96,6 +96,7 @@ async def activate_data_source(
     ds_id: int,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.UPDATE)),
 ) -> Response[DataSourceResponse]:
     ds = await service.activate(ds_id, user_id=user.id)
     return Response.success(data=ds)
@@ -106,6 +107,7 @@ async def deactivate_data_source(
     ds_id: int,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.UPDATE)),
 ) -> Response[DataSourceResponse]:
     ds = await service.deactivate(ds_id, user_id=user.id)
     return Response.success(data=ds)
@@ -116,6 +118,7 @@ async def validate_connection(
     ds_id: int,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.VIEW)),
 ) -> Response[dict[str, Any]]:
     result = await service.validate_connection(ds_id)
     return Response.success(data=result)
@@ -126,6 +129,7 @@ async def list_scraping_rules(
     ds_id: int,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.VIEW)),
 ) -> Response[list[Any]]:
     rules = await service.list_scraping_rules(ds_id)
     return Response.success(data=rules)
@@ -136,6 +140,7 @@ async def create_scraping_rule(
     data: ScrapingRuleCreate,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.CREATE)),
 ) -> Response[ScrapingRuleResponse]:
     rule = await service.create_scraping_rule(data.data_source_id, data)
     return Response.success(data=rule)
@@ -147,6 +152,7 @@ async def update_scraping_rule(
     data: ScrapingRuleUpdate,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.UPDATE)),
 ) -> Response[ScrapingRuleResponse]:
     rule = await service.update_scraping_rule(rule_id, data)
     return Response.success(data=rule)
@@ -157,6 +163,7 @@ async def get_scraping_rule(
     rule_id: int,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.VIEW)),
 ) -> Response[ScrapingRuleResponse]:
     rule = await service.get_scraping_rule(rule_id)
     return Response.success(data=rule)
@@ -167,6 +174,7 @@ async def delete_scraping_rule(
     rule_id: int,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.DELETE)),
 ) -> Response[None]:
     await service.delete_scraping_rule(rule_id)
     return Response.success()

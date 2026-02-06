@@ -27,6 +27,7 @@ PERMISSIONS = [
     ("data_import:parse", "解析文件", "data_import", "解析上传的文件"),
     ("data_import:validate", "验证数据", "data_import", "验证导入数据"),
     ("data_import:confirm", "确认导入", "data_import", "确认并执行数据导入"),
+    ("data_import:cancel", "取消导入", "data_import", "取消数据导入操作"),
     ("task:view", "查看任务", "task", "查看任务列表和执行记录"),
     ("task:create", "创建任务", "task", "创建新任务"),
     ("task:execute", "执行任务", "task", "手动触发任务执行"),

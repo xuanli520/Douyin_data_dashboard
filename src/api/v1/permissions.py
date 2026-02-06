@@ -18,6 +18,5 @@ async def get_my_permissions(
         data={
             "permissions": list(permissions),
             "roles": list(roles),
-            "is_superuser": user.is_superuser,
         }
     )

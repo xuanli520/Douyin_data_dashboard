@@ -11,6 +11,7 @@ class DataImportPermission:
     PARSE = "data_import:parse"
     VALIDATE = "data_import:validate"
     CONFIRM = "data_import:confirm"
+    CANCEL = "data_import:cancel"
 
 
 class TaskPermission:

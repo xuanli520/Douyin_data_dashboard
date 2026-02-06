@@ -329,7 +329,7 @@ async def cancel_import(
     import_id: int,
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
-    _=Depends(require_permissions(DataImportPermission.VIEW)),
+    _=Depends(require_permissions(DataImportPermission.CANCEL)),
 ):
     record = await service.get_import_record(import_id)
     if not record:
