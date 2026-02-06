@@ -104,11 +104,25 @@ def _validate_douyin_api_config(config: dict[str, Any]) -> None:
 
 @DataSourceTypeRegistry.register_validator(DataSourceType.FILE_UPLOAD)
 def _validate_file_upload_config(config: dict[str, Any]) -> None:
-    if not config.get("file_path") and not config.get("upload_endpoint"):
+    if (
+        not config.get("file_path")
+        and not config.get("upload_endpoint")
+        and not config.get("path")
+    ):
         raise BusinessException(
             ErrorCode.DATA_VALIDATION_FAILED,
-            "File upload source requires 'file_path' or 'upload_endpoint'",
+            "File upload source requires 'file_path', 'upload_endpoint', or 'path'",
         )
+
+
+@DataSourceTypeRegistry.register_validator(DataSourceType.DATABASE)
+def _validate_database_config(config: dict[str, Any]) -> None:
+    pass
+
+
+@DataSourceTypeRegistry.register_validator(DataSourceType.WEBHOOK)
+def _validate_webhook_config(config: dict[str, Any]) -> None:
+    pass
 
 
 @DataSourceTypeRegistry.register_extractor(DataSourceType.DOUYIN_API)
@@ -136,6 +150,11 @@ def _extract_database_config(config: dict[str, Any]) -> dict[str, Any]:
 
 @DataSourceTypeRegistry.register_extractor(DataSourceType.FILE_UPLOAD)
 def _extract_file_upload_config(config: dict[str, Any]) -> dict[str, Any]:
+    return {"extra_config": config}
+
+
+@DataSourceTypeRegistry.register_extractor(DataSourceType.WEBHOOK)
+def _extract_webhook_config(config: dict[str, Any]) -> dict[str, Any]:
     return {"extra_config": config}
 
 
@@ -364,6 +383,14 @@ class DataSourceService:
 
         rules = await self.rule_repo.get_by_data_source(ds_id)
         return [self._build_scraping_rule_response(r) for r in rules]
+
+    async def get_scraping_rule(self, rule_id: int) -> ScrapingRuleResponse:
+        rule = await self.rule_repo.get_by_id(rule_id)
+        if not rule:
+            raise BusinessException(
+                ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
+            )
+        return self._build_scraping_rule_response(rule)
 
     async def update_scraping_rule(
         self, rule_id: int, data: ScrapingRuleUpdate

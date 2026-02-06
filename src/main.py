@@ -11,6 +11,8 @@ from src.api import (
     admin_router,
     monitor_router,
     data_import,
+    data_source_router,
+    scraping_rule_router,
 )
 from src.cache import close_cache, get_cache, init_cache
 from src.config import get_settings
@@ -79,6 +81,8 @@ def create_app() -> FastAPI:
         create_oauth_router(settings), prefix="/api/v1/auth", tags=["auth"]
     )
     app.include_router(admin_router, prefix="/api/v1", tags=["admin"])
+    app.include_router(data_source_router, prefix="/api/v1", tags=["data-source"])
+    app.include_router(scraping_rule_router, prefix="/api/v1", tags=["scraping-rule"])
     app.include_router(core_router)
     app.include_router(monitor_router, prefix="/monitor")
     app.include_router(
