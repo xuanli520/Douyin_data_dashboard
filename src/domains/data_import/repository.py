@@ -74,10 +74,13 @@ class DataImportRecordRepository(BaseRepository):
         self,
         page: int,
         size: int,
+        user_id: int | None = None,
         status: ImportStatus | None = None,
         data_source_id: int | None = None,
     ) -> tuple[list[DataImportRecord], int]:
         conds = self._build_conditions(status, data_source_id)
+        if user_id is not None:
+            conds.append(DataImportRecord.created_by_id == user_id)
 
         stmt = (
             select(DataImportRecord)
