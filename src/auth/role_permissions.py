@@ -1,0 +1,33 @@
+ROLE_PERMISSIONS: dict[str, set[str]] = {
+    "super_admin": {
+        "data_source:view",
+        "data_source:create",
+        "data_source:update",
+        "data_source:delete",
+        "data_import:view",
+        "data_import:upload",
+        "data_import:parse",
+        "data_import:validate",
+        "data_import:confirm",
+        "task:view",
+        "task:create",
+        "task:execute",
+        "task:cancel",
+    },
+    "admin": {
+        "data_source:view",
+        "data_source:create",
+        "data_import:view",
+        "data_import:upload",
+        "data_import:parse",
+        "data_import:validate",
+        "data_import:confirm",
+        "task:view",
+        "task:create",
+        "task:execute",
+    },
+    "user": {
+        "data_import:view",
+        "task:view",
+    },
+}

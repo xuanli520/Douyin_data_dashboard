@@ -3,6 +3,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 
 from src.auth import current_user, User
+from src.auth.rbac import require_permissions
+from src.auth.permissions import DataSourcePermission
 from src.domains.data_source.schemas import (
     DataSourceCreate,
     DataSourceResponse,
@@ -32,6 +34,7 @@ async def list_data_sources(
     name: str | None = Query(None, max_length=100),
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.VIEW)),
 ) -> Response[dict[str, Any]]:
     ds_list, total = await service.list_paginated(
         page=page,
@@ -48,6 +51,7 @@ async def create_data_source(
     data: DataSourceCreate,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.CREATE)),
 ) -> Response[DataSourceResponse]:
     ds = await service.create(data, user_id=user.id)
     return Response.success(data=ds)
@@ -58,6 +62,7 @@ async def get_data_source(
     ds_id: int,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.VIEW)),
 ) -> Response[DataSourceResponse]:
     ds = await service.get_by_id(ds_id)
     return Response.success(data=ds)
@@ -69,6 +74,7 @@ async def update_data_source(
     data: DataSourceUpdate,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.UPDATE)),
 ) -> Response[DataSourceResponse]:
     ds = await service.update(ds_id, data, user_id=user.id)
     return Response.success(data=ds)
@@ -79,6 +85,7 @@ async def delete_data_source(
     ds_id: int,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.DELETE)),
 ) -> Response[None]:
     await service.delete(ds_id)
     return Response.success()

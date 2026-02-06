@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Q
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth import current_user, User
+from src.auth.rbac import require_permissions
+from src.auth.permissions import DataImportPermission
 from src.cache import get_cache, CacheProtocol
 from src.domains.data_import.enums import ImportStatus
 from src.domains.data_import.service import ImportService
@@ -49,6 +51,7 @@ async def upload_file(
     data_source_id: int = Form(...),
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
+    _=Depends(require_permissions(DataImportPermission.UPLOAD)),
 ):
     upload_dir = Path("uploads/imports")
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -119,6 +122,7 @@ async def parse_file(
     import_id: int,
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
+    _=Depends(require_permissions(DataImportPermission.PARSE)),
 ):
     record = await service.get_import_record(import_id)
     if not record:
@@ -154,6 +158,7 @@ async def apply_mapping(
     request: FieldMappingRequest,
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
+    _=Depends(require_permissions(DataImportPermission.PARSE)),
 ):
     record = await service.get_import_record(import_id)
     if not record:
@@ -179,6 +184,7 @@ async def validate_data(
     ),
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
+    _=Depends(require_permissions(DataImportPermission.VALIDATE)),
 ):
     record = await service.get_import_record(import_id)
     if not record:
@@ -212,6 +218,7 @@ async def confirm_import(
     import_id: int,
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
+    _=Depends(require_permissions(DataImportPermission.CONFIRM)),
 ):
     record = await service.get_import_record(import_id)
     if not record:
@@ -257,6 +264,7 @@ async def get_import_history(
     page_size: int = Query(20, ge=1, le=100),
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
+    _=Depends(require_permissions(DataImportPermission.VIEW)),
 ) -> Response[ImportHistoryResponse]:
     histories, total = await service.list_import_history(
         user_id=current_user.id or 0, page=page, size=page_size
@@ -290,6 +298,7 @@ async def get_import_detail(
     import_id: int,
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
+    _=Depends(require_permissions(DataImportPermission.VIEW)),
 ):
     record = await service.get_import_record(import_id)
     if not record:
@@ -320,6 +329,7 @@ async def cancel_import(
     import_id: int,
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
+    _=Depends(require_permissions(DataImportPermission.VIEW)),
 ):
     record = await service.get_import_record(import_id)
     if not record:

@@ -3,6 +3,8 @@ from typing import Any
 from fastapi import APIRouter, Depends
 
 from src.auth import current_user, User
+from src.auth.rbac import require_permissions
+from src.auth.permissions import TaskPermission
 from src.responses.base import Response
 
 router = APIRouter(prefix="/tasks", tags=["task"])
@@ -11,6 +13,7 @@ router = APIRouter(prefix="/tasks", tags=["task"])
 @router.get("", response_model=Response[list[dict[str, Any]]])
 async def list_tasks(
     user: User = Depends(current_user),
+    _=Depends(require_permissions(TaskPermission.VIEW)),
 ) -> Response[list[dict[str, Any]]]:
     return Response.success(data=[])
 
@@ -19,6 +22,7 @@ async def list_tasks(
 async def create_task(
     data: dict[str, Any],
     user: User = Depends(current_user),
+    _=Depends(require_permissions(TaskPermission.CREATE)),
 ) -> Response[dict[str, Any]]:
     return Response.success(
         data={
@@ -37,6 +41,7 @@ async def create_task(
 async def run_task(
     task_id: int,
     user: User = Depends(current_user),
+    _=Depends(require_permissions(TaskPermission.EXECUTE)),
 ) -> Response[dict[str, Any]]:
     return Response.success(data={"execution_id": "exec_123", "status": "running"})
 
@@ -45,5 +50,6 @@ async def run_task(
 async def get_task_executions(
     task_id: int,
     user: User = Depends(current_user),
+    _=Depends(require_permissions(TaskPermission.VIEW)),
 ) -> Response[list[dict[str, Any]]]:
     return Response.success(data=[])
