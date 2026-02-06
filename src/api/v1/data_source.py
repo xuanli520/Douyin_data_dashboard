@@ -40,7 +40,7 @@ async def list_data_sources(
         source_type=source_type,
         name=name,
     )
-    return Response.success(data=ds_list)
+    return Response.success(data={"items": ds_list, "total": total})
 
 
 @router.post("", response_model=Response[DataSourceResponse])
@@ -143,3 +143,23 @@ async def update_scraping_rule(
 ) -> Response[ScrapingRuleResponse]:
     rule = await service.update_scraping_rule(rule_id, data)
     return Response.success(data=rule)
+
+
+@scraping_rule_router.get("/{rule_id}", response_model=Response[ScrapingRuleResponse])
+async def get_scraping_rule(
+    rule_id: int,
+    service: DataSourceService = Depends(get_data_source_service),
+    user: User = Depends(current_user),
+) -> Response[ScrapingRuleResponse]:
+    rule = await service.get_scraping_rule(rule_id)
+    return Response.success(data=rule)
+
+
+@scraping_rule_router.delete("/{rule_id}", response_model=Response[None])
+async def delete_scraping_rule(
+    rule_id: int,
+    service: DataSourceService = Depends(get_data_source_service),
+    user: User = Depends(current_user),
+) -> Response[None]:
+    await service.delete_scraping_rule(rule_id)
+    return Response.success()

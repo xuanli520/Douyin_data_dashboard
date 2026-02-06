@@ -384,6 +384,14 @@ class DataSourceService:
         rules = await self.rule_repo.get_by_data_source(ds_id)
         return [self._build_scraping_rule_response(r) for r in rules]
 
+    async def get_scraping_rule(self, rule_id: int) -> ScrapingRuleResponse:
+        rule = await self.rule_repo.get_by_id(rule_id)
+        if not rule:
+            raise BusinessException(
+                ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
+            )
+        return self._build_scraping_rule_response(rule)
+
     async def update_scraping_rule(
         self, rule_id: int, data: ScrapingRuleUpdate
     ) -> ScrapingRuleResponse:
