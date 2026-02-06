@@ -18,6 +18,20 @@ PERMISSIONS = [
     ("permission:read", "查看权限", "permission", "查看权限列表"),
     ("system:settings", "系统设置", "system", "系统设置"),
     ("system:logs", "查看日志", "system", "查看系统日志"),
+    ("data_source:view", "查看数据源", "data_source", "查看数据源列表和详情"),
+    ("data_source:create", "创建数据源", "data_source", "创建新数据源"),
+    ("data_source:update", "更新数据源", "data_source", "更新数据源信息"),
+    ("data_source:delete", "删除数据源", "data_source", "删除数据源"),
+    ("data_import:view", "查看导入历史", "data_import", "查看数据导入记录"),
+    ("data_import:upload", "上传文件", "data_import", "上传数据文件"),
+    ("data_import:parse", "解析文件", "data_import", "解析上传的文件"),
+    ("data_import:validate", "验证数据", "data_import", "验证导入数据"),
+    ("data_import:confirm", "确认导入", "data_import", "确认并执行数据导入"),
+    ("data_import:cancel", "取消导入", "data_import", "取消数据导入操作"),
+    ("task:view", "查看任务", "task", "查看任务列表和执行记录"),
+    ("task:create", "创建任务", "task", "创建新任务"),
+    ("task:execute", "执行任务", "task", "手动触发任务执行"),
+    ("task:cancel", "取消任务", "task", "取消任务执行"),
 ]
 
 

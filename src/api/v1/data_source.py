@@ -3,6 +3,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 
 from src.auth import current_user, User
+from src.auth.rbac import require_permissions
+from src.auth.permissions import DataSourcePermission
 from src.domains.data_source.schemas import (
     DataSourceCreate,
     DataSourceResponse,
@@ -32,6 +34,7 @@ async def list_data_sources(
     name: str | None = Query(None, max_length=100),
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.VIEW, bypass_superuser=True)),
 ) -> Response[dict[str, Any]]:
     ds_list, total = await service.list_paginated(
         page=page,
@@ -48,6 +51,7 @@ async def create_data_source(
     data: DataSourceCreate,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.CREATE, bypass_superuser=True)),
 ) -> Response[DataSourceResponse]:
     ds = await service.create(data, user_id=user.id)
     return Response.success(data=ds)
@@ -58,6 +62,7 @@ async def get_data_source(
     ds_id: int,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.VIEW, bypass_superuser=True)),
 ) -> Response[DataSourceResponse]:
     ds = await service.get_by_id(ds_id)
     return Response.success(data=ds)
@@ -69,6 +74,7 @@ async def update_data_source(
     data: DataSourceUpdate,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.UPDATE, bypass_superuser=True)),
 ) -> Response[DataSourceResponse]:
     ds = await service.update(ds_id, data, user_id=user.id)
     return Response.success(data=ds)
@@ -79,6 +85,7 @@ async def delete_data_source(
     ds_id: int,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.DELETE, bypass_superuser=True)),
 ) -> Response[None]:
     await service.delete(ds_id)
     return Response.success()
@@ -89,6 +96,7 @@ async def activate_data_source(
     ds_id: int,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.UPDATE, bypass_superuser=True)),
 ) -> Response[DataSourceResponse]:
     ds = await service.activate(ds_id, user_id=user.id)
     return Response.success(data=ds)
@@ -99,6 +107,7 @@ async def deactivate_data_source(
     ds_id: int,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.UPDATE, bypass_superuser=True)),
 ) -> Response[DataSourceResponse]:
     ds = await service.deactivate(ds_id, user_id=user.id)
     return Response.success(data=ds)
@@ -109,6 +118,7 @@ async def validate_connection(
     ds_id: int,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.VIEW, bypass_superuser=True)),
 ) -> Response[dict[str, Any]]:
     result = await service.validate_connection(ds_id)
     return Response.success(data=result)
@@ -119,6 +129,7 @@ async def list_scraping_rules(
     ds_id: int,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.VIEW, bypass_superuser=True)),
 ) -> Response[list[Any]]:
     rules = await service.list_scraping_rules(ds_id)
     return Response.success(data=rules)
@@ -129,6 +140,7 @@ async def create_scraping_rule(
     data: ScrapingRuleCreate,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.CREATE, bypass_superuser=True)),
 ) -> Response[ScrapingRuleResponse]:
     rule = await service.create_scraping_rule(data.data_source_id, data)
     return Response.success(data=rule)
@@ -140,6 +152,7 @@ async def update_scraping_rule(
     data: ScrapingRuleUpdate,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.UPDATE, bypass_superuser=True)),
 ) -> Response[ScrapingRuleResponse]:
     rule = await service.update_scraping_rule(rule_id, data)
     return Response.success(data=rule)
@@ -150,6 +163,7 @@ async def get_scraping_rule(
     rule_id: int,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.VIEW, bypass_superuser=True)),
 ) -> Response[ScrapingRuleResponse]:
     rule = await service.get_scraping_rule(rule_id)
     return Response.success(data=rule)
@@ -160,6 +174,7 @@ async def delete_scraping_rule(
     rule_id: int,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.DELETE, bypass_superuser=True)),
 ) -> Response[None]:
     await service.delete_scraping_rule(rule_id)
     return Response.success()

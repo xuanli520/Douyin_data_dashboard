@@ -10,9 +10,11 @@ from src.api import (
     create_oauth_router,
     admin_router,
     monitor_router,
-    data_import_router,
     data_source_router,
     scraping_rule_router,
+    data_import_router,
+    task_router,
+    permissions_router,
 )
 from src.cache import close_cache, get_cache, init_cache
 from src.config import get_settings
@@ -86,6 +88,8 @@ def create_app() -> FastAPI:
     app.include_router(core_router)
     app.include_router(monitor_router, prefix="/monitor")
     app.include_router(data_import_router, prefix="/api/v1", tags=["data-import"])
+    app.include_router(task_router, prefix="/api/v1", tags=["task"])
+    app.include_router(permissions_router, prefix="/api/v1", tags=["permissions"])
 
     add_pagination(app)
 
