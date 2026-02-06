@@ -65,7 +65,6 @@ class ImportHistoryResponse(BaseModel):
 class ImportDetailResponse(BaseModel):
     id: int
     file_name: str
-    file_path: str
     file_size: int
     status: str
     field_mapping: dict[str, str] | None

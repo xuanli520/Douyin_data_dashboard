@@ -174,6 +174,9 @@ async def apply_mapping(
 @router.post("/validate", response_model=Response[ImportValidateResponse])
 async def validate_data(
     import_id: int,
+    data_type: str = Query(
+        "order", description="Data type for validation (order, product, etc.)"
+    ),
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
 ):
@@ -184,8 +187,13 @@ async def validate_data(
     if record.created_by_id != current_user.id:
         return Response.error(code=403, msg="Access denied")
 
+    if record.status not in [ImportStatus.PENDING, ImportStatus.VALIDATION_FAILED]:
+        return Response.error(
+            code=400, msg="Import cannot be validated in current status"
+        )
+
     rows = await service.parse_file(import_id)
-    results = await service.validate_data(import_id, rows)
+    results = await service.validate_data(import_id, rows, data_type)
 
     return Response.success(
         data=ImportValidateResponse(
@@ -211,6 +219,11 @@ async def confirm_import(
 
     if record.created_by_id != current_user.id:
         return Response.error(code=403, msg="Access denied")
+
+    if record.status not in [ImportStatus.SUCCESS, ImportStatus.PARTIAL]:
+        return Response.error(
+            code=400, msg="Import must be validated successfully before confirming"
+        )
 
     rows = await service.parse_file(import_id)
     result = await service.confirm_import(import_id, rows)
@@ -269,7 +282,6 @@ async def get_import_detail(
         data=ImportDetailResponse(
             id=record.id or 0,
             file_name=record.file_name,
-            file_path=record.file_path,
             file_size=record.file_size,
             status=record.status.value,
             field_mapping=record.field_mapping,

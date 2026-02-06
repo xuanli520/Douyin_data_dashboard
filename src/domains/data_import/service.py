@@ -19,6 +19,8 @@ class ImportService:
     IMPORT_PREFIX = "import:"
     PROGRESS_KEY = "progress"
     CANCEL_KEY = "cancel"
+    PARSE_CACHE_KEY = "parse_cache"
+    DEFAULT_BATCH_SIZE = 1000
 
     def __init__(
         self,
@@ -36,10 +38,16 @@ class ImportService:
     def _get_cancel_key(self, import_id: int) -> str:
         return f"{self.IMPORT_PREFIX}{import_id}:{self.CANCEL_KEY}"
 
+    def _get_parse_cache_key(self, import_id: int) -> str:
+        return f"{self.IMPORT_PREFIX}{import_id}:{self.PARSE_CACHE_KEY}"
+
     async def _is_cancelled(self, import_id: int) -> bool:
         if not self.redis:
             return False
-        return await self.redis.exists(self._get_cancel_key(import_id))
+        try:
+            return await self.redis.exists(self._get_cancel_key(import_id))
+        except Exception:
+            return False
 
     async def upload_file(
         self,
@@ -75,6 +83,17 @@ class ImportService:
         if not record:
             raise ValueError("Import record not found")
 
+        if self.redis:
+            try:
+                cache_key = self._get_parse_cache_key(import_id)
+                cached = await self.redis.get(cache_key)
+                if cached:
+                    cached_data = json.loads(cached)
+                    if cached_data.get("file_path") == record.file_path:
+                        return cached_data["rows"]
+            except (json.JSONDecodeError, TypeError):
+                pass
+
         try:
             parser = FileParser(record.file_path)
             rows = list(parser.parse())
@@ -92,6 +111,18 @@ class ImportService:
                     json.dumps(progress, ensure_ascii=False),
                     ttl=3600,
                 )
+                try:
+                    cache_key = self._get_parse_cache_key(import_id)
+                    await self.redis.set(
+                        cache_key,
+                        json.dumps(
+                            {"file_path": record.file_path, "rows": rows},
+                            ensure_ascii=False,
+                        ),
+                        ttl=3600,
+                    )
+                except Exception:
+                    pass
 
             await self.repo.update_counts(import_id, total_rows=total_rows)
             await self.session.commit()
@@ -146,7 +177,10 @@ class ImportService:
 
         results = ValidationService.validate_and_summarize(data_type, mapped_rows)
 
-        await self.repo.update_status(import_id, ImportStatus.SUCCESS)
+        if results["failed"] > 0:
+            await self.repo.update_status(import_id, ImportStatus.VALIDATION_FAILED)
+        else:
+            await self.repo.update_status(import_id, ImportStatus.SUCCESS)
         await self.session.commit()
 
         return results
@@ -155,14 +189,19 @@ class ImportService:
         self,
         import_id: int,
         rows: list[dict[str, Any]],
-        batch_size: int = 1000,
+        batch_size: int | None = None,
     ) -> dict[str, Any]:
         record = await self.repo.get_by_id(import_id)
         if not record:
             raise ValueError("Import record not found")
 
+        if record.status in [ImportStatus.SUCCESS, ImportStatus.PARTIAL]:
+            raise ValueError("Import has already been completed")
+
         if record.status == ImportStatus.FAILED:
             raise ValueError("Import has failed")
+
+        batch_size = batch_size or self.DEFAULT_BATCH_SIZE
 
         if await self._is_cancelled(import_id):
             await self.repo.update_status(import_id, ImportStatus.CANCELLED)
@@ -285,7 +324,10 @@ class ImportService:
 
     async def cancel_import(self, import_id: int) -> None:
         if self.redis:
-            await self.redis.set(self._get_cancel_key(import_id), "1", ttl=3600)
+            try:
+                await self.redis.set(self._get_cancel_key(import_id), "1", ttl=3600)
+            except Exception:
+                pass
         await self.repo.update_status(import_id, ImportStatus.CANCELLED)
         await self.session.commit()
 
