@@ -21,8 +21,6 @@ from src.domains.data_source.schemas import (
     DataSourceType,
     DataSourceUpdate,
     ScrapingRuleCreate,
-    ScrapingRuleListItem,
-    ScrapingRuleListResponse,
     ScrapingRuleResponse,
     ScrapingRuleType,
     ScrapingRuleUpdate,
