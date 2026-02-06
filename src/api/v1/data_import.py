@@ -1,14 +1,14 @@
-import os
-import shutil
 import uuid
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, UploadFile, File, Form
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth import current_user, User
 from src.cache import get_cache, CacheProtocol
 from src.domains.data_import.enums import ImportStatus
+from src.domains.data_import.service import ImportService
 from src.domains.data_import.schemas import (
     ImportUploadResponse,
     FieldMappingRequest,
@@ -19,19 +19,27 @@ from src.domains.data_import.schemas import (
     ImportDetailResponse,
     ImportCancelResponse,
 )
-from src.domains.data_import.service import ImportService
 from src.responses.base import Response
 from src.session import get_session
 
 
 router = APIRouter()
+MAX_FILE_SIZE = 100 * 1024 * 1024
+ALLOWED_CONTENT_TYPES = {
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".xls": "application/vnd.ms-excel",
+    ".csv": "text/csv",
+}
 
 
 def get_import_service(
     session: AsyncSession = Depends(get_session),
     cache: CacheProtocol = Depends(get_cache),
 ) -> ImportService:
-    redis = cache if hasattr(cache, "set") else None
+    try:
+        redis = cache if hasattr(cache, "set") and cache is not None else None
+    except Exception:
+        redis = None
     return ImportService(session=session, redis=redis)
 
 
@@ -42,29 +50,55 @@ async def upload_file(
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
 ):
-    upload_dir = "uploads/imports"
-    os.makedirs(upload_dir, exist_ok=True)
+    upload_dir = Path("uploads/imports")
+    upload_dir.mkdir(parents=True, exist_ok=True)
 
     filename = file.filename or "unknown"
-    file_ext = os.path.splitext(filename)[1]
+    file_ext = Path(filename).suffix.lower()
+
+    if file_ext not in ALLOWED_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type: {file_ext}. Allowed: {', '.join(ALLOWED_CONTENT_TYPES.keys())}",
+        )
+
     unique_filename = f"{uuid.uuid4().hex}{file_ext}"
-    file_path = os.path.join(upload_dir, unique_filename)
+    file_path = upload_dir / unique_filename
 
-    with open(file_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    try:
+        content = await file.read()
+        if len(content) > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File size exceeds maximum allowed size of {MAX_FILE_SIZE // (1024 * 1024)}MB",
+            )
 
-    file_size = os.path.getsize(file_path)
+        file_path.write_bytes(content)
+        file_size = len(content)
+    except HTTPException:
+        raise
+    except Exception as e:
+        if file_path.exists():
+            file_path.unlink()
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
 
     batch_no = f"IMP-{uuid.uuid4().hex[:8].upper()}"
 
-    record = await service.upload_file(
-        file_path=file_path,
-        file_name=filename,
-        file_size=file_size,
-        data_source_id=data_source_id,
-        user_id=current_user.id or 0,
-        batch_no=batch_no,
-    )
+    try:
+        record = await service.upload_file(
+            file_path=str(file_path),
+            file_name=filename,
+            file_size=file_size,
+            data_source_id=data_source_id,
+            user_id=current_user.id or 0,
+            batch_no=batch_no,
+        )
+    except Exception as e:
+        if file_path.exists():
+            file_path.unlink()
+        raise HTTPException(
+            status_code=500, detail=f"Failed to create import record: {str(e)}"
+        )
 
     return Response.success(
         data=ImportUploadResponse(
@@ -92,7 +126,15 @@ async def parse_file(
 
     rows = await service.parse_file(import_id)
 
-    preview = rows[:5]
+    preview = []
+    for row in rows[:5]:
+        limited_row = {}
+        for key, value in row.items():
+            if isinstance(value, str) and len(value) > 1000:
+                limited_row[key] = value[:1000] + "..."
+            else:
+                limited_row[key] = value
+        preview.append(limited_row)
 
     return Response.success(
         data={
@@ -183,8 +225,8 @@ async def confirm_import(
 
 @router.get("/history", response_model=Response[ImportHistoryResponse])
 async def list_import_history(
-    page: int = 1,
-    size: int = 20,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
 ):
@@ -254,6 +296,7 @@ async def cancel_import(
     if record.status not in [
         ImportStatus.PENDING,
         ImportStatus.PROCESSING,
+        ImportStatus.CANCELLED,
     ]:
         return Response.error(code=400, msg="Cannot cancel this import")
 
@@ -265,4 +308,33 @@ async def cancel_import(
             status="cancelled",
             message="Import cancelled successfully",
         )
+    )
+
+
+@router.get("/progress/{import_id}")
+async def get_import_progress(
+    import_id: int,
+    current_user: User = Depends(current_user),
+    service: ImportService = Depends(get_import_service),
+):
+    record = await service.get_import_record(import_id)
+    if not record:
+        return Response.error(code=404, msg="Import record not found")
+
+    if record.created_by_id != current_user.id:
+        return Response.error(code=403, msg="Access denied")
+
+    progress = await service.get_progress(import_id)
+
+    return Response.success(
+        data={
+            "progress": progress,
+            "record": {
+                "id": record.id,
+                "status": record.status.value,
+                "total_rows": record.total_rows,
+                "success_rows": record.success_rows,
+                "failed_rows": record.failed_rows,
+            },
+        }
     )

@@ -9,7 +9,6 @@ from src.domains.data_import.parser import FileParser
 from src.domains.data_import.mapping import FieldMapper
 from src.domains.data_import.validator import ValidationService
 from src.domains.data_import.repository import DataImportRecordRepository
-from src.cache.redis import RedisCache
 
 
 class ImportService:
@@ -20,7 +19,7 @@ class ImportService:
     def __init__(
         self,
         session: AsyncSession,
-        redis: RedisCache | None = None,
+        redis: Any = None,
     ):
         self.session = session
         self.redis = redis
@@ -247,16 +246,19 @@ class ImportService:
     async def cancel_import(self, import_id: int) -> None:
         if self.redis:
             await self.redis.set(self._get_cancel_key(import_id), "1", ttl=3600)
-        await self.repo.update_status(import_id, ImportStatus.FAILED)
+        await self.repo.update_status(import_id, ImportStatus.CANCELLED)
         await self.session.commit()
 
     async def get_progress(self, import_id: int) -> dict[str, Any] | None:
         if not self.redis:
             return None
         key = self._get_progress_key(import_id)
-        data = await self.redis.get(key)
-        if data:
-            return json.loads(data)
+        try:
+            data = await self.redis.get(key)
+            if data:
+                return json.loads(data)
+        except (json.JSONDecodeError, TypeError):
+            pass
         record = await self.repo.get_by_id(import_id)
         if record:
             return {

@@ -7,6 +7,7 @@ class ImportStatus(str, Enum):
     SUCCESS = "success"
     FAILED = "failed"
     PARTIAL = "partial"
+    CANCELLED = "cancelled"
 
 
 class FileType(str, Enum):
