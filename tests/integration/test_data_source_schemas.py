@@ -273,7 +273,11 @@ class TestDataSourceUpdateSchema:
 
 class TestScrapingRuleCreateSchema:
     async def test_create_scraping_rule_endpoint(self, test_client):
-        ds_payload = DataSourceCreate(name="Test DS", type=DataSourceType.DOUYIN_API)
+        ds_payload = DataSourceCreate(
+            name="Test DS",
+            type=DataSourceType.DOUYIN_API,
+            config={"api_key": "test_key", "api_secret": "test_secret"},
+        )
         ds_response = await test_client.post(
             "/api/v1/data-sources",
             json=ds_payload.model_dump(),
@@ -313,7 +317,11 @@ class TestScrapingRuleCreateSchema:
 
 class TestScrapingRuleUpdateSchema:
     async def test_update_scraping_rule_schedule(self, test_client):
-        ds_payload = DataSourceCreate(name="Test DS", type=DataSourceType.DOUYIN_API)
+        ds_payload = DataSourceCreate(
+            name="Test DS",
+            type=DataSourceType.DOUYIN_API,
+            config={"api_key": "test_key", "api_secret": "test_secret"},
+        )
         ds_response = await test_client.post(
             "/api/v1/data-sources",
             json=ds_payload.model_dump(),
@@ -341,7 +349,11 @@ class TestScrapingRuleUpdateSchema:
         assert response.json()["data"]["schedule"] == "0 */12 * * *"
 
     async def test_update_scraping_rule_deactivation(self, test_client):
-        ds_payload = DataSourceCreate(name="Test DS", type=DataSourceType.DOUYIN_API)
+        ds_payload = DataSourceCreate(
+            name="Test DS",
+            type=DataSourceType.DOUYIN_API,
+            config={"api_key": "test_key", "api_secret": "test_secret"},
+        )
         ds_response = await test_client.post(
             "/api/v1/data-sources",
             json=ds_payload.model_dump(),

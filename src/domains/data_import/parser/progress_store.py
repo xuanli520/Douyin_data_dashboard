@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import NamedTuple
 from json import JSONDecodeError
 
@@ -38,7 +38,7 @@ class ParseProgressStore:
             "file_type": file_type,
             "current_row": current_row,
             "total_rows": total_rows,
-            "last_updated": datetime.utcnow().isoformat(),
+            "last_updated": datetime.now(timezone.utc).isoformat(),
             "file_hash": file_hash,
         }
         await self._cache.set(self._key(file_id), json.dumps(data), ttl)

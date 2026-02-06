@@ -93,7 +93,13 @@ class DataSourceTypeRegistry:
 
 @DataSourceTypeRegistry.register_validator(DataSourceType.DOUYIN_API)
 def _validate_douyin_api_config(config: dict[str, Any]) -> None:
-    pass
+    required = ["api_key", "api_secret"]
+    missing = [f for f in required if not config.get(f)]
+    if missing:
+        raise BusinessException(
+            ErrorCode.DATA_VALIDATION_FAILED,
+            f"Missing required fields: {', '.join(missing)}",
+        )
 
 
 @DataSourceTypeRegistry.register_validator(DataSourceType.FILE_UPLOAD)
