@@ -82,6 +82,9 @@ async def test_client(async_engine, test_session, auth_token):
         monitor_router,
         admin_router,
         data_source_router,
+        scraping_rule_router,
+        data_import_router,
+        task_router,
     )
     from src.cache import close_cache, get_cache
     from src.config import get_settings
@@ -121,16 +124,14 @@ async def test_client(async_engine, test_session, auth_token):
     app.include_router(monitor_router, tags=["monitor"])
     app.include_router(admin_router, prefix="/api", tags=["admin"])
     app.include_router(data_source_router, prefix="/api/v1", tags=["data-source"])
+    app.include_router(scraping_rule_router, prefix="/api/v1", tags=["scraping-rule"])
+    app.include_router(data_import_router, prefix="/api/v1", tags=["data-import"])
+    app.include_router(task_router, prefix="/api/v1", tags=["task"])
 
     add_pagination(app)
 
-    async_session_factory = sessionmaker(
-        async_engine, class_=AsyncSession, expire_on_commit=False
-    )
-
     async def override_get_session():
-        async with async_session_factory() as session:
-            yield session
+        yield test_session
 
     app.dependency_overrides[get_session] = override_get_session
 
