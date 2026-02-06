@@ -23,7 +23,7 @@ router = APIRouter(prefix="/data-sources", tags=["data-source"])
 scraping_rule_router = APIRouter(prefix="/scraping-rules", tags=["scraping-rule"])
 
 
-@router.get("", response_model=Response[list[DataSourceResponse]])
+@router.get("", response_model=Response[dict[str, Any]])
 async def list_data_sources(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
@@ -32,7 +32,7 @@ async def list_data_sources(
     name: str | None = Query(None, max_length=100),
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
-) -> Response[list[DataSourceResponse]]:
+) -> Response[dict[str, Any]]:
     ds_list, total = await service.list_paginated(
         page=page,
         size=size,

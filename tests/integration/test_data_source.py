@@ -180,7 +180,9 @@ class TestDataSourceAPI:
         response = await test_client.get("/api/v1/data-sources")
         assert response.status_code == 200
         data = response.json()["data"]
-        assert isinstance(data, list)
+        assert isinstance(data, dict)
+        assert "items" in data
+        assert "total" in data
 
     async def test_get_data_source_detail(self, test_client):
         create_response = await test_client.post(
