@@ -104,6 +104,7 @@ class TestFullImportWorkflow:
                 file_path="/uploads/orders.csv",
                 file_name="orders.csv",
                 file_size=1024,
+                file_type="csv",
                 data_source_id=1,
                 batch_no="IMP-12345678",
                 user_id=1,

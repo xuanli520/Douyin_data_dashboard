@@ -3,12 +3,16 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.cache import CacheProtocol
 from src.domains.data_import.enums import ImportStatus
 from src.domains.data_import.models import DataImportRecord
 from src.domains.data_import.parser import FileParser
 from src.domains.data_import.mapping import FieldMapper
 from src.domains.data_import.validator import ValidationService
-from src.domains.data_import.repository import DataImportRecordRepository
+from src.domains.data_import.repository import (
+    DataImportRecordRepository,
+    DataImportDetailRepository,
+)
 
 
 class ImportService:
@@ -19,11 +23,12 @@ class ImportService:
     def __init__(
         self,
         session: AsyncSession,
-        redis: Any = None,
+        redis: CacheProtocol | None = None,
     ):
         self.session = session
         self.redis = redis
         self.repo = DataImportRecordRepository(session)
+        self.detail_repo = DataImportDetailRepository(session)
 
     def _get_progress_key(self, import_id: int) -> str:
         return f"{self.IMPORT_PREFIX}{import_id}:{self.PROGRESS_KEY}"
@@ -41,15 +46,21 @@ class ImportService:
         file_path: str,
         file_name: str,
         file_size: int,
+        file_type: str,
         data_source_id: int,
         batch_no: str,
         user_id: int | None = None,
     ) -> DataImportRecord:
+        from src.domains.data_import.enums import FileType
+
+        ft = FileType.EXCEL if file_type == "excel" else FileType.CSV
+
         record = await self.repo.create(
             {
                 "file_name": file_name,
                 "file_path": file_path,
                 "file_size": file_size,
+                "file_type": ft,
                 "data_source_id": data_source_id,
                 "batch_no": batch_no,
                 "status": ImportStatus.PENDING,
@@ -63,8 +74,6 @@ class ImportService:
         record = await self.repo.get_by_id(import_id)
         if not record:
             raise ValueError("Import record not found")
-
-        await self.repo.update_status(import_id, ImportStatus.PROCESSING)
 
         try:
             parser = FileParser(record.file_path)
@@ -85,7 +94,6 @@ class ImportService:
                 )
 
             await self.repo.update_counts(import_id, total_rows=total_rows)
-            await self.repo.update_status(import_id, ImportStatus.SUCCESS)
             await self.session.commit()
 
             return rows
@@ -104,9 +112,6 @@ class ImportService:
         if not record:
             raise ValueError("Import record not found")
 
-        await self.repo.update_status(import_id, ImportStatus.PROCESSING)
-        await self.session.commit()
-
         mapper = FieldMapper()
         mapper.set_target_fields(target_fields)
         for source, target in mappings.items():
@@ -118,7 +123,6 @@ class ImportService:
         field_mapping.update(mapping_dict)
 
         await self.repo.update(import_id, {"field_mapping": field_mapping})
-        await self.repo.update_status(import_id, ImportStatus.SUCCESS)
         await self.session.commit()
 
     async def validate_data(
@@ -160,13 +164,13 @@ class ImportService:
         if record.status == ImportStatus.FAILED:
             raise ValueError("Import has failed")
 
-        await self.repo.update_status(import_id, ImportStatus.PROCESSING)
-        await self.session.commit()
-
         if await self._is_cancelled(import_id):
-            await self.repo.update_status(import_id, ImportStatus.FAILED)
+            await self.repo.update_status(import_id, ImportStatus.CANCELLED)
             await self.session.commit()
             return {"cancelled": True}
+
+        await self.repo.update_status(import_id, ImportStatus.PROCESSING)
+        await self.session.commit()
 
         field_mapping = record.field_mapping or {}
 
@@ -178,23 +182,59 @@ class ImportService:
         processed = 0
         success = 0
         failed = 0
-        errors = []
+        errors: list[dict[str, Any]] = []
+        batch_details: list[dict[str, Any]] = []
 
         for i, row in enumerate(rows):
-            if i % batch_size == 0:
-                if await self._is_cancelled(import_id):
-                    await self.repo.update_status(import_id, ImportStatus.FAILED)
-                    await self.session.commit()
-                    break
+            if await self._is_cancelled(import_id):
+                await self.repo.update_status(import_id, ImportStatus.CANCELLED)
+                await self.session.commit()
+                return {"cancelled": True}
 
+            row_number = i + 1
+            processed += 1
+
+            try:
+                mapped_row = mapper.transform_data(row)
+
+                detail = {
+                    "import_record_id": import_id,
+                    "row_number": row_number,
+                    "row_data": mapped_row,
+                    "status": ImportStatus.SUCCESS,
+                    "error_message": None,
+                }
+                batch_details.append(detail)
+                success += 1
+            except Exception as e:
+                detail = {
+                    "import_record_id": import_id,
+                    "row_number": row_number,
+                    "row_data": row,
+                    "status": ImportStatus.FAILED,
+                    "error_message": str(e),
+                }
+                batch_details.append(detail)
+                failed += 1
+                errors.append(
+                    {
+                        "row": row_number,
+                        "error": str(e),
+                    }
+                )
+
+            if len(batch_details) >= batch_size:
+                await self.detail_repo.bulk_create(batch_details)
                 await self.repo.update_counts(
                     import_id,
                     success_rows=success,
                     failed_rows=failed,
                 )
                 await self.session.commit()
+                batch_details = []
 
-            processed += 1
+        if batch_details:
+            await self.detail_repo.bulk_create(batch_details)
 
         await self.repo.update_counts(
             import_id,

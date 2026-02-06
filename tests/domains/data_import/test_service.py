@@ -59,6 +59,7 @@ class TestImportServiceUnit:
                 file_path="/uploads/test.csv",
                 file_name="test.csv",
                 file_size=1024,
+                file_type="csv",
                 data_source_id=1,
                 batch_no="IMP-ABC123",
                 user_id=1,

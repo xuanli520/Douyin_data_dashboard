@@ -84,11 +84,14 @@ async def upload_file(
 
     batch_no = f"IMP-{uuid.uuid4().hex[:8].upper()}"
 
+    file_type = "excel" if file_ext in (".xlsx", ".xls") else "csv"
+
     try:
         record = await service.upload_file(
             file_path=str(file_path),
             file_name=filename,
             file_size=file_size,
+            file_type=file_type,
             data_source_id=data_source_id,
             user_id=current_user.id or 0,
             batch_no=batch_no,
@@ -296,7 +299,6 @@ async def cancel_import(
     if record.status not in [
         ImportStatus.PENDING,
         ImportStatus.PROCESSING,
-        ImportStatus.CANCELLED,
     ]:
         return Response.error(code=400, msg="Cannot cancel this import")
 
