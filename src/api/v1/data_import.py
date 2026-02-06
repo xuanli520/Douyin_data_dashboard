@@ -23,7 +23,7 @@ from src.responses.base import Response
 from src.session import get_session
 
 
-router = APIRouter()
+router = APIRouter(prefix="/data-import", tags=["data-import"])
 MAX_FILE_SIZE = 100 * 1024 * 1024
 ALLOWED_CONTENT_TYPES = {
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -111,23 +111,6 @@ async def upload_file(
             status=record.status.value,
             created_at=record.created_at,
         )
-from typing import Any
-
-from fastapi import APIRouter, Depends, UploadFile, File
-
-from src.auth import current_user, User
-from src.responses.base import Response
-
-router = APIRouter(prefix="/data-import", tags=["data-import"])
-
-
-@router.post("/upload", response_model=Response[dict[str, Any]])
-async def upload_file(
-    file: UploadFile = File(...),
-    user: User = Depends(current_user),
-) -> Response[dict[str, Any]]:
-    return Response.success(
-        data={"upload_id": "test_upload_123", "file_name": file.filename}
     )
 
 
@@ -237,13 +220,25 @@ async def confirm_import(
     if record.created_by_id != current_user.id:
         return Response.error(code=403, msg="Access denied")
 
-    if record.status not in [ImportStatus.SUCCESS, ImportStatus.PARTIAL]:
+    if record.status not in [
+        ImportStatus.PENDING,
+        ImportStatus.VALIDATION_FAILED,
+        ImportStatus.SUCCESS,
+    ]:
         return Response.error(
-            code=400, msg="Import must be validated successfully before confirming"
+            code=400, msg="Import cannot be confirmed in current status"
         )
 
-    rows = await service.parse_file(import_id)
-    result = await service.confirm_import(import_id, rows)
+    try:
+        rows = await service.parse_file(import_id)
+        result = await service.confirm_import(import_id, rows)
+    except ValueError as e:
+        return Response.error(code=400, msg=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    if result.get("cancelled"):
+        return Response.error(code=400, msg="Import was cancelled")
 
     return Response.success(
         data=ImportConfirmResponse(
@@ -257,27 +252,35 @@ async def confirm_import(
 
 
 @router.get("/history", response_model=Response[ImportHistoryResponse])
-async def list_import_history(
+async def get_import_history(
     page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=100),
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
-):
-    items, total = await service.list_import_history(
-        user_id=current_user.id or 0,
-        page=page,
-        size=size,
+) -> Response[ImportHistoryResponse]:
+    histories, total = await service.list_import_history(
+        user_id=current_user.id or 0, page=page, size=page_size
     )
+
+    items = [
+        ImportHistoryItem(
+            id=h["id"],
+            file_name=h["file_name"],
+            status=h["status"].value if hasattr(h["status"], "value") else h["status"],
+            total_rows=h["total_rows"],
+            success_rows=h["success_rows"],
+            failed_rows=h["failed_rows"],
+            created_at=h["created_at"],
+        )
+        for h in histories
+    ]
 
     return Response.success(
         data=ImportHistoryResponse(
-            items=[
-                ImportHistoryItem(**item) if isinstance(item, dict) else item
-                for item in items
-            ],
+            items=items,
             total=total,
             page=page,
-            size=size,
+            size=page_size,
         )
     )
 
@@ -288,7 +291,7 @@ async def get_import_detail(
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
 ):
-    record = await service.get_import_detail(import_id)
+    record = await service.get_import_record(import_id)
     if not record:
         return Response.error(code=404, msg="Import record not found")
 
@@ -297,7 +300,7 @@ async def get_import_detail(
 
     return Response.success(
         data=ImportDetailResponse(
-            id=record.id or 0,
+            id=record.id,
             file_name=record.file_name,
             file_size=record.file_size,
             status=record.status.value,
@@ -328,16 +331,17 @@ async def cancel_import(
     if record.status not in [
         ImportStatus.PENDING,
         ImportStatus.PROCESSING,
+        ImportStatus.VALIDATION_FAILED,
     ]:
-        return Response.error(code=400, msg="Cannot cancel this import")
+        return Response.error(
+            code=400, msg="Import cannot be cancelled in current status"
+        )
 
     await service.cancel_import(import_id)
 
     return Response.success(
         data=ImportCancelResponse(
-            id=import_id,
-            status="cancelled",
-            message="Import cancelled successfully",
+            id=import_id, status="cancelled", message="Import cancelled successfully"
         )
     )
 
@@ -369,32 +373,3 @@ async def get_import_progress(
             },
         }
     )
-    data: dict[str, Any],
-    user: User = Depends(current_user),
-) -> Response[dict[str, Any]]:
-    return Response.success(
-        data={"parsed": True, "columns": ["col1", "col2"], "row_count": 10}
-    )
-
-
-@router.post("/validate", response_model=Response[dict[str, Any]])
-async def validate_data(
-    data: dict[str, Any],
-    user: User = Depends(current_user),
-) -> Response[dict[str, Any]]:
-    return Response.success(data={"valid": True, "errors": []})
-
-
-@router.post("/confirm", response_model=Response[dict[str, Any]])
-async def confirm_import(
-    data: dict[str, Any],
-    user: User = Depends(current_user),
-) -> Response[dict[str, Any]]:
-    return Response.success(data={"import_id": "import_123", "status": "completed"})
-
-
-@router.get("/history", response_model=Response[list[dict[str, Any]]])
-async def get_import_history(
-    user: User = Depends(current_user),
-) -> Response[list[dict[str, Any]]]:
-    return Response.success(data=[])

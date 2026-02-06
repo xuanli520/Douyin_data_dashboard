@@ -10,7 +10,7 @@ from src.api import (
     create_oauth_router,
     admin_router,
     monitor_router,
-    data_import,
+    data_import_router,
     data_source_router,
     scraping_rule_router,
 )
@@ -85,9 +85,7 @@ def create_app() -> FastAPI:
     app.include_router(scraping_rule_router, prefix="/api/v1", tags=["scraping-rule"])
     app.include_router(core_router)
     app.include_router(monitor_router, prefix="/monitor")
-    app.include_router(
-        data_import.router, prefix="/api/v1/data-import", tags=["data-import"]
-    )
+    app.include_router(data_import_router, prefix="/api/v1", tags=["data-import"])
 
     add_pagination(app)
 

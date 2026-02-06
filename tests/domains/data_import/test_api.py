@@ -18,14 +18,14 @@ class TestDataImportAPI:
         from src.api.v1.data_import import router
 
         route_paths = [r.path for r in router.routes]
-        assert "/upload" in route_paths
-        assert "/parse" in route_paths
-        assert "/mapping" in route_paths
-        assert "/validate" in route_paths
-        assert "/confirm" in route_paths
-        assert "/history" in route_paths
-        assert "/{import_id}" in route_paths
-        assert "/{import_id}/cancel" in route_paths
+        assert "/data-import/upload" in route_paths
+        assert "/data-import/parse" in route_paths
+        assert "/data-import/mapping" in route_paths
+        assert "/data-import/validate" in route_paths
+        assert "/data-import/confirm" in route_paths
+        assert "/data-import/history" in route_paths
+        assert "/data-import/{import_id}" in route_paths
+        assert "/data-import/{import_id}/cancel" in route_paths
 
     @pytest.mark.asyncio
     async def test_parse_file_endpoint_structure(self):
@@ -33,14 +33,14 @@ class TestDataImportAPI:
 
         assert hasattr(router, "post")
         route_paths = [r.path for r in router.routes]
-        assert "/upload" in route_paths
-        assert "/parse" in route_paths
-        assert "/mapping" in route_paths
-        assert "/validate" in route_paths
-        assert "/confirm" in route_paths
-        assert "/history" in route_paths
-        assert "/{import_id}" in route_paths
-        assert "/{import_id}/cancel" in route_paths
+        assert "/data-import/upload" in route_paths
+        assert "/data-import/parse" in route_paths
+        assert "/data-import/mapping" in route_paths
+        assert "/data-import/validate" in route_paths
+        assert "/data-import/confirm" in route_paths
+        assert "/data-import/history" in route_paths
+        assert "/data-import/{import_id}" in route_paths
+        assert "/data-import/{import_id}/cancel" in route_paths
 
 
 class TestDataImportSchemas:

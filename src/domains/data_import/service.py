@@ -195,8 +195,15 @@ class ImportService:
         if not record:
             raise ValueError("Import record not found")
 
+        if record.status == ImportStatus.CANCELLED:
+            raise ValueError("Import was cancelled")
+
+        if record.status == ImportStatus.PROCESSING:
+            raise ValueError("Import is processing")
+
         if record.status in [ImportStatus.SUCCESS, ImportStatus.PARTIAL]:
-            raise ValueError("Import has already been completed")
+            if (record.success_rows or 0) > 0 or (record.failed_rows or 0) > 0:
+                raise ValueError("Import has already been completed")
 
         if record.status == ImportStatus.FAILED:
             raise ValueError("Import has failed")

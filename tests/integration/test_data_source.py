@@ -284,35 +284,35 @@ class TestDataImportAPI:
         response = await test_client.post(
             "/api/v1/data-import/upload",
             files={"file": ("test.csv", b"col1,col2\nval1,val2", "text/csv")},
+            data={"data_source_id": 1},
         )
         assert response.status_code == 200
-        assert "upload_id" in response.json()["data"]
+        assert "id" in response.json()["data"]
 
     async def test_parse_file(self, test_client):
         response = await test_client.post(
-            "/api/v1/data-import/parse",
-            json={"upload_id": "test_upload_id", "file_type": "csv"},
+            "/api/v1/data-import/parse?import_id=1",
         )
         assert response.status_code == 200
 
     async def test_validate_data(self, test_client):
         response = await test_client.post(
-            "/api/v1/data-import/validate",
-            json={"upload_id": "test_upload_id", "mapping": {"col1": "field1"}},
+            "/api/v1/data-import/validate?import_id=1",
         )
         assert response.status_code == 200
 
     async def test_confirm_import(self, test_client):
         response = await test_client.post(
-            "/api/v1/data-import/confirm",
-            json={"upload_id": "test_upload_id"},
+            "/api/v1/data-import/confirm?import_id=1",
         )
         assert response.status_code == 200
 
     async def test_get_import_history(self, test_client):
         response = await test_client.get("/api/v1/data-import/history")
         assert response.status_code == 200
-        assert isinstance(response.json()["data"], list)
+        data = response.json()["data"]
+        assert "items" in data
+        assert isinstance(data["items"], list)
 
 
 class TestTaskAPI:
