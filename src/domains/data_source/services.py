@@ -210,9 +210,11 @@ class DataSourceService:
         self,
         ds_repo: DataSourceRepository,
         rule_repo: ScrapingRuleRepository,
+        session: AsyncSession,
     ):
         self.ds_repo = ds_repo
         self.rule_repo = rule_repo
+        self.session = session
 
     async def create(self, data: DataSourceCreate, user_id: int) -> DataSourceResponse:
         DataSourceTypeRegistry.validate(data.type, data.config)
@@ -228,6 +230,7 @@ class DataSourceService:
         }
 
         ds = await self.ds_repo.create(ds_data)
+        await self.session.commit()
         return self._build_data_source_response(ds)
 
     async def get_by_id(self, ds_id: int) -> DataSourceResponse:
@@ -277,7 +280,7 @@ class DataSourceService:
         if data.description is not None:
             update_data["description"] = data.description
         if data.status is not None:
-            update_data["status"] = data.status
+            update_data["status"] = ModelDataSourceStatus(data.status.value)
         if data.config is not None:
             update_data.update(
                 DataSourceTypeRegistry.extract_config(
@@ -286,10 +289,12 @@ class DataSourceService:
             )
 
         ds = await self.ds_repo.update(ds_id, update_data)
+        await self.session.commit()
         return self._build_data_source_response(ds)
 
     async def delete(self, ds_id: int) -> None:
         await self.ds_repo.delete(ds_id)
+        await self.session.commit()
 
     async def activate(self, ds_id: int, user_id: int) -> DataSourceResponse:
         ds = await self.ds_repo.get_by_id(ds_id)
@@ -311,6 +316,7 @@ class DataSourceService:
                 "last_error_msg": None,
             },
         )
+        await self.session.commit()
         return self._build_data_source_response(ds)
 
     async def deactivate(self, ds_id: int, user_id: int) -> DataSourceResponse:
@@ -332,6 +338,7 @@ class DataSourceService:
                 "updated_by_id": user_id,
             },
         )
+        await self.session.commit()
         return self._build_data_source_response(ds)
 
     async def validate_connection(self, ds_id: int) -> dict[str, Any]:
@@ -345,6 +352,7 @@ class DataSourceService:
 
         if is_valid:
             await self.ds_repo.update_last_used(ds_id)
+            await self.session.commit()
             return {"valid": True, "message": message}
         else:
             await self.ds_repo.record_error(ds_id, message)
@@ -375,6 +383,7 @@ class DataSourceService:
         }
 
         rule = await self.rule_repo.create(rule_data)
+        await self.session.commit()
         return self._build_scraping_rule_response(rule)
 
     async def list_scraping_rules(self, ds_id: int) -> list[ScrapingRuleResponse]:
@@ -464,10 +473,12 @@ class DataSourceService:
             update_data.update(data.config)
 
         rule = await self.rule_repo.update(rule_id, update_data)
+        await self.session.commit()
         return self._build_scraping_rule_response(rule)
 
     async def delete_scraping_rule(self, rule_id: int) -> None:
         await self.rule_repo.delete(rule_id)
+        await self.session.commit()
 
     async def trigger_collection(
         self, ds_id: int, rule_id: int | None = None
@@ -584,4 +595,4 @@ async def get_data_source_service(
 ) -> AsyncGenerator[DataSourceService, None]:
     ds_repo = DataSourceRepository(session=session)
     rule_repo = ScrapingRuleRepository(session=session)
-    yield DataSourceService(ds_repo=ds_repo, rule_repo=rule_repo)
+    yield DataSourceService(ds_repo=ds_repo, rule_repo=rule_repo, session=session)

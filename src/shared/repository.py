@@ -43,14 +43,11 @@ class BaseRepository:
         operation: Callable[[], Any],
     ) -> Any:
         if self.session.in_transaction():
-            result = await operation()
-            await self.session.flush()
-            return result
+            return await operation()
 
         try:
             async with self.session.begin():
-                result = await operation()
-                return result
+                return await operation()
         except (
             DataError,
             IntegrityError,
