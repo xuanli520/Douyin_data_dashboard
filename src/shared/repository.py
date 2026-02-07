@@ -61,7 +61,7 @@ class BaseRepository:
             await self.session.flush()
         else:
             async with self.session.begin():
-                pass
+                await self.session.flush()
 
     async def _delete(self, instance: T) -> None:
         async def _do_delete():
