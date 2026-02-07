@@ -269,13 +269,13 @@ async def confirm_import(
 @router.get("/history", response_model=Response[ImportHistoryResponse])
 async def get_import_history(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    size: int = Query(20, ge=1, le=100),
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
     _=Depends(require_permissions(DataImportPermission.VIEW, bypass_superuser=True)),
 ) -> Response[ImportHistoryResponse]:
     histories, total = await service.list_import_history(
-        user_id=current_user.id or 0, page=page, size=page_size
+        user_id=current_user.id or 0, page=page, size=size
     )
 
     items = [
@@ -291,12 +291,15 @@ async def get_import_history(
         for h in histories
     ]
 
+    pages = (total + size - 1) // size if total > 0 else 0
+
     return Response.success(
         data=ImportHistoryResponse(
             items=items,
             total=total,
             page=page,
-            size=page_size,
+            size=size,
+            pages=pages,
         )
     )
 

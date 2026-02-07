@@ -1,7 +1,6 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi_pagination import add_pagination
 from starlette.middleware import Middleware
 
 from src.api import (
@@ -90,8 +89,6 @@ def create_app() -> FastAPI:
     app.include_router(data_import_router, prefix="/api/v1", tags=["data-import"])
     app.include_router(task_router, prefix="/api/v1", tags=["task"])
     app.include_router(permissions_router, prefix="/api/v1", tags=["permissions"])
-
-    add_pagination(app)
 
     return app
 
