@@ -82,3 +82,26 @@ class ScrapingRuleResponse(BaseModel):
     description: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class ScrapingRuleListItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    data_source_id: int
+    name: str
+    rule_type: ScrapingRuleType
+    config: dict[str, Any]
+    schedule: str | None = None
+    is_active: bool
+    description: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    data_source_name: str | None = None
+
+
+class ScrapingRuleListResponse(BaseModel):
+    items: list[ScrapingRuleListItem]
+    total: int
+    page: int
+    size: int
+    pages: int

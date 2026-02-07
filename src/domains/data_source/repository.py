@@ -208,3 +208,41 @@ class ScrapingRuleRepository(BaseRepository):
                 ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
             )
         await self._delete(rule)
+
+    async def get_paginated(
+        self,
+        page: int,
+        size: int,
+        name: str | None = None,
+        rule_type: str | None = None,
+        status: str | None = None,
+        data_source_id: int | None = None,
+    ) -> tuple[list[ScrapingRule], int]:
+        from src.domains.data_source.models import ScrapingRule
+
+        conds = []
+        if name:
+            conds.append(ScrapingRule.name.ilike(f"%{name}%"))
+        if rule_type:
+            conds.append(ScrapingRule.target_type == rule_type)
+        if status:
+            conds.append(ScrapingRule.status == status)
+        if data_source_id:
+            conds.append(ScrapingRule.data_source_id == data_source_id)
+
+        stmt = (
+            select(ScrapingRule)
+            .where(and_(*conds) if conds else True)
+            .order_by(ScrapingRule.created_at.desc())
+            .offset((page - 1) * size)
+            .limit(size)
+        )
+
+        count_stmt = select(func.count(ScrapingRule.id)).where(
+            and_(*conds) if conds else True
+        )
+
+        rules = list((await self.session.execute(stmt)).scalars().all())
+        total = (await self.session.execute(count_stmt)).scalar()
+
+        return rules, int(total)

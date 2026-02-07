@@ -12,20 +12,9 @@ class ImportUploadResponse(BaseModel):
     created_at: datetime
 
 
-class ImportParseResponse(BaseModel):
-    id: int
-    total_rows: int
-    preview: list[dict[str, Any]] = Field(default_factory=list)
-
-
 class FieldMappingRequest(BaseModel):
     mappings: dict[str, str]
     target_fields: list[str]
-
-
-class ImportMappingResponse(BaseModel):
-    id: int
-    status: str
 
 
 class ImportValidateResponse(BaseModel):
@@ -80,6 +69,17 @@ class ImportCancelResponse(BaseModel):
     id: int
     status: str
     message: str
+
+
+class ImportParseResponse(BaseModel):
+    id: int
+    total_rows: int
+    preview: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ImportMappingResponse(BaseModel):
+    id: int
+    status: str
 
 
 class ImportUploadRequest(BaseModel):

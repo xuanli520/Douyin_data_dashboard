@@ -1,6 +1,5 @@
 import uuid
 from pathlib import Path
-from typing import Any
 
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +13,8 @@ from src.domains.data_import.service import ImportService
 from src.domains.data_import.schemas import (
     ImportUploadResponse,
     FieldMappingRequest,
+    ImportParseResponse,
+    ImportMappingResponse,
     ImportValidateResponse,
     ImportConfirmResponse,
     ImportHistoryResponse,
@@ -117,7 +118,7 @@ async def upload_file(
     )
 
 
-@router.post("/parse", response_model=Response[dict[str, Any]])
+@router.post("/parse", response_model=Response[ImportParseResponse])
 async def parse_file(
     import_id: int,
     current_user: User = Depends(current_user),
@@ -144,15 +145,15 @@ async def parse_file(
         preview.append(limited_row)
 
     return Response.success(
-        data={
-            "id": import_id,
-            "total_rows": len(rows),
-            "preview": preview,
-        }
+        data=ImportParseResponse(
+            id=import_id or 0,
+            total_rows=len(rows),
+            preview=preview,
+        )
     )
 
 
-@router.post("/mapping", response_model=Response[dict[str, Any]])
+@router.post("/mapping", response_model=Response[ImportMappingResponse])
 async def apply_mapping(
     import_id: int,
     request: FieldMappingRequest,
@@ -173,7 +174,12 @@ async def apply_mapping(
         target_fields=request.target_fields,
     )
 
-    return Response.success(data={"id": import_id, "status": "mapped"})
+    return Response.success(
+        data=ImportMappingResponse(
+            id=import_id or 0,
+            status="mapped",
+        )
+    )
 
 
 @router.post("/validate", response_model=Response[ImportValidateResponse])
@@ -311,7 +317,7 @@ async def get_import_detail(
 
     return Response.success(
         data=ImportDetailResponse(
-            id=record.id,
+            id=record.id or 0,
             file_name=record.file_name,
             file_size=record.file_size,
             status=record.status.value,

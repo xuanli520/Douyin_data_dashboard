@@ -12,9 +12,12 @@ from src.domains.data_source.schemas import (
     DataSourceType,
     DataSourceUpdate,
     ScrapingRuleCreate,
+    ScrapingRuleListResponse,
     ScrapingRuleResponse,
+    ScrapingRuleType,
     ScrapingRuleUpdate,
 )
+from src.domains.data_source.enums import ScrapingRuleStatus
 from src.domains.data_source.services import (
     DataSourceService,
     get_data_source_service,
@@ -125,7 +128,7 @@ async def validate_connection(
 
 
 @router.get("/{ds_id}/scraping-rules", response_model=Response[list[Any]])
-async def list_scraping_rules(
+async def list_scraping_rules_by_datasource(
     ds_id: int,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
@@ -144,6 +147,38 @@ async def create_scraping_rule(
 ) -> Response[ScrapingRuleResponse]:
     rule = await service.create_scraping_rule(data.data_source_id, data)
     return Response.success(data=rule)
+
+
+@scraping_rule_router.get("", response_model=Response[ScrapingRuleListResponse])
+async def list_scraping_rules(
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    name: str | None = Query(None, max_length=100),
+    rule_type: ScrapingRuleType | None = Query(None),
+    status: ScrapingRuleStatus | None = Query(None),
+    data_source_id: int | None = Query(None, ge=1),
+    service: DataSourceService = Depends(get_data_source_service),
+    user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.VIEW, bypass_superuser=True)),
+) -> Response[ScrapingRuleListResponse]:
+    rules, total = await service.list_scraping_rules_paginated(
+        page=page,
+        size=size,
+        name=name,
+        rule_type=rule_type,
+        status=status,
+        data_source_id=data_source_id,
+    )
+    pages = (total + size - 1) // size
+    return Response.success(
+        data=ScrapingRuleListResponse(
+            items=rules,
+            total=total,
+            page=page,
+            size=size,
+            pages=pages,
+        )
+    )
 
 
 @scraping_rule_router.put("/{rule_id}", response_model=Response[ScrapingRuleResponse])

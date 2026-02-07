@@ -6,8 +6,9 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domains.data_source.enums import (
-    DataSourceStatus,
+    DataSourceStatus as ModelDataSourceStatus,
     DataSourceType as ModelDataSourceType,
+    ScrapingRuleStatus,
 )
 from src.domains.data_source.models import DataSource, ScrapingRule
 from src.domains.data_source.repository import (
@@ -17,10 +18,11 @@ from src.domains.data_source.repository import (
 from src.domains.data_source.schemas import (
     DataSourceCreate,
     DataSourceResponse,
-    DataSourceStatus as SchemaDataSourceStatus,
+    DataSourceStatus,
     DataSourceType,
     DataSourceUpdate,
     ScrapingRuleCreate,
+    ScrapingRuleListItem,
     ScrapingRuleResponse,
     ScrapingRuleType,
     ScrapingRuleUpdate,
@@ -239,7 +241,7 @@ class DataSourceService:
         self,
         page: int,
         size: int,
-        status: SchemaDataSourceStatus | None = None,
+        status: DataSourceStatus | None = None,
         source_type: DataSourceType | None = None,
         name: str | None = None,
     ) -> tuple[list[DataSourceResponse], int]:
@@ -249,9 +251,9 @@ class DataSourceService:
         ds_list, total = await self.ds_repo.get_paginated(
             page,
             size,
-            status,
+            ModelDataSourceStatus(status.value) if status else None,
             model_type,
-            name,  # type: ignore
+            name,
         )
         return [self._build_data_source_response(ds) for ds in ds_list], total
 
@@ -295,7 +297,7 @@ class DataSourceService:
                 ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
             )
 
-        if ds.status == DataSourceStatus.ACTIVE:
+        if ds.status == ModelDataSourceStatus.ACTIVE:
             raise BusinessException(
                 ErrorCode.DATASOURCE_ALREADY_ACTIVE, "DataSource is already active"
             )
@@ -303,7 +305,7 @@ class DataSourceService:
         ds = await self.ds_repo.update(
             ds_id,
             {
-                "status": DataSourceStatus.ACTIVE,
+                "status": ModelDataSourceStatus.ACTIVE,
                 "updated_by_id": user_id,
                 "last_error_msg": None,
             },
@@ -317,7 +319,7 @@ class DataSourceService:
                 ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
             )
 
-        if ds.status == DataSourceStatus.INACTIVE:
+        if ds.status == ModelDataSourceStatus.INACTIVE:
             raise BusinessException(
                 ErrorCode.DATASOURCE_ALREADY_INACTIVE, "DataSource is already inactive"
             )
@@ -325,7 +327,7 @@ class DataSourceService:
         ds = await self.ds_repo.update(
             ds_id,
             {
-                "status": DataSourceStatus.INACTIVE,
+                "status": ModelDataSourceStatus.INACTIVE,
                 "updated_by_id": user_id,
             },
         )
@@ -356,7 +358,7 @@ class DataSourceService:
                 ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
             )
 
-        if ds.status != DataSourceStatus.ACTIVE:
+        if ds.status != ModelDataSourceStatus.ACTIVE:
             raise BusinessException(
                 ErrorCode.DATA_VALIDATION_FAILED,
                 "Cannot create rule for inactive data source",
@@ -383,6 +385,49 @@ class DataSourceService:
 
         rules = await self.rule_repo.get_by_data_source(ds_id)
         return [self._build_scraping_rule_response(r) for r in rules]
+
+    async def list_scraping_rules_paginated(
+        self,
+        page: int,
+        size: int,
+        name: str | None = None,
+        rule_type: ScrapingRuleType | None = None,
+        status: ScrapingRuleStatus | None = None,
+        data_source_id: int | None = None,
+    ) -> tuple[list[ScrapingRuleListItem], int]:
+        target_type = (
+            self._map_rule_type_to_target_type(rule_type) if rule_type else None
+        )
+
+        rules, total = await self.rule_repo.get_paginated(
+            page=page,
+            size=size,
+            name=name,
+            rule_type=target_type,
+            status=status.value if status else None,
+            data_source_id=data_source_id,
+        )
+
+        return [self._build_scraping_rule_list_item(r) for r in rules], total
+
+    def _build_scraping_rule_list_item(
+        self, rule: ScrapingRule
+    ) -> ScrapingRuleListItem:
+        return ScrapingRuleListItem(
+            id=rule.id if rule.id is not None else 0,
+            data_source_id=rule.data_source_id
+            if rule.data_source_id is not None
+            else 0,
+            name=rule.name,
+            rule_type=self._map_target_type_to_rule_type(rule.target_type),
+            config=rule.filters or {},
+            schedule=rule.schedule.get("cron") if rule.schedule else None,
+            is_active=rule.status == "active",
+            description=rule.description,
+            created_at=rule.created_at,
+            updated_at=rule.updated_at,
+            data_source_name=rule.data_source.name if rule.data_source else None,
+        )
 
     async def get_scraping_rule(self, rule_id: int) -> ScrapingRuleResponse:
         rule = await self.rule_repo.get_by_id(rule_id)
@@ -428,7 +473,7 @@ class DataSourceService:
                 ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
             )
 
-        if ds.status != DataSourceStatus.ACTIVE:
+        if ds.status != ModelDataSourceStatus.ACTIVE:
             raise BusinessException(
                 ErrorCode.DATA_VALIDATION_FAILED,
                 "Cannot trigger collection for inactive data source",
@@ -500,11 +545,11 @@ class DataSourceService:
 
     def _build_data_source_response(self, ds: DataSource) -> DataSourceResponse:
         return DataSourceResponse(
-            id=ds.id,
+            id=ds.id if ds.id is not None else 0,
             name=ds.name,
             type=self._map_model_type_to_schema_type(ds.source_type),
             config=ds.extra_config or {},
-            status=ds.status,
+            status=DataSourceStatus(ds.status.value),
             description=ds.description,
             created_at=ds.created_at,
             updated_at=ds.updated_at,
@@ -512,8 +557,10 @@ class DataSourceService:
 
     def _build_scraping_rule_response(self, rule: ScrapingRule) -> ScrapingRuleResponse:
         return ScrapingRuleResponse(
-            id=rule.id,
-            data_source_id=rule.data_source_id,
+            id=rule.id if rule.id is not None else 0,
+            data_source_id=rule.data_source_id
+            if rule.data_source_id is not None
+            else 0,
             name=rule.name,
             rule_type=self._map_target_type_to_rule_type(rule.target_type),
             config=rule.filters or {},
