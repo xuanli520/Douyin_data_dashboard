@@ -1,7 +1,13 @@
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from sqlalchemy.exc import DataError, IntegrityError
+from sqlalchemy.exc import (
+    DataError,
+    IntegrityError,
+    InvalidRequestError,
+    OperationalError,
+    PendingRollbackError,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 T = TypeVar("T")
@@ -45,7 +51,13 @@ class BaseRepository:
             async with self.session.begin():
                 result = await operation()
                 return result
-        except DataError:
+        except (
+            DataError,
+            IntegrityError,
+            PendingRollbackError,
+            InvalidRequestError,
+            OperationalError,
+        ):
             await self.session.rollback()
             raise
 
