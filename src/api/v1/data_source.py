@@ -46,7 +46,16 @@ async def list_data_sources(
         source_type=source_type,
         name=name,
     )
-    return Response.success(data={"items": ds_list, "total": total})
+    pages = (total + size - 1) // size if total > 0 else 0
+    return Response.success(
+        data={
+            "items": ds_list,
+            "total": total,
+            "page": page,
+            "size": size,
+            "pages": pages,
+        }
+    )
 
 
 @router.post("", response_model=Response[DataSourceResponse])

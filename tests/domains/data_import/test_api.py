@@ -128,7 +128,7 @@ class TestDataImportSchemas:
                 created_at=datetime.now(timezone.utc),
             )
         ]
-        response = ImportHistoryResponse(items=items, total=1, page=1, size=20)
+        response = ImportHistoryResponse(items=items, total=1, page=1, size=20, pages=1)
         assert len(response.items) == 1
         assert response.total == 1
 

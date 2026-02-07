@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, Query
-from fastapi_pagination import Page, Params
 
 from src.auth import current_user, require_permissions, User
 from src.auth.services.admin_service import AdminService, get_admin_service
@@ -18,6 +17,7 @@ from src.auth.schemas import (
 )
 from src.exceptions import BusinessException
 from src.shared.errors import ErrorCode
+from src.shared.schemas import PaginatedData
 from src.audit import AuditService, get_audit_service
 from src.audit.schemas import AuditAction, AuditResult
 
@@ -41,7 +41,9 @@ can_permission_read = require_permissions("permission:read", bypass_superuser=Tr
 
 
 @router.get(
-    "/users", response_model=Page[UserListItem], dependencies=[Depends(can_user_read)]
+    "/users",
+    response_model=PaginatedData[UserListItem],
+    dependencies=[Depends(can_user_read)],
 )
 async def list_users(
     page: int = Query(1, ge=1),
@@ -62,8 +64,7 @@ async def list_users(
         is_superuser=is_superuser,
         role_id=role_id,
     )
-    params = Params(page=page, size=size)
-    return Page.create(items=users, total=total, params=params)
+    return PaginatedData.create(items=users, total=total, page=page, size=size)
 
 
 @router.get(

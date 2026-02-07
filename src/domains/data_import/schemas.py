@@ -49,6 +49,7 @@ class ImportHistoryResponse(BaseModel):
     total: int
     page: int
     size: int
+    pages: int
 
 
 class ImportDetailResponse(BaseModel):

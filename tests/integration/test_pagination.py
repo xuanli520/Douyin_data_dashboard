@@ -1,13 +1,12 @@
 import pytest
-from fastapi import Depends, FastAPI
-from fastapi_pagination import Page, add_pagination
-from fastapi_pagination.ext.sqlalchemy import apaginate
+from fastapi import Depends, FastAPI, Query
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.models import User
 from src.session import get_session
+from src.shared.schemas import PaginatedData
 
 
 @pytest.fixture
@@ -30,11 +29,17 @@ async def pagination_client(test_db, local_cache, test_user):
     app.dependency_overrides[get_session] = override_get_session
     app.dependency_overrides[get_cache] = override_get_cache
 
-    @app.get("/test/users", response_model=Page[User])
-    async def list_users(session: AsyncSession = Depends(get_session)):
-        return await apaginate(session, select(User))
-
-    add_pagination(app)
+    @app.get("/test/users", response_model=PaginatedData[User])
+    async def list_users(
+        page: int = Query(1, ge=1),
+        size: int = Query(50, ge=1, le=100),
+        session: AsyncSession = Depends(get_session),
+    ):
+        result = await session.execute(select(User))
+        users = result.scalars().all()
+        return PaginatedData.create(
+            items=list(users), total=len(users), page=page, size=size
+        )
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
@@ -54,9 +59,10 @@ async def test_pagination_with_response_middleware(pagination_client):
 
     page_data = data["data"]
     assert "items" in page_data
-    assert "total" in page_data
-    assert "page" in page_data
-    assert "size" in page_data
+    assert "meta" in page_data
+    assert page_data["meta"]["total"] >= 0
+    assert page_data["meta"]["page"] == 1
+    assert page_data["meta"]["size"] == 2
     assert len(page_data["items"]) <= 2
 
 
@@ -67,8 +73,8 @@ async def test_pagination_default_params(pagination_client):
 
     data = response.json()
     page_data = data["data"]
-    assert page_data["page"] == 1
-    assert page_data["size"] == 50
+    assert page_data["meta"]["page"] == 1
+    assert page_data["meta"]["size"] == 50
 
 
 @pytest.mark.asyncio
