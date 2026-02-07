@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.domains.data_source.enums import (
     DataSourceStatus as ModelDataSourceStatus,
     DataSourceType as ModelDataSourceType,
+    ScrapingRuleStatus,
 )
 from src.domains.data_source.models import DataSource, ScrapingRule
 from src.domains.data_source.repository import (
@@ -21,6 +22,7 @@ from src.domains.data_source.schemas import (
     DataSourceType,
     DataSourceUpdate,
     ScrapingRuleCreate,
+    ScrapingRuleListItem,
     ScrapingRuleResponse,
     ScrapingRuleType,
     ScrapingRuleUpdate,
@@ -251,7 +253,7 @@ class DataSourceService:
             size,
             ModelDataSourceStatus(status.value) if status else None,
             model_type,
-            name,  # type: ignore
+            name,
         )
         return [self._build_data_source_response(ds) for ds in ds_list], total
 
@@ -390,9 +392,9 @@ class DataSourceService:
         size: int,
         name: str | None = None,
         rule_type: ScrapingRuleType | None = None,
-        status: str | None = None,
+        status: ScrapingRuleStatus | None = None,
         data_source_id: int | None = None,
-    ) -> tuple[list[ScrapingRuleResponse], int]:
+    ) -> tuple[list[ScrapingRuleListItem], int]:
         target_type = (
             self._map_rule_type_to_target_type(rule_type) if rule_type else None
         )
@@ -402,11 +404,30 @@ class DataSourceService:
             size=size,
             name=name,
             rule_type=target_type,
-            status=status,
+            status=status.value if status else None,
             data_source_id=data_source_id,
         )
 
-        return [self._build_scraping_rule_response(r) for r in rules], total
+        return [self._build_scraping_rule_list_item(r) for r in rules], total
+
+    def _build_scraping_rule_list_item(
+        self, rule: ScrapingRule
+    ) -> ScrapingRuleListItem:
+        return ScrapingRuleListItem(
+            id=rule.id if rule.id is not None else 0,
+            data_source_id=rule.data_source_id
+            if rule.data_source_id is not None
+            else 0,
+            name=rule.name,
+            rule_type=self._map_target_type_to_rule_type(rule.target_type),
+            config=rule.filters or {},
+            schedule=rule.schedule.get("cron") if rule.schedule else None,
+            is_active=rule.status == "active",
+            description=rule.description,
+            created_at=rule.created_at,
+            updated_at=rule.updated_at,
+            data_source_name=rule.data_source.name if rule.data_source else None,
+        )
 
     async def get_scraping_rule(self, rule_id: int) -> ScrapingRuleResponse:
         rule = await self.rule_repo.get_by_id(rule_id)
