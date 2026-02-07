@@ -245,6 +245,7 @@ class ScrapingRuleRepository(BaseRepository):
 
         stmt = (
             select(ScrapingRule)
+            .options(selectinload(ScrapingRule.data_source))
             .where(and_(*conds) if conds else True)
             .order_by(ScrapingRule.created_at.desc())
             .offset((page - 1) * size)
