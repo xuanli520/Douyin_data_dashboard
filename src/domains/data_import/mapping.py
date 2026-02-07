@@ -10,16 +10,16 @@ from typing import Any, Callable
 
 
 class MappingType(StrEnum):
-    AUTO = "auto"
-    MANUAL = "manual"
-    ALIAS = "alias"
+    AUTO = "AUTO"
+    MANUAL = "MANUAL"
+    ALIAS = "ALIAS"
 
 
 class FieldConfidence(StrEnum):
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-    NONE = "none"
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+    NONE = "NONE"
 
 
 @dataclass

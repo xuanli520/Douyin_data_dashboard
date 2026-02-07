@@ -3,8 +3,9 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
 from src.domains.data_source.enums import (
-    DataSourceStatus,
     DataSourceType as ModelDataSourceType,
+    DataSourceStatus,
+    TargetType,
 )
 from src.domains.data_source.schemas import (
     DataSourceCreate,
@@ -58,15 +59,15 @@ class MockScrapingRule:
         self.id = kwargs.get("id", 1)
         self.data_source_id = kwargs.get("data_source_id", 1)
         self.name = kwargs.get("name", "Test Rule")
-        self.target_type = kwargs.get("target_type", "orders")
+        self.target_type = kwargs.get("target_type", TargetType.ORDER_FULFILLMENT)
         self.description = kwargs.get("description", None)
         self.schedule = kwargs.get("schedule", None)
         self.dimensions = kwargs.get("dimensions", None)
         self.metrics = kwargs.get("metrics", None)
         self.filters = kwargs.get("filters", None)
-        self.granularity = kwargs.get("granularity", "day")
+        self.granularity = kwargs.get("granularity", "DAY")
         self.timezone = kwargs.get("timezone", "Asia/Shanghai")
-        self.incremental_mode = kwargs.get("incremental_mode", "by_date")
+        self.incremental_mode = kwargs.get("incremental_mode", "BY_DATE")
         self.backfill_last_n_days = kwargs.get("backfill_last_n_days", 3)
         self.data_latency = kwargs.get("data_latency", "T+1")
         self.dedupe_key = kwargs.get("dedupe_key", None)
@@ -74,7 +75,7 @@ class MockScrapingRule:
         self.sort_by = kwargs.get("sort_by", None)
         self.include_long_tail = kwargs.get("include_long_tail", False)
         self.session_level = kwargs.get("session_level", False)
-        self.status = kwargs.get("status", "active")
+        self.status = kwargs.get("status", "ACTIVE")
         # Response schema fields
         self.rule_type = kwargs.get("rule_type", ScrapingRuleType.ORDERS)
         self.config = kwargs.get("config", {})
@@ -326,7 +327,7 @@ class TestDataSourceServiceUnit:
             id=1,
             data_source_id=1,
             name="Test Rule",
-            target_type="orders",
+            target_type=TargetType.ORDER_FULFILLMENT,
         )
 
         service = DataSourceService(mock_ds_repo, mock_rule_repo)
@@ -366,7 +367,10 @@ class TestDataSourceServiceUnit:
 
         mock_rule_repo.get_by_data_source.return_value = [
             MockScrapingRule(
-                id=1, data_source_id=1, name="Rule 1", target_type="orders"
+                id=1,
+                data_source_id=1,
+                name="Rule 1",
+                target_type=TargetType.ORDER_FULFILLMENT,
             )
         ]
 
@@ -384,13 +388,13 @@ class TestDataSourceServiceUnit:
             id=1,
             data_source_id=1,
             name="Updated Rule",
-            target_type="orders",
+            target_type=TargetType.ORDER_FULFILLMENT,
         )
         mock_rule_repo.update.return_value = MockScrapingRule(
             id=1,
             data_source_id=1,
             name="Updated Rule",
-            target_type="orders",
+            target_type=TargetType.ORDER_FULFILLMENT,
         )
 
         service = DataSourceService(mock_ds_repo, mock_rule_repo)

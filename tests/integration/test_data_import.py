@@ -167,7 +167,7 @@ class TestFullImportWorkflow:
         assert summary["passed"] >= 1
         assert summary["failed"] >= 1
 
-        failed_result = next((r for r in results if r.status.value == "fail"), None)
+        failed_result = next((r for r in results if r.status.value == "FAIL"), None)
         assert failed_result is not None
         assert len(failed_result.errors) > 0
 
@@ -223,11 +223,11 @@ class TestDataImportModels:
         assert record.file_type == FileType.CSV
 
     def test_import_status_enum(self):
-        assert ImportStatus.PENDING.value == "pending"
-        assert ImportStatus.PROCESSING.value == "processing"
-        assert ImportStatus.SUCCESS.value == "success"
-        assert ImportStatus.FAILED.value == "failed"
-        assert ImportStatus.PARTIAL.value == "partial"
+        assert ImportStatus.PENDING.value == "PENDING"
+        assert ImportStatus.PROCESSING.value == "PROCESSING"
+        assert ImportStatus.SUCCESS.value == "SUCCESS"
+        assert ImportStatus.FAILED.value == "FAILED"
+        assert ImportStatus.PARTIAL.value == "PARTIAL"
 
 
 class TestErrorHandling:

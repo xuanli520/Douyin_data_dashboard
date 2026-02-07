@@ -6,23 +6,23 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class DataSourceType(StrEnum):
-    DOUYIN_API = "douyin_api"
-    FILE_UPLOAD = "file_upload"
-    DATABASE = "database"
-    WEBHOOK = "webhook"
+    DOUYIN_API = "DOUYIN_API"
+    FILE_UPLOAD = "FILE_UPLOAD"
+    DATABASE = "DATABASE"
+    WEBHOOK = "WEBHOOK"
 
 
 class DataSourceStatus(StrEnum):
-    ACTIVE = "active"
-    INACTIVE = "inactive"
-    ERROR = "error"
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
+    ERROR = "ERROR"
 
 
 class ScrapingRuleType(StrEnum):
-    ORDERS = "orders"
-    PRODUCTS = "products"
-    USERS = "users"
-    COMMENTS = "comments"
+    ORDERS = "ORDERS"
+    PRODUCTS = "PRODUCTS"
+    USERS = "USERS"
+    COMMENTS = "COMMENTS"
 
 
 class DataSourceCreate(BaseModel):

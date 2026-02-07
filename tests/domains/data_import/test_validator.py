@@ -34,7 +34,7 @@ class TestValidationError:
 class TestValidationResult:
     def test_create_valid_result(self):
         result = ValidationResult(row_index=0)
-        assert result.status.value == "pass"
+        assert result.status.value == "PASS"
         assert len(result.errors) == 0
         assert len(result.warnings) == 0
 
@@ -46,7 +46,7 @@ class TestValidationResult:
             severity=ValidationSeverity.ERROR,
         )
 
-        assert result.status.value == "fail"
+        assert result.status.value == "FAIL"
         assert len(result.errors) == 1
         assert len(result.warnings) == 0
 
@@ -58,7 +58,7 @@ class TestValidationResult:
             severity=ValidationSeverity.WARNING,
         )
 
-        assert result.status.value == "skip"
+        assert result.status.value == "SKIP"
         assert len(result.errors) == 0
         assert len(result.warnings) == 1
 
@@ -92,7 +92,7 @@ class TestValidationResult:
         )
 
         result_dict = result.to_dict()
-        assert result_dict["status"] == "fail"
+        assert result_dict["status"] == "FAIL"
         assert len(result_dict["errors"]) == 1
         assert result_dict["errors"][0]["field"] == "order_id"
         assert result_dict["errors"][0]["rule"] == "required_check"
@@ -127,7 +127,7 @@ class TestDataValidator:
         ]
 
         result = validator.validate_row({"order_id": "O123"})
-        assert result.status.value == "pass"
+        assert result.status.value == "PASS"
 
     def test_validate_row_fails_required(self):
         validator = DataValidator()
@@ -143,7 +143,7 @@ class TestDataValidator:
         ]
 
         result = validator.validate_row({})
-        assert result.status.value == "fail"
+        assert result.status.value == "FAIL"
         assert len(result.errors) == 1
         assert result.errors[0].field_name == "order_id"
 
@@ -168,9 +168,9 @@ class TestDataValidator:
 
         results = validator.validate_batch(rows)
         assert len(results) == 3
-        assert results[0].status.value == "pass"
-        assert results[1].status.value == "pass"
-        assert results[2].status.value == "fail"
+        assert results[0].status.value == "PASS"
+        assert results[1].status.value == "PASS"
+        assert results[2].status.value == "FAIL"
 
     def test_get_summary(self):
         results = [
@@ -200,14 +200,14 @@ class TestOrderValidator:
     def test_order_validator_validates_order_id_required(self):
         validator = OrderValidator()
         result = validator.validate_row({})
-        assert result.status.value == "fail"
+        assert result.status.value == "FAIL"
         error = next((e for e in result.errors if e.field_name == "order_id"), None)
         assert error is not None
 
     def test_order_validator_validates_amount_required(self):
         validator = OrderValidator()
         result = validator.validate_row({"order_id": "O123"})
-        assert result.status.value == "fail"
+        assert result.status.value == "FAIL"
         error = next((e for e in result.errors if e.field_name == "amount"), None)
         assert error is not None
 
@@ -226,7 +226,7 @@ class TestOrderValidator:
 
         results = validator.validate_batch(rows)
         assert len(results) == 2
-        assert results[1].status.value == "fail"
+        assert results[1].status.value == "FAIL"
         duplicate_error = next(
             (e for e in results[1].errors if "duplicate" in e.message.lower()), None
         )
@@ -276,14 +276,14 @@ class TestProductValidator:
     def test_product_validator_validates_sku_required(self):
         validator = ProductValidator()
         result = validator.validate_row({})
-        assert result.status.value == "fail"
+        assert result.status.value == "FAIL"
         error = next((e for e in result.errors if e.field_name == "sku"), None)
         assert error is not None
 
     def test_product_validator_validates_price_required(self):
         validator = ProductValidator()
         result = validator.validate_row({"sku": "S001"})
-        assert result.status.value == "fail"
+        assert result.status.value == "FAIL"
         error = next((e for e in result.errors if e.field_name == "price"), None)
         assert error is not None
 
@@ -302,7 +302,7 @@ class TestProductValidator:
 
         results = validator.validate_batch(rows)
         assert len(results) == 2
-        assert results[1].status.value == "fail"
+        assert results[1].status.value == "FAIL"
         duplicate_error = next(
             (e for e in results[1].errors if "duplicate" in e.message.lower()), None
         )
@@ -379,7 +379,7 @@ class TestValidationService:
 
         results = ValidationService.validate("order", rows)
         assert len(results) == 2
-        assert all(r.status.value == "pass" for r in results)
+        assert all(r.status.value == "PASS" for r in results)
 
     def test_validate_products(self):
         rows = [
@@ -409,4 +409,4 @@ class TestValidationService:
             rows,
             custom_aliases={"order_id": ["ord_no"], "amount": ["total_amount"]},
         )
-        assert results[0].status.value == "pass"
+        assert results[0].status.value == "PASS"

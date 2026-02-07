@@ -217,7 +217,7 @@ class TestFieldMapper:
 
         assert report["total_mappings"] == 2
         assert report["required_count"] == 1
-        assert "manual" in report["by_type"]
+        assert "MANUAL" in report["by_type"]
 
 
 class TestMappingTemplate:

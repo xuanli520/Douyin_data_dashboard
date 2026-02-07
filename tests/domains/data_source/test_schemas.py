@@ -18,25 +18,25 @@ from src.domains.data_source.schemas import (
 
 class TestDataSourceType:
     def test_enum_values(self):
-        assert DataSourceType.DOUYIN_API == "douyin_api"
-        assert DataSourceType.FILE_UPLOAD == "file_upload"
-        assert DataSourceType.DATABASE == "database"
-        assert DataSourceType.WEBHOOK == "webhook"
+        assert DataSourceType.DOUYIN_API == "DOUYIN_API"
+        assert DataSourceType.FILE_UPLOAD == "FILE_UPLOAD"
+        assert DataSourceType.DATABASE == "DATABASE"
+        assert DataSourceType.WEBHOOK == "WEBHOOK"
 
 
 class TestDataSourceStatus:
     def test_enum_values(self):
-        assert DataSourceStatus.ACTIVE == "active"
-        assert DataSourceStatus.INACTIVE == "inactive"
-        assert DataSourceStatus.ERROR == "error"
+        assert DataSourceStatus.ACTIVE == "ACTIVE"
+        assert DataSourceStatus.INACTIVE == "INACTIVE"
+        assert DataSourceStatus.ERROR == "ERROR"
 
 
 class TestScrapingRuleType:
     def test_enum_values(self):
-        assert ScrapingRuleType.ORDERS == "orders"
-        assert ScrapingRuleType.PRODUCTS == "products"
-        assert ScrapingRuleType.USERS == "users"
-        assert ScrapingRuleType.COMMENTS == "comments"
+        assert ScrapingRuleType.ORDERS == "ORDERS"
+        assert ScrapingRuleType.PRODUCTS == "PRODUCTS"
+        assert ScrapingRuleType.USERS == "USERS"
+        assert ScrapingRuleType.COMMENTS == "COMMENTS"
 
 
 class TestDataSourceCreate:
@@ -310,7 +310,7 @@ class TestSchemaSerialization:
         )
         json_str = ds.model_dump_json()
         assert "Test" in json_str
-        assert "database" in json_str
+        assert "DATABASE" in json_str
         assert "localhost" in json_str
 
     def test_scraping_rule_response_serialization(self):
@@ -330,4 +330,4 @@ class TestSchemaSerialization:
         data = rule.model_dump()
         assert data["id"] == 1
         assert data["name"] == "Test Rule"
-        assert data["rule_type"] == "orders"
+        assert data["rule_type"] == "ORDERS"

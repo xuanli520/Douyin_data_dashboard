@@ -1,11 +1,16 @@
 from datetime import datetime
 
 from sqlalchemy import select, func, and_
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DataError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.domains.data_source.enums import DataSourceStatus, DataSourceType
+from src.domains.data_source.enums import (
+    DataSourceStatus,
+    DataSourceType,
+    ScrapingRuleStatus,
+    TargetType,
+)
 from src.domains.data_source.models import DataSource, ScrapingRule
 from src.exceptions import BusinessException
 from src.shared.errors import ErrorCode
@@ -167,9 +172,13 @@ class ScrapingRuleRepository(BaseRepository):
             self.session.add(rule)
             return rule
 
-        await self._tx(_create)
-        await self.session.refresh(rule)
-        return rule
+        try:
+            await self._tx(_create)
+            await self.session.refresh(rule)
+            return rule
+        except DataError:
+            await self.session.rollback()
+            raise
 
     async def get_by_id(self, rule_id: int) -> ScrapingRule | None:
         stmt = (
@@ -214,8 +223,8 @@ class ScrapingRuleRepository(BaseRepository):
         page: int,
         size: int,
         name: str | None = None,
-        rule_type: str | None = None,
-        status: str | None = None,
+        rule_type: TargetType | None = None,
+        status: ScrapingRuleStatus | None = None,
         data_source_id: int | None = None,
     ) -> tuple[list[ScrapingRule], int]:
         from src.domains.data_source.models import ScrapingRule

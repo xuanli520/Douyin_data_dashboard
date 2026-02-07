@@ -2,57 +2,57 @@ from enum import Enum
 
 
 class DataSourceStatus(str, Enum):
-    ACTIVE = "active"
-    INACTIVE = "inactive"
-    ERROR = "error"
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
+    ERROR = "ERROR"
 
 
 class DataSourceType(str, Enum):
-    DOUYIN_SHOP = "douyin_shop"
-    DOUYIN_APP = "douyin_app"
-    FILE_IMPORT = "file_import"
-    SELF_HOSTED = "self_hosted"
+    DOUYIN_SHOP = "DOUYIN_SHOP"
+    DOUYIN_APP = "DOUYIN_APP"
+    FILE_IMPORT = "FILE_IMPORT"
+    SELF_HOSTED = "SELF_HOSTED"
 
 
 class ScrapingRuleStatus(str, Enum):
-    ACTIVE = "active"
-    INACTIVE = "inactive"
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
 
 
 class TargetType(str, Enum):
     """抖店罗盘主题类型"""
 
-    SHOP_OVERVIEW = "shop_overview"
-    TRAFFIC = "traffic"
-    PRODUCT = "product"
-    LIVE = "live"
-    CONTENT_VIDEO = "content_video"
-    ORDER_FULFILLMENT = "order_fulfillment"
-    AFTERSALE_REFUND = "aftersale_refund"
-    CUSTOMER = "customer"
-    ADS = "ads"
+    SHOP_OVERVIEW = "SHOP_OVERVIEW"
+    TRAFFIC = "TRAFFIC"
+    PRODUCT = "PRODUCT"
+    LIVE = "LIVE"
+    CONTENT_VIDEO = "CONTENT_VIDEO"
+    ORDER_FULFILLMENT = "ORDER_FULFILLMENT"
+    AFTERSALE_REFUND = "AFTERSALE_REFUND"
+    CUSTOMER = "CUSTOMER"
+    ADS = "ADS"
 
 
 class Granularity(str, Enum):
     """时间粒度"""
 
-    HOUR = "hour"
-    DAY = "day"
-    WEEK = "week"
-    MONTH = "month"
+    HOUR = "HOUR"
+    DAY = "DAY"
+    WEEK = "WEEK"
+    MONTH = "MONTH"
 
 
 class IncrementalMode(str, Enum):
     """增量方式"""
 
-    BY_DATE = "by_date"
-    BY_CURSOR = "by_cursor"
+    BY_DATE = "BY_DATE"
+    BY_CURSOR = "BY_CURSOR"
 
 
 class DataLatency(str, Enum):
     """数据延迟假设"""
 
-    REALTIME = "realtime"
+    REALTIME = "REALTIME"
     T_PLUS_1 = "T+1"
     T_PLUS_2 = "T+2"
     T_PLUS_3 = "T+3"
