@@ -9,14 +9,14 @@ from pydantic import BaseModel, Field
 
 
 class ValidationSeverity(StrEnum):
-    ERROR = "error"
-    WARNING = "warning"
+    ERROR = "ERROR"
+    WARNING = "WARNING"
 
 
 class ValidationStatus(StrEnum):
-    PASS = "pass"
-    FAIL = "fail"
-    SKIP = "skip"
+    PASS = "PASS"
+    FAIL = "FAIL"
+    SKIP = "SKIP"
 
 
 @dataclass
@@ -441,10 +441,14 @@ class ConfigurableValidator(DataValidator):
 
     def _setup_rules_from_config(self, rules_config: list[dict[str, Any]]) -> None:
         for config in rules_config:
+            severity_value = config.get("severity", "error")
+            severity_str = (
+                severity_value.upper() if isinstance(severity_value, str) else "ERROR"
+            )
             rule = ValidationRule(
                 name=config.get("name", "custom"),
                 target_field=config.get("field", ""),
-                severity=ValidationSeverity(config.get("severity", "error")),
+                severity=ValidationSeverity(severity_str),
                 enabled=config.get("enabled", True),
                 rule_params=config.get("params", {}),
             )

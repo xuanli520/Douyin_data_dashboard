@@ -255,7 +255,7 @@ class TestValidationServiceIntegration:
         results = ValidationService.validate("order", rows)
 
         assert len(results) == 2
-        assert all(r.status.value == "pass" for r in results)
+        assert all(r.status.value == "PASS" for r in results)
 
     def test_validate_products_integration(self):
         rows = [
@@ -266,7 +266,7 @@ class TestValidationServiceIntegration:
         results = ValidationService.validate("product", rows)
 
         assert len(results) == 2
-        assert all(r.status.value in ["pass", "skip"] for r in results)
+        assert all(r.status.value in ["PASS", "SKIP"] for r in results)
 
     def test_validate_and_summarize_integration(self):
         rows = [

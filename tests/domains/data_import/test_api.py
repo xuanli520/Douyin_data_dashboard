@@ -51,13 +51,13 @@ class TestDataImportSchemas:
             "id": 1,
             "file_name": "test.csv",
             "file_size": 1024,
-            "status": "pending",
+            "status": "PENDING",
             "created_at": datetime.now(timezone.utc),
         }
         response = ImportUploadResponse(**data)
         assert response.id == 1
         assert response.file_name == "test.csv"
-        assert response.status == "pending"
+        assert response.status == "PENDING"
 
     def test_import_parse_response_schema(self):
         from src.domains.data_import.schemas import ImportParseResponse
@@ -121,7 +121,7 @@ class TestDataImportSchemas:
             ImportHistoryItem(
                 id=1,
                 file_name="file1.csv",
-                status="success",
+                status="SUCCESS",
                 total_rows=100,
                 success_rows=100,
                 failed_rows=0,
@@ -140,7 +140,7 @@ class TestDataImportSchemas:
             "file_name": "test.csv",
             "file_path": "/uploads/test.csv",
             "file_size": 1024,
-            "status": "success",
+            "status": "SUCCESS",
             "field_mapping": {"old": "new"},
             "total_rows": 100,
             "success_rows": 98,
@@ -158,23 +158,23 @@ class TestDataImportSchemas:
 
         data = {
             "id": 1,
-            "status": "cancelled",
+            "status": "CANCELLED",
             "message": "Import cancelled successfully",
         }
         response = ImportCancelResponse(**data)
-        assert response.status == "cancelled"
+        assert response.status == "CANCELLED"
         assert "cancelled" in response.message.lower()
 
 
 class TestImportStatusEnum:
     def test_import_status_values(self):
-        assert ImportStatus.PENDING == "pending"
-        assert ImportStatus.PROCESSING == "processing"
-        assert ImportStatus.SUCCESS == "success"
-        assert ImportStatus.FAILED == "failed"
-        assert ImportStatus.PARTIAL == "partial"
+        assert ImportStatus.PENDING == "PENDING"
+        assert ImportStatus.PROCESSING == "PROCESSING"
+        assert ImportStatus.SUCCESS == "SUCCESS"
+        assert ImportStatus.FAILED == "FAILED"
+        assert ImportStatus.PARTIAL == "PARTIAL"
 
     def test_import_status_is_string_enum(self):
         status = ImportStatus.PENDING
         assert isinstance(status, str)
-        assert status.value == "pending"
+        assert status.value == "PENDING"

@@ -11,27 +11,27 @@ from src.domains.data_import.repository import (
 
 class TestImportStatusEnum:
     def test_enum_values(self):
-        assert ImportStatus.PENDING.value == "pending"
-        assert ImportStatus.PROCESSING.value == "processing"
-        assert ImportStatus.SUCCESS.value == "success"
-        assert ImportStatus.FAILED.value == "failed"
-        assert ImportStatus.PARTIAL.value == "partial"
+        assert ImportStatus.PENDING.value == "PENDING"
+        assert ImportStatus.PROCESSING.value == "PROCESSING"
+        assert ImportStatus.SUCCESS.value == "SUCCESS"
+        assert ImportStatus.FAILED.value == "FAILED"
+        assert ImportStatus.PARTIAL.value == "PARTIAL"
 
     def test_enum_is_string(self):
         status = ImportStatus.SUCCESS
         assert isinstance(status, str)
-        assert status == "success"
+        assert status == "SUCCESS"
 
 
 class TestFileTypeEnum:
     def test_enum_values(self):
-        assert FileType.EXCEL.value == "excel"
-        assert FileType.CSV.value == "csv"
+        assert FileType.EXCEL.value == "EXCEL"
+        assert FileType.CSV.value == "CSV"
 
     def test_enum_is_string(self):
         file_type = FileType.CSV
         assert isinstance(file_type, str)
-        assert file_type == "csv"
+        assert file_type == "CSV"
 
 
 class TestDataImportRecordModel:

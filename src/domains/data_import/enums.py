@@ -2,15 +2,15 @@ from enum import Enum
 
 
 class ImportStatus(str, Enum):
-    PENDING = "pending"
-    PROCESSING = "processing"
-    SUCCESS = "success"
-    FAILED = "failed"
-    PARTIAL = "partial"
-    CANCELLED = "cancelled"
-    VALIDATION_FAILED = "validation_failed"
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+    PARTIAL = "PARTIAL"
+    CANCELLED = "CANCELLED"
+    VALIDATION_FAILED = "VALIDATION_FAILED"
 
 
 class FileType(str, Enum):
-    EXCEL = "excel"
-    CSV = "csv"
+    EXCEL = "EXCEL"
+    CSV = "CSV"
