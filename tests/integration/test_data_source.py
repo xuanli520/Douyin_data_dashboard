@@ -178,7 +178,7 @@ class TestDataSourceAPI:
             "/api/v1/data-sources",
             json={
                 "name": "Test Douyin Shop",
-                "type": "douyin_api",
+                "type": "DOUYIN_API",
                 "config": {"api_key": "test_key", "api_secret": "test_secret"},
                 "description": "Test data source",
             },
@@ -186,7 +186,7 @@ class TestDataSourceAPI:
         assert response.status_code == 200
         data = response.json()["data"]
         assert data["name"] == "Test Douyin Shop"
-        assert data["type"] == "douyin_api"
+        assert data["type"] == "DOUYIN_API"
 
     async def test_list_data_sources(self, test_client):
         response = await test_client.get("/api/v1/data-sources")
@@ -201,7 +201,7 @@ class TestDataSourceAPI:
             "/api/v1/data-sources",
             json={
                 "name": "Test DS",
-                "type": "douyin_api",
+                "type": "DOUYIN_API",
                 "config": {"api_key": "test_key", "api_secret": "test_secret"},
             },
         )
@@ -216,7 +216,7 @@ class TestDataSourceAPI:
             "/api/v1/data-sources",
             json={
                 "name": "Test DS",
-                "type": "douyin_api",
+                "type": "DOUYIN_API",
                 "config": {"api_key": "test_key", "api_secret": "test_secret"},
             },
         )
@@ -234,7 +234,7 @@ class TestDataSourceAPI:
             "/api/v1/data-sources",
             json={
                 "name": "Test DS to Delete",
-                "type": "douyin_api",
+                "type": "DOUYIN_API",
                 "config": {"api_key": "test_key", "api_secret": "test_secret"},
             },
         )
@@ -250,7 +250,7 @@ class TestScrapingRuleAPI:
             "/api/v1/data-sources",
             json={
                 "name": "Test DS",
-                "type": "douyin_api",
+                "type": "DOUYIN_API",
                 "config": {"api_key": "test_key", "api_secret": "test_secret"},
             },
         )
@@ -261,7 +261,7 @@ class TestScrapingRuleAPI:
             json={
                 "name": "Test Rule",
                 "data_source_id": ds_id,
-                "rule_type": "orders",
+                "rule_type": "ORDERS",
                 "config": {"batch_size": 100},
                 "schedule": "0 */6 * * *",
             },
@@ -276,7 +276,7 @@ class TestScrapingRuleAPI:
             "/api/v1/data-sources",
             json={
                 "name": "Test DS",
-                "type": "douyin_api",
+                "type": "DOUYIN_API",
                 "config": {"api_key": "test_key", "api_secret": "test_secret"},
             },
         )
@@ -297,7 +297,7 @@ class TestDataImportAPI:
             "/api/v1/data-sources",
             json={
                 "name": "Import Test DS",
-                "type": "file_upload",
+                "type": "FILE_UPLOAD",
                 "config": {"path": "/uploads"},
             },
         )
@@ -325,7 +325,7 @@ class TestDataImportAPI:
             "/api/v1/data-sources",
             json={
                 "name": "Import Test DS",
-                "type": "file_upload",
+                "type": "FILE_UPLOAD",
                 "config": {"path": "/uploads"},
             },
         )
@@ -357,7 +357,7 @@ class TestDataImportAPI:
             "/api/v1/data-sources",
             json={
                 "name": "Import Test DS",
-                "type": "file_upload",
+                "type": "FILE_UPLOAD",
                 "config": {"path": "/uploads"},
             },
         )
@@ -396,7 +396,7 @@ class TestDataImportAPI:
             "/api/v1/data-sources",
             json={
                 "name": "Import Test DS",
-                "type": "file_upload",
+                "type": "FILE_UPLOAD",
                 "config": {"path": "/uploads"},
             },
         )
@@ -449,7 +449,7 @@ class TestTaskAPI:
             "/api/v1/tasks",
             json={
                 "name": "Test Task",
-                "task_type": "order_collection",
+                "task_type": "ORDER_COLLECTION",
                 "data_source_id": 1,
                 "schedule": "0 */6 * * *",
             },
@@ -462,7 +462,7 @@ class TestTaskAPI:
             "/api/v1/tasks",
             json={
                 "name": "Test Task",
-                "task_type": "order_collection",
+                "task_type": "ORDER_COLLECTION",
                 "data_source_id": 1,
             },
         )
@@ -477,7 +477,7 @@ class TestTaskAPI:
             "/api/v1/tasks",
             json={
                 "name": "Test Task",
-                "task_type": "order_collection",
+                "task_type": "ORDER_COLLECTION",
                 "data_source_id": 1,
             },
         )
