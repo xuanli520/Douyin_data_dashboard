@@ -9,6 +9,7 @@ from src.domains.data_source.enums import (
     DataSourceStatus as ModelDataSourceStatus,
     DataSourceType as ModelDataSourceType,
     ScrapingRuleStatus,
+    TargetType,
 )
 from src.domains.data_source.models import DataSource, ScrapingRule
 from src.domains.data_source.repository import (
@@ -190,19 +191,19 @@ class DataSourceService:
         ModelDataSourceType.SELF_HOSTED: DataSourceType.DATABASE,
     }
 
-    _RULE_TYPE_TO_TARGET: dict[ScrapingRuleType, str] = {
-        ScrapingRuleType.ORDERS: "order_fulfillment",
-        ScrapingRuleType.PRODUCTS: "product",
-        ScrapingRuleType.USERS: "customer",
-        ScrapingRuleType.COMMENTS: "content_video",
+    _RULE_TYPE_TO_TARGET: dict[ScrapingRuleType, TargetType] = {
+        ScrapingRuleType.ORDERS: TargetType.ORDER_FULFILLMENT,
+        ScrapingRuleType.PRODUCTS: TargetType.PRODUCT,
+        ScrapingRuleType.USERS: TargetType.CUSTOMER,
+        ScrapingRuleType.COMMENTS: TargetType.CONTENT_VIDEO,
     }
 
-    _TARGET_TO_RULE_TYPE: dict[str, ScrapingRuleType] = {
-        "order_fulfillment": ScrapingRuleType.ORDERS,
-        "orders": ScrapingRuleType.ORDERS,
-        "product": ScrapingRuleType.PRODUCTS,
-        "customer": ScrapingRuleType.USERS,
-        "content_video": ScrapingRuleType.COMMENTS,
+    _TARGET_TO_RULE_TYPE: dict[TargetType, ScrapingRuleType] = {
+        TargetType.ORDER_FULFILLMENT: ScrapingRuleType.ORDERS,
+        TargetType.ORDER_FULFILLMENT: ScrapingRuleType.ORDERS,
+        TargetType.PRODUCT: ScrapingRuleType.PRODUCTS,
+        TargetType.CUSTOMER: ScrapingRuleType.USERS,
+        TargetType.CONTENT_VIDEO: ScrapingRuleType.COMMENTS,
     }
 
     def __init__(
@@ -251,7 +252,7 @@ class DataSourceService:
         ds_list, total = await self.ds_repo.get_paginated(
             page,
             size,
-            ModelDataSourceStatus(status.value) if status else None,
+            ModelDataSourceStatus(status.value.upper()) if status else None,
             model_type,
             name,
         )
@@ -404,7 +405,7 @@ class DataSourceService:
             size=size,
             name=name,
             rule_type=target_type,
-            status=status.value if status else None,
+            status=ScrapingRuleStatus(status.value.upper()) if status else None,
             data_source_id=data_source_id,
         )
 
@@ -422,7 +423,7 @@ class DataSourceService:
             rule_type=self._map_target_type_to_rule_type(rule.target_type),
             config=rule.filters or {},
             schedule=rule.schedule.get("cron") if rule.schedule else None,
-            is_active=rule.status == "active",
+            is_active=rule.status == ScrapingRuleStatus.ACTIVE,
             description=rule.description,
             created_at=rule.created_at,
             updated_at=rule.updated_at,
@@ -454,7 +455,11 @@ class DataSourceService:
         if data.schedule is not None:
             update_data["schedule"] = {"cron": data.schedule}
         if data.is_active is not None:
-            update_data["status"] = "active" if data.is_active else "inactive"
+            update_data["status"] = (
+                ScrapingRuleStatus.ACTIVE
+                if data.is_active
+                else ScrapingRuleStatus.INACTIVE
+            )
         if data.config is not None:
             update_data.update(data.config)
 
@@ -525,7 +530,7 @@ class DataSourceService:
             )
         return result
 
-    def _map_rule_type_to_target_type(self, rule_type: ScrapingRuleType) -> str:
+    def _map_rule_type_to_target_type(self, rule_type: ScrapingRuleType) -> TargetType:
         result = self._RULE_TYPE_TO_TARGET.get(rule_type)
         if result is None:
             raise BusinessException(
@@ -534,7 +539,9 @@ class DataSourceService:
             )
         return result
 
-    def _map_target_type_to_rule_type(self, target_type: str) -> ScrapingRuleType:
+    def _map_target_type_to_rule_type(
+        self, target_type: TargetType
+    ) -> ScrapingRuleType:
         result = self._TARGET_TO_RULE_TYPE.get(target_type)
         if result is None:
             raise BusinessException(
@@ -565,7 +572,7 @@ class DataSourceService:
             rule_type=self._map_target_type_to_rule_type(rule.target_type),
             config=rule.filters or {},
             schedule=rule.schedule.get("cron") if rule.schedule else None,
-            is_active=rule.status == "active",
+            is_active=rule.status == ScrapingRuleStatus.ACTIVE,
             description=rule.description,
             created_at=rule.created_at,
             updated_at=rule.updated_at,

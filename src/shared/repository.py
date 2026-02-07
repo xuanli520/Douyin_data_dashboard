@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DataError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 T = TypeVar("T")
@@ -41,9 +41,13 @@ class BaseRepository:
             await self.session.flush()
             return result
 
-        async with self.session.begin():
-            result = await operation()
-            return result
+        try:
+            async with self.session.begin():
+                result = await operation()
+                return result
+        except DataError:
+            await self.session.rollback()
+            raise
 
     async def _add(self, instance: T) -> T:
         async def _do_add():

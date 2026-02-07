@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.domains.data_source.enums import DataSourceStatus, DataSourceType
+from src.domains.data_source.enums import DataSourceStatus, DataSourceType, TargetType
 from src.domains.data_source.events import (
     DataSourceCreatedEvent,
     DataSourceStatusChangedEvent,
@@ -162,8 +162,8 @@ class TestScrapingRuleUpdatedEvent:
         assert event.occurred_at is not None
 
     def test_create_with_config_changes(self):
-        old_config = {"schedule": "0 2 * * *", "target": "orders"}
-        new_config = {"schedule": "0 3 * * *", "target": "orders"}
+        old_config = {"schedule": "0 2 * * *", "target": TargetType.ORDER_FULFILLMENT}
+        new_config = {"schedule": "0 3 * * *", "target": TargetType.ORDER_FULFILLMENT}
 
         event = ScrapingRuleUpdatedEvent(
             rule_id=5,

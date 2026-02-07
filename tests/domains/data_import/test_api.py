@@ -168,13 +168,13 @@ class TestDataImportSchemas:
 
 class TestImportStatusEnum:
     def test_import_status_values(self):
-        assert ImportStatus.PENDING == "pending"
-        assert ImportStatus.PROCESSING == "processing"
-        assert ImportStatus.SUCCESS == "success"
-        assert ImportStatus.FAILED == "failed"
-        assert ImportStatus.PARTIAL == "partial"
+        assert ImportStatus.PENDING == "PENDING"
+        assert ImportStatus.PROCESSING == "PROCESSING"
+        assert ImportStatus.SUCCESS == "SUCCESS"
+        assert ImportStatus.FAILED == "FAILED"
+        assert ImportStatus.PARTIAL == "PARTIAL"
 
     def test_import_status_is_string_enum(self):
         status = ImportStatus.PENDING
         assert isinstance(status, str)
-        assert status.value == "pending"
+        assert status.value == "PENDING"

@@ -9,14 +9,14 @@ from pydantic import BaseModel, Field
 
 
 class ValidationSeverity(StrEnum):
-    ERROR = "error"
-    WARNING = "warning"
+    ERROR = "ERROR"
+    WARNING = "WARNING"
 
 
 class ValidationStatus(StrEnum):
-    PASS = "pass"
-    FAIL = "fail"
-    SKIP = "skip"
+    PASS = "PASS"
+    FAIL = "FAIL"
+    SKIP = "SKIP"
 
 
 @dataclass

@@ -170,7 +170,7 @@ class TestDataSourceCreateSchema:
         assert response.status_code == 200
         data = response.json()["data"]
         assert data["name"] == "Test Douyin Shop"
-        assert data["type"] == "douyin_api"
+        assert data["type"] == "DOUYIN_API"
 
     async def test_create_endpoint_rejects_invalid_type(self, test_client):
         response = await test_client.post(
@@ -182,7 +182,7 @@ class TestDataSourceCreateSchema:
     async def test_create_endpoint_rejects_empty_name(self, test_client):
         response = await test_client.post(
             "/api/v1/data-sources",
-            json={"name": "", "type": "douyin_api"},
+            json={"name": "", "type": "DOUYIN_API"},
         )
         assert response.status_code == 422
 
@@ -191,7 +191,7 @@ class TestDataSourceCreateSchema:
             "/api/v1/data-sources",
             json={
                 "name": "Test",
-                "type": "douyin_api",
+                "type": "DOUYIN_API",
                 "description": "x" * 501,
             },
         )
@@ -236,7 +236,7 @@ class TestDataSourceUpdateSchema:
             json=update_payload.model_dump(exclude_none=True),
         )
         assert response.status_code == 200
-        assert response.json()["data"]["status"] == "inactive"
+        assert response.json()["data"]["status"] == "INACTIVE"
 
     async def test_update_endpoint_accepts_config_update(self, test_client):
         create_payload = DataSourceCreate(
@@ -287,7 +287,7 @@ class TestScrapingRuleCreateSchema:
         assert response.status_code == 200
         data = response.json()["data"]
         assert data["name"] == "Order Collection Rule"
-        assert data["rule_type"] == "orders"
+        assert data["rule_type"] == "ORDERS"
         assert data["data_source_id"] == ds_id
 
     async def test_create_scraping_rule_rejects_missing_data_source(self, test_client):
