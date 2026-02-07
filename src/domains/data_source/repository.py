@@ -45,6 +45,7 @@ class DataSourceRepository(BaseRepository):
                 return data_source
 
             await self._tx(_create)
+            await self.session.flush()
             await self.session.refresh(data_source)
             return data_source
         except IntegrityError as e:
@@ -93,6 +94,7 @@ class DataSourceRepository(BaseRepository):
                 ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
             )
         await self._delete(data_source)
+        await self.session.flush()
 
     async def get_paginated(
         self,
@@ -174,6 +176,7 @@ class ScrapingRuleRepository(BaseRepository):
 
         try:
             await self._tx(_create)
+            await self.session.flush()
             await self.session.refresh(rule)
             return rule
         except DataError:
@@ -217,6 +220,7 @@ class ScrapingRuleRepository(BaseRepository):
                 ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
             )
         await self._delete(rule)
+        await self.session.flush()
 
     async def get_paginated(
         self,

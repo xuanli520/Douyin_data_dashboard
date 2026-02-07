@@ -24,7 +24,7 @@ class TestDataSourceServiceIntegration:
         async with test_db() as session:
             ds_repo = DataSourceRepository(session)
             rule_repo = ScrapingRuleRepository(session)
-            service = DataSourceService(ds_repo, rule_repo)
+            service = DataSourceService(ds_repo, rule_repo, session)
 
             data = DataSourceCreate(
                 name="Integration Test DS",
@@ -46,7 +46,7 @@ class TestDataSourceServiceIntegration:
         async with test_db() as session:
             ds_repo = DataSourceRepository(session)
             rule_repo = ScrapingRuleRepository(session)
-            service = DataSourceService(ds_repo, rule_repo)
+            service = DataSourceService(ds_repo, rule_repo, session)
 
             data = DataSourceCreate(
                 name="Duplicate Name",
@@ -63,7 +63,7 @@ class TestDataSourceServiceIntegration:
         async with test_db() as session:
             ds_repo = DataSourceRepository(session)
             rule_repo = ScrapingRuleRepository(session)
-            service = DataSourceService(ds_repo, rule_repo)
+            service = DataSourceService(ds_repo, rule_repo, session)
 
             for i in range(5):
                 await service.create(
@@ -97,7 +97,7 @@ class TestDataSourceServiceIntegration:
         async with test_db() as session:
             ds_repo = DataSourceRepository(session)
             rule_repo = ScrapingRuleRepository(session)
-            service = DataSourceService(ds_repo, rule_repo)
+            service = DataSourceService(ds_repo, rule_repo, session)
 
             created = await service.create(
                 DataSourceCreate(
@@ -123,7 +123,7 @@ class TestDataSourceServiceIntegration:
         async with test_db() as session:
             ds_repo = DataSourceRepository(session)
             rule_repo = ScrapingRuleRepository(session)
-            service = DataSourceService(ds_repo, rule_repo)
+            service = DataSourceService(ds_repo, rule_repo, session)
 
             created = await service.create(
                 DataSourceCreate(
@@ -144,7 +144,7 @@ class TestDataSourceServiceIntegration:
         async with test_db() as session:
             ds_repo = DataSourceRepository(session)
             rule_repo = ScrapingRuleRepository(session)
-            service = DataSourceService(ds_repo, rule_repo)
+            service = DataSourceService(ds_repo, rule_repo, session)
 
             created = await service.create(
                 DataSourceCreate(
@@ -167,7 +167,7 @@ class TestDataSourceServiceIntegration:
         async with test_db() as session:
             ds_repo = DataSourceRepository(session)
             rule_repo = ScrapingRuleRepository(session)
-            service = DataSourceService(ds_repo, rule_repo)
+            service = DataSourceService(ds_repo, rule_repo, session)
 
             created = await service.create(
                 DataSourceCreate(
@@ -188,7 +188,7 @@ class TestDataSourceServiceIntegration:
         async with test_db() as session:
             ds_repo = DataSourceRepository(session)
             rule_repo = ScrapingRuleRepository(session)
-            service = DataSourceService(ds_repo, rule_repo)
+            service = DataSourceService(ds_repo, rule_repo, session)
 
             created = await service.create(
                 DataSourceCreate(
@@ -218,7 +218,7 @@ class TestScrapingRuleServiceIntegration:
         async with test_db() as session:
             ds_repo = DataSourceRepository(session)
             rule_repo = ScrapingRuleRepository(session)
-            service = DataSourceService(ds_repo, rule_repo)
+            service = DataSourceService(ds_repo, rule_repo, session)
 
             ds = await service.create(
                 DataSourceCreate(
@@ -244,7 +244,7 @@ class TestScrapingRuleServiceIntegration:
         async with test_db() as session:
             ds_repo = DataSourceRepository(session)
             rule_repo = ScrapingRuleRepository(session)
-            service = DataSourceService(ds_repo, rule_repo)
+            service = DataSourceService(ds_repo, rule_repo, session)
 
             ds = await service.create(
                 DataSourceCreate(
@@ -270,7 +270,7 @@ class TestScrapingRuleServiceIntegration:
         async with test_db() as session:
             ds_repo = DataSourceRepository(session)
             rule_repo = ScrapingRuleRepository(session)
-            service = DataSourceService(ds_repo, rule_repo)
+            service = DataSourceService(ds_repo, rule_repo, session)
 
             ds = await service.create(
                 DataSourceCreate(
@@ -298,7 +298,7 @@ class TestScrapingRuleServiceIntegration:
         async with test_db() as session:
             ds_repo = DataSourceRepository(session)
             rule_repo = ScrapingRuleRepository(session)
-            service = DataSourceService(ds_repo, rule_repo)
+            service = DataSourceService(ds_repo, rule_repo, session)
 
             ds = await service.create(
                 DataSourceCreate(
@@ -329,7 +329,7 @@ class TestScrapingRuleServiceIntegration:
         async with test_db() as session:
             ds_repo = DataSourceRepository(session)
             rule_repo = ScrapingRuleRepository(session)
-            service = DataSourceService(ds_repo, rule_repo)
+            service = DataSourceService(ds_repo, rule_repo, session)
 
             ds = await service.create(
                 DataSourceCreate(
@@ -361,7 +361,7 @@ class TestCollectionTriggerIntegration:
         async with test_db() as session:
             ds_repo = DataSourceRepository(session)
             rule_repo = ScrapingRuleRepository(session)
-            service = DataSourceService(ds_repo, rule_repo)
+            service = DataSourceService(ds_repo, rule_repo, session)
 
             ds = await service.create(
                 DataSourceCreate(
@@ -390,7 +390,7 @@ class TestCollectionTriggerIntegration:
         async with test_db() as session:
             ds_repo = DataSourceRepository(session)
             rule_repo = ScrapingRuleRepository(session)
-            service = DataSourceService(ds_repo, rule_repo)
+            service = DataSourceService(ds_repo, rule_repo, session)
 
             ds = await service.create(
                 DataSourceCreate(
@@ -427,7 +427,7 @@ class TestCollectionTriggerIntegration:
         async with test_db() as session:
             ds_repo = DataSourceRepository(session)
             rule_repo = ScrapingRuleRepository(session)
-            service = DataSourceService(ds_repo, rule_repo)
+            service = DataSourceService(ds_repo, rule_repo, session)
 
             ds = await service.create(
                 DataSourceCreate(
@@ -450,7 +450,7 @@ class TestDataSourceServiceValidationIntegration:
         async with test_db() as session:
             ds_repo = DataSourceRepository(session)
             rule_repo = ScrapingRuleRepository(session)
-            service = DataSourceService(ds_repo, rule_repo)
+            service = DataSourceService(ds_repo, rule_repo, session)
 
             with pytest.raises(BusinessException) as exc_info:
                 await service.create(
@@ -468,7 +468,7 @@ class TestDataSourceServiceValidationIntegration:
         async with test_db() as session:
             ds_repo = DataSourceRepository(session)
             rule_repo = ScrapingRuleRepository(session)
-            service = DataSourceService(ds_repo, rule_repo)
+            service = DataSourceService(ds_repo, rule_repo, session)
 
             with pytest.raises(BusinessException) as exc_info:
                 await service.create(

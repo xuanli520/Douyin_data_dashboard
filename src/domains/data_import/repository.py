@@ -36,6 +36,7 @@ class DataImportRecordRepository(BaseRepository):
             return record
 
         await self._tx(_create)
+        await self.session.flush()
         await self.session.refresh(record)
         return record
 
@@ -69,6 +70,7 @@ class DataImportRecordRepository(BaseRepository):
         if not record:
             raise BusinessException(ErrorCode.NOT_FOUND, "DataImportRecord not found")
         await self._delete(record)
+        await self.session.flush()
 
     async def get_paginated(
         self,
@@ -156,6 +158,7 @@ class DataImportDetailRepository(BaseRepository):
             return detail
 
         await self._tx(_create)
+        await self.session.flush()
         await self.session.refresh(detail)
         return detail
 
