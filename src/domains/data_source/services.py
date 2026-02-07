@@ -356,6 +356,7 @@ class DataSourceService:
             return {"valid": True, "message": message}
         else:
             await self.ds_repo.record_error(ds_id, message)
+            await self.session.commit()
             return {"valid": False, "message": message}
 
     async def create_scraping_rule(
