@@ -117,6 +117,19 @@ def _validate_file_upload_config(config: dict[str, Any]) -> None:
         )
 
 
+@DataSourceTypeRegistry.register_validator(DataSourceType.FILE_UPLOAD)
+def _validate_file_upload_config_v2(config: dict[str, Any]) -> None:
+    if (
+        not config.get("file_path")
+        and not config.get("upload_endpoint")
+        and not config.get("path")
+    ):
+        raise BusinessException(
+            ErrorCode.DATA_VALIDATION_FAILED,
+            "File upload source requires 'file_path', 'upload_endpoint', or 'path'",
+        )
+
+
 @DataSourceTypeRegistry.register_validator(DataSourceType.SELF_HOSTED)
 def _validate_database_config(config: dict[str, Any]) -> None:
     pass
@@ -125,6 +138,17 @@ def _validate_database_config(config: dict[str, Any]) -> None:
 @DataSourceTypeRegistry.register_validator(DataSourceType.DOUYIN_APP)
 def _validate_webhook_config(config: dict[str, Any]) -> None:
     pass
+
+
+@DataSourceTypeRegistry.register_validator(DataSourceType.DOUYIN_API)
+def _validate_douyin_api_config_v2(config: dict[str, Any]) -> None:
+    required = ["api_key", "api_secret"]
+    missing = [f for f in required if not config.get(f)]
+    if missing:
+        raise BusinessException(
+            ErrorCode.DATA_VALIDATION_FAILED,
+            f"Missing required fields: {', '.join(missing)}",
+        )
 
 
 @DataSourceTypeRegistry.register_extractor(DataSourceType.DOUYIN_SHOP)
@@ -160,11 +184,36 @@ def _extract_webhook_config(config: dict[str, Any]) -> dict[str, Any]:
     return {"extra_config": config}
 
 
+@DataSourceTypeRegistry.register_extractor(DataSourceType.DOUYIN_API)
+def _extract_douyin_api_config_v2(config: dict[str, Any]) -> dict[str, Any]:
+    return {"extra_config": config}
+
+
+@DataSourceTypeRegistry.register_extractor(DataSourceType.FILE_UPLOAD)
+def _extract_file_upload_config_v2(config: dict[str, Any]) -> dict[str, Any]:
+    return {"extra_config": config}
+
+
 @DataSourceTypeRegistry.register_connection_tester(ModelDataSourceType.DOUYIN_SHOP)
 async def _test_douyin_shop_connection(ds: DataSource) -> tuple[bool, str]:
     if not ds.api_key or not ds.api_secret:
         return False, "Missing API credentials"
     return True, "Connection validated"
+
+
+@DataSourceTypeRegistry.register_connection_tester(ModelDataSourceType.DOUYIN_API)
+async def _test_douyin_api_connection(_ds: DataSource) -> tuple[bool, str]:
+    return True, "Douyin API connection validation skipped"
+
+
+@DataSourceTypeRegistry.register_connection_tester(ModelDataSourceType.DOUYIN_APP)
+async def _test_douyin_app_connection(_ds: DataSource) -> tuple[bool, str]:
+    return True, "Douyin App connection validation skipped"
+
+
+@DataSourceTypeRegistry.register_connection_tester(ModelDataSourceType.FILE_UPLOAD)
+async def _test_file_upload_connection(_ds: DataSource) -> tuple[bool, str]:
+    return True, "File upload connection validation skipped"
 
 
 @DataSourceTypeRegistry.register_connection_tester(ModelDataSourceType.FILE_IMPORT)
@@ -178,6 +227,18 @@ async def _test_self_hosted_connection(_ds: DataSource) -> tuple[bool, str]:
 
 
 class DataSourceService:
+    _SCHEMA_TO_MODEL_TYPE: dict[DataSourceType, ModelDataSourceType] = {
+        DataSourceType.DOUYIN_API: ModelDataSourceType.DOUYIN_API,
+        DataSourceType.DOUYIN_SHOP: ModelDataSourceType.DOUYIN_SHOP,
+        DataSourceType.DOUYIN_APP: ModelDataSourceType.DOUYIN_APP,
+        DataSourceType.FILE_IMPORT: ModelDataSourceType.FILE_IMPORT,
+        DataSourceType.FILE_UPLOAD: ModelDataSourceType.FILE_UPLOAD,
+        DataSourceType.SELF_HOSTED: ModelDataSourceType.SELF_HOSTED,
+    }
+    _MODEL_TO_SCHEMA_TYPE: dict[ModelDataSourceType, DataSourceType] = {
+        v: k for k, v in _SCHEMA_TO_MODEL_TYPE.items()
+    }
+
     def __init__(
         self,
         ds_repo: DataSourceRepository,

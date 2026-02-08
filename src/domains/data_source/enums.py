@@ -8,9 +8,11 @@ class DataSourceStatus(StrEnum):
 
 
 class DataSourceType(StrEnum):
+    DOUYIN_API = "DOUYIN_API"
     DOUYIN_SHOP = "DOUYIN_SHOP"
     DOUYIN_APP = "DOUYIN_APP"
     FILE_IMPORT = "FILE_IMPORT"
+    FILE_UPLOAD = "FILE_UPLOAD"
     SELF_HOSTED = "SELF_HOSTED"
 
 

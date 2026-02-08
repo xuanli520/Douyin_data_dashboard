@@ -1,6 +1,6 @@
 import pytest
 
-from src.domains.data_source.enums import DataSourceStatus
+from src.domains.data_source.enums import DataSourceStatus, TargetType
 from src.domains.data_source.repository import (
     DataSourceRepository,
     ScrapingRuleRepository,
@@ -11,7 +11,6 @@ from src.domains.data_source.schemas import (
     ScrapingRuleCreate,
     ScrapingRuleUpdate,
     DataSourceType as SchemaDataSourceType,
-    ScrapingRuleType,
 )
 from src.domains.data_source.services import DataSourceService
 from src.exceptions import BusinessException
@@ -28,7 +27,7 @@ class TestDataSourceServiceIntegration:
 
             data = DataSourceCreate(
                 name="Integration Test DS",
-                type=SchemaDataSourceType.DOUYIN_API,
+                type=SchemaDataSourceType.DOUYIN_SHOP,
                 config={"api_key": "test_key", "api_secret": "test_secret"},
                 description="Test description",
             )
@@ -50,7 +49,7 @@ class TestDataSourceServiceIntegration:
 
             data = DataSourceCreate(
                 name="Duplicate Name",
-                type=SchemaDataSourceType.DOUYIN_API,
+                type=SchemaDataSourceType.DOUYIN_SHOP,
                 config={"api_key": "key1", "api_secret": "secret1"},
             )
             await service.create(data, user_id=test_user.id)
@@ -69,7 +68,7 @@ class TestDataSourceServiceIntegration:
                 await service.create(
                     DataSourceCreate(
                         name=f"DS {i}",
-                        type=SchemaDataSourceType.DOUYIN_API,
+                        type=SchemaDataSourceType.DOUYIN_SHOP,
                         config={"api_key": f"key_{i}", "api_secret": f"secret_{i}"},
                         status=DataSourceStatus.ACTIVE
                         if i % 2 == 0
@@ -128,7 +127,7 @@ class TestDataSourceServiceIntegration:
             created = await service.create(
                 DataSourceCreate(
                     name="To Delete",
-                    type=SchemaDataSourceType.DOUYIN_API,
+                    type=SchemaDataSourceType.DOUYIN_SHOP,
                     config={"api_key": "key", "api_secret": "secret"},
                 ),
                 user_id=test_user.id,
@@ -149,7 +148,7 @@ class TestDataSourceServiceIntegration:
             created = await service.create(
                 DataSourceCreate(
                     name="Status Test",
-                    type=SchemaDataSourceType.DOUYIN_API,
+                    type=SchemaDataSourceType.DOUYIN_SHOP,
                     config={"api_key": "key", "api_secret": "secret"},
                     status=DataSourceStatus.ACTIVE,
                 ),
@@ -172,7 +171,7 @@ class TestDataSourceServiceIntegration:
             created = await service.create(
                 DataSourceCreate(
                     name="Connection Test",
-                    type=SchemaDataSourceType.DOUYIN_API,
+                    type=SchemaDataSourceType.DOUYIN_SHOP,
                     config={"api_key": "key", "api_secret": "secret"},
                 ),
                 user_id=test_user.id,
@@ -193,7 +192,7 @@ class TestDataSourceServiceIntegration:
             created = await service.create(
                 DataSourceCreate(
                     name="Connection Fail Test",
-                    type=SchemaDataSourceType.DOUYIN_API,
+                    type=SchemaDataSourceType.DOUYIN_SHOP,
                     config={"api_key": "valid_key", "api_secret": "valid_secret"},
                 ),
                 user_id=test_user.id,
@@ -232,7 +231,7 @@ class TestScrapingRuleServiceIntegration:
             rule_data = ScrapingRuleCreate(
                 data_source_id=ds.id,
                 name="Test Rule",
-                rule_type=ScrapingRuleType.ORDERS,
+                target_type=TargetType.ORDER_FULFILLMENT,
                 config={"max_orders": 100},
             )
             rule = await service.create_scraping_rule(ds.id, rule_data)
@@ -259,7 +258,7 @@ class TestScrapingRuleServiceIntegration:
             rule_data = ScrapingRuleCreate(
                 data_source_id=ds.id,
                 name="Test Rule",
-                rule_type=ScrapingRuleType.ORDERS,
+                target_type=TargetType.ORDER_FULFILLMENT,
             )
 
             with pytest.raises(BusinessException) as exc_info:
@@ -287,7 +286,7 @@ class TestScrapingRuleServiceIntegration:
                     ScrapingRuleCreate(
                         data_source_id=ds.id,
                         name=f"Rule {i}",
-                        rule_type=ScrapingRuleType.ORDERS,
+                        target_type=TargetType.ORDER_FULFILLMENT,
                     ),
                 )
 
@@ -314,7 +313,7 @@ class TestScrapingRuleServiceIntegration:
                 ScrapingRuleCreate(
                     data_source_id=ds.id,
                     name="Original Rule Name",
-                    rule_type=ScrapingRuleType.ORDERS,
+                    target_type=TargetType.ORDER_FULFILLMENT,
                 ),
             )
 
@@ -345,7 +344,7 @@ class TestScrapingRuleServiceIntegration:
                 ScrapingRuleCreate(
                     data_source_id=ds.id,
                     name="To Delete",
-                    rule_type=ScrapingRuleType.ORDERS,
+                    target_type=TargetType.ORDER_FULFILLMENT,
                 ),
             )
 
@@ -377,7 +376,7 @@ class TestCollectionTriggerIntegration:
                 ScrapingRuleCreate(
                     data_source_id=ds.id,
                     name="Collection Rule",
-                    rule_type=ScrapingRuleType.ORDERS,
+                    target_type=TargetType.ORDER_FULFILLMENT,
                 ),
             )
 
@@ -406,7 +405,7 @@ class TestCollectionTriggerIntegration:
                 ScrapingRuleCreate(
                     data_source_id=ds.id,
                     name="Rule 1",
-                    rule_type=ScrapingRuleType.ORDERS,
+                    target_type=TargetType.ORDER_FULFILLMENT,
                 ),
             )
 
@@ -415,7 +414,7 @@ class TestCollectionTriggerIntegration:
                 ScrapingRuleCreate(
                     data_source_id=ds.id,
                     name="Rule 2",
-                    rule_type=ScrapingRuleType.PRODUCTS,
+                    target_type=TargetType.PRODUCT,
                 ),
             )
 

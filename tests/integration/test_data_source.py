@@ -261,7 +261,7 @@ class TestScrapingRuleAPI:
             json={
                 "name": "Test Rule",
                 "data_source_id": ds_id,
-                "rule_type": "ORDERS",
+                "target_type": "ORDER_FULFILLMENT",
                 "config": {"batch_size": 100},
                 "schedule": "0 */6 * * *",
             },
