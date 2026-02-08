@@ -232,6 +232,30 @@ class AdminRepository(BaseRepository):
 
         await self._tx(_assign)
 
+    async def get_roles_paginated(
+        self,
+        page: int,
+        size: int,
+        name: str | None = None,
+    ) -> tuple[list[Role], int]:
+        conds = []
+        if name:
+            conds.append(Role.name.ilike(f"%{name}%"))
+
+        stmt = (
+            select(Role)
+            .where(and_(*conds) if conds else True)
+            .order_by(Role.created_at.desc())
+            .offset((page - 1) * size)
+            .limit(size)
+        )
+        count_stmt = select(func.count(Role.id)).where(and_(*conds) if conds else True)
+
+        roles = (await self.session.execute(stmt)).scalars().all()
+        total = (await self.session.execute(count_stmt)).scalar_one()
+
+        return list(roles), int(total)
+
     async def get_roles(self) -> list[Role]:
         stmt = select(Role).order_by(Role.created_at.desc())
         return list((await self.session.execute(stmt)).scalars().all())
@@ -324,6 +348,35 @@ class AdminRepository(BaseRepository):
                 self.session.add(RolePermission(role_id=role_id, permission_id=pid))
 
         await self._tx(_assign)
+
+    async def get_permissions_paginated(
+        self,
+        page: int,
+        size: int,
+        module: str | None = None,
+        name: str | None = None,
+    ) -> tuple[list[Permission], int]:
+        conds = []
+        if module:
+            conds.append(Permission.module == module)
+        if name:
+            conds.append(Permission.name.ilike(f"%{name}%"))
+
+        stmt = (
+            select(Permission)
+            .where(and_(*conds) if conds else True)
+            .order_by(Permission.module, Permission.code)
+            .offset((page - 1) * size)
+            .limit(size)
+        )
+        count_stmt = select(func.count(Permission.id)).where(
+            and_(*conds) if conds else True
+        )
+
+        permissions = (await self.session.execute(stmt)).scalars().all()
+        total = (await self.session.execute(count_stmt)).scalar_one()
+
+        return list(permissions), int(total)
 
     async def get_permissions(self) -> list[Permission]:
         stmt = select(Permission).order_by(Permission.module, Permission.code)

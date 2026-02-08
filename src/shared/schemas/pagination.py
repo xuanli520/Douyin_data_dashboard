@@ -10,6 +10,8 @@ class PageMeta(BaseModel):
     size: int = Field(..., ge=1, le=100, description="Items per page")
     total: int = Field(..., ge=0, description="Total item count")
     pages: int = Field(..., ge=0, description="Total page count")
+    has_next: bool = Field(..., description="Whether there is a next page")
+    has_prev: bool = Field(..., description="Whether there is a previous page")
 
 
 class PaginationParams(BaseModel):
@@ -32,15 +34,15 @@ class PaginatedData(BaseModel, Generic[T]):
         page: int,
         size: int,
     ) -> "PaginatedData[T]":
-        pages = (total + size - 1) // size if total > 0 else 0
-        meta = PageMeta(page=page, size=size, total=total, pages=pages)
+        pages = (total + size - 1) // size if size > 0 else 0
+        has_next = page < pages
+        has_prev = page > 1
+        meta = PageMeta(
+            page=page,
+            size=size,
+            total=total,
+            pages=pages,
+            has_next=has_next,
+            has_prev=has_prev,
+        )
         return cls(items=items, meta=meta)
-
-
-def create_paginated_response(
-    items: list[T],
-    total: int,
-    page: int,
-    size: int,
-) -> PaginatedData[T]:
-    return PaginatedData.create(items=items, total=total, page=page, size=size)

@@ -1,4 +1,5 @@
 import pytest
+from fastapi_pagination import add_pagination
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
@@ -150,7 +151,6 @@ async def admin_token(async_engine, admin_user):
 async def test_client(async_engine, test_session, admin_token):
     from contextlib import asynccontextmanager
     from fastapi import FastAPI
-    from fastapi_pagination import add_pagination
     from starlette.middleware import Middleware
 
     from src.api import (
@@ -361,7 +361,6 @@ class TestUnauthorizedAccess:
         """Test that unauthorized access returns 401"""
         from contextlib import asynccontextmanager
         from fastapi import FastAPI
-        from fastapi_pagination import add_pagination
         from starlette.middleware import Middleware
 
         from src.api import (
@@ -450,7 +449,6 @@ class TestForbiddenAccess:
         """Test that forbidden access returns 403 for users without permission"""
         from contextlib import asynccontextmanager
         from fastapi import FastAPI
-        from fastapi_pagination import add_pagination
         from starlette.middleware import Middleware
 
         from src.api import (

@@ -45,6 +45,10 @@ class AdminService:
     async def assign_user_roles(self, user_id: int, role_ids: list[int]):
         await self.repo.assign_user_roles(user_id, role_ids)
 
+    async def get_roles_paginated(self, **kwargs):
+        roles, total = await self.repo.get_roles_paginated(**kwargs)
+        return [RoleRead.model_validate(role) for role in roles], total
+
     async def get_roles(self):
         roles = await self.repo.get_roles()
         return [RoleRead.model_validate(role) for role in roles]
@@ -65,6 +69,10 @@ class AdminService:
 
     async def delete_role(self, role_id: int):
         await self.repo.delete_role(role_id)
+
+    async def get_permissions_paginated(self, **kwargs):
+        permissions, total = await self.repo.get_permissions_paginated(**kwargs)
+        return [PermissionRead.model_validate(perm) for perm in permissions], total
 
     async def get_permissions(self):
         permissions = await self.repo.get_permissions()

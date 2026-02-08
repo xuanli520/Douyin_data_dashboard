@@ -1,6 +1,7 @@
 """Integration tests for data source schemas with API endpoints."""
 
 import pytest
+from fastapi_pagination import add_pagination
 from httpx import AsyncClient, ASGITransport
 
 from src.domains.data_source.schemas import (
@@ -71,7 +72,6 @@ async def auth_token(authenticated_user):
 async def test_client(test_db, test_session, auth_token):
     from contextlib import asynccontextmanager
     from fastapi import FastAPI
-    from fastapi_pagination import add_pagination
     from starlette.middleware import Middleware
 
     from src.api import (

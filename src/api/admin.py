@@ -17,7 +17,7 @@ from src.auth.schemas import (
 )
 from src.exceptions import BusinessException
 from src.shared.errors import ErrorCode
-from src.shared.schemas import PaginatedData
+from src.shared.schemas import PaginatedData, PaginationParams
 from src.audit import AuditService, get_audit_service
 from src.audit.schemas import AuditAction, AuditResult
 
@@ -46,8 +46,7 @@ can_permission_read = require_permissions("permission:read", bypass_superuser=Tr
     dependencies=[Depends(can_user_read)],
 )
 async def list_users(
-    page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
+    pagination: PaginationParams = Depends(),
     username: str | None = Query(None, max_length=50),
     email: str | None = Query(None, max_length=320),
     is_active: bool | None = Query(None),
@@ -56,15 +55,17 @@ async def list_users(
     admin_service: AdminService = Depends(get_admin_service),
 ):
     users, total = await admin_service.get_users(
-        page=page,
-        size=size,
+        page=pagination.page,
+        size=pagination.size,
         username=username,
         email=email,
         is_active=is_active,
         is_superuser=is_superuser,
         role_id=role_id,
     )
-    return PaginatedData.create(items=users, total=total, page=page, size=size)
+    return PaginatedData.create(
+        items=users, total=total, page=pagination.page, size=pagination.size
+    )
 
 
 @router.get(
@@ -188,11 +189,23 @@ async def assign_user_roles(
 
 
 @router.get(
-    "/roles", response_model=list[RoleRead], dependencies=[Depends(can_role_read)]
+    "/roles",
+    response_model=PaginatedData[RoleRead],
+    dependencies=[Depends(can_role_read)],
 )
-async def list_roles(admin_service: AdminService = Depends(get_admin_service)):
-    roles = await admin_service.get_roles()
-    return roles
+async def list_roles(
+    pagination: PaginationParams = Depends(),
+    name: str | None = Query(None, max_length=100),
+    admin_service: AdminService = Depends(get_admin_service),
+):
+    roles, total = await admin_service.get_roles_paginated(
+        page=pagination.page,
+        size=pagination.size,
+        name=name,
+    )
+    return PaginatedData.create(
+        items=roles, total=total, page=pagination.page, size=pagination.size
+    )
 
 
 @router.get(
@@ -293,8 +306,21 @@ async def assign_role_permissions(
 
 @router.get(
     "/permissions",
-    response_model=list[PermissionRead],
+    response_model=PaginatedData[PermissionRead],
     dependencies=[Depends(can_permission_read)],
 )
-async def list_permissions(admin_service: AdminService = Depends(get_admin_service)):
-    return await admin_service.get_permissions()
+async def list_permissions(
+    pagination: PaginationParams = Depends(),
+    module: str | None = Query(None, max_length=50),
+    name: str | None = Query(None, max_length=100),
+    admin_service: AdminService = Depends(get_admin_service),
+):
+    permissions, total = await admin_service.get_permissions_paginated(
+        page=pagination.page,
+        size=pagination.size,
+        module=module,
+        name=name,
+    )
+    return PaginatedData.create(
+        items=permissions, total=total, page=pagination.page, size=pagination.size
+    )

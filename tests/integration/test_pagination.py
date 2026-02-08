@@ -1,12 +1,12 @@
 import pytest
-from fastapi import Depends, FastAPI, Query
+from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.models import User
 from src.session import get_session
-from src.shared.schemas import PaginatedData
+from src.shared.schemas import PaginatedData, PaginationParams
 
 
 @pytest.fixture
@@ -31,14 +31,16 @@ async def pagination_client(test_db, local_cache, test_user):
 
     @app.get("/test/users", response_model=PaginatedData[User])
     async def list_users(
-        page: int = Query(1, ge=1),
-        size: int = Query(50, ge=1, le=100),
+        pagination: PaginationParams = Depends(),
         session: AsyncSession = Depends(get_session),
     ):
         result = await session.execute(select(User))
         users = result.scalars().all()
         return PaginatedData.create(
-            items=list(users), total=len(users), page=page, size=size
+            items=list(users),
+            total=len(users),
+            page=pagination.page,
+            size=pagination.size,
         )
 
     async with AsyncClient(
@@ -74,7 +76,7 @@ async def test_pagination_default_params(pagination_client):
     data = response.json()
     page_data = data["data"]
     assert page_data["meta"]["page"] == 1
-    assert page_data["meta"]["size"] == 50
+    assert page_data["meta"]["size"] == 20
 
 
 @pytest.mark.asyncio

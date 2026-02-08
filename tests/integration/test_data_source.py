@@ -1,6 +1,7 @@
 """Integration tests for data source API endpoints."""
 
 import pytest
+from fastapi_pagination import add_pagination
 from httpx import AsyncClient, ASGITransport
 
 from src.auth.models import User, UserRole
@@ -88,7 +89,6 @@ async def auth_token(authenticated_user):
 async def test_client(test_db, test_session, auth_token):
     from contextlib import asynccontextmanager
     from fastapi import FastAPI
-    from fastapi_pagination import add_pagination
     from starlette.middleware import Middleware
 
     from src.api import (
@@ -194,7 +194,8 @@ class TestDataSourceAPI:
         data = response.json()["data"]
         assert isinstance(data, dict)
         assert "items" in data
-        assert "total" in data
+        assert "meta" in data
+        assert "total" in data["meta"]
 
     async def test_get_data_source_detail(self, test_client):
         create_response = await test_client.post(
