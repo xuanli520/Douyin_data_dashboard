@@ -50,10 +50,10 @@ class AuditLog(SQLModel, table=True):
         default=None,
         sa_column=Column(ForeignKey("users.id", ondelete="SET NULL"), index=True),
     )
-    action: str = Field(nullable=False, max_length=64, index=True)
+    action: AuditAction = Field(nullable=False, max_length=64, index=True)
     resource_type: str | None = Field(default=None, max_length=64)
     resource_id: str | None = Field(default=None, sa_column=Column(Text))
-    result: str = Field(nullable=False, max_length=32)
+    result: AuditResult = Field(nullable=False, max_length=32)
     user_agent: str | None = Field(default=None, sa_column=Column(Text))
     ip: str | None = Field(default=None, max_length=45)
     extra: dict[str, Any] | None = Field(

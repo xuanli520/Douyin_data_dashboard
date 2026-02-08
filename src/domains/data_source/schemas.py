@@ -1,28 +1,13 @@
 from datetime import datetime
-from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
-class DataSourceType(StrEnum):
-    DOUYIN_API = "DOUYIN_API"
-    FILE_UPLOAD = "FILE_UPLOAD"
-    DATABASE = "DATABASE"
-    WEBHOOK = "WEBHOOK"
-
-
-class DataSourceStatus(StrEnum):
-    ACTIVE = "ACTIVE"
-    INACTIVE = "INACTIVE"
-    ERROR = "ERROR"
-
-
-class ScrapingRuleType(StrEnum):
-    ORDERS = "ORDERS"
-    PRODUCTS = "PRODUCTS"
-    USERS = "USERS"
-    COMMENTS = "COMMENTS"
+from src.domains.data_source.enums import (
+    DataSourceStatus,
+    DataSourceType,
+    TargetType,
+)
 
 
 class DataSourceCreate(BaseModel):
@@ -55,7 +40,7 @@ class DataSourceResponse(BaseModel):
 class ScrapingRuleCreate(BaseModel):
     data_source_id: int = Field(..., gt=0)
     name: str = Field(..., min_length=1, max_length=100)
-    rule_type: ScrapingRuleType
+    target_type: TargetType
     config: dict[str, Any] = Field(default_factory=dict)
     schedule: str | None = Field(None, max_length=100)
     is_active: bool = True
@@ -75,7 +60,7 @@ class ScrapingRuleResponse(BaseModel):
     id: int
     data_source_id: int
     name: str
-    rule_type: ScrapingRuleType
+    target_type: TargetType
     config: dict[str, Any]
     schedule: str | None = None
     is_active: bool
@@ -89,7 +74,7 @@ class ScrapingRuleListItem(BaseModel):
     id: int
     data_source_id: int
     name: str
-    rule_type: ScrapingRuleType
+    target_type: TargetType
     config: dict[str, Any]
     schedule: str | None = None
     is_active: bool

@@ -14,10 +14,9 @@ from src.domains.data_source.schemas import (
     ScrapingRuleCreate,
     ScrapingRuleListResponse,
     ScrapingRuleResponse,
-    ScrapingRuleType,
     ScrapingRuleUpdate,
 )
-from src.domains.data_source.enums import ScrapingRuleStatus
+from src.domains.data_source.enums import ScrapingRuleStatus, TargetType
 from src.domains.data_source.services import (
     DataSourceService,
     get_data_source_service,
@@ -154,7 +153,7 @@ async def list_scraping_rules(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     name: str | None = Query(None, max_length=100),
-    rule_type: ScrapingRuleType | None = Query(None),
+    target_type: TargetType | None = Query(None),
     status: ScrapingRuleStatus | None = Query(None),
     data_source_id: int | None = Query(None, ge=1),
     service: DataSourceService = Depends(get_data_source_service),
@@ -165,7 +164,7 @@ async def list_scraping_rules(
         page=page,
         size=size,
         name=name,
-        rule_type=rule_type,
+        target_type=target_type,
         status=status,
         data_source_id=data_source_id,
     )

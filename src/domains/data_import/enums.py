@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class ImportStatus(str, Enum):
+class ImportStatus(StrEnum):
     PENDING = "PENDING"
     PROCESSING = "PROCESSING"
     SUCCESS = "SUCCESS"
@@ -11,6 +11,6 @@ class ImportStatus(str, Enum):
     VALIDATION_FAILED = "VALIDATION_FAILED"
 
 
-class FileType(str, Enum):
+class FileType(StrEnum):
     EXCEL = "EXCEL"
     CSV = "CSV"
