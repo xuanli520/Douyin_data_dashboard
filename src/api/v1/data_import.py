@@ -266,13 +266,13 @@ async def confirm_import(
     )
 
 
-@router.get("/history", response_model=Response[PaginatedData[ImportHistoryItem]])
+@router.get("/history", response_model=PaginatedData[ImportHistoryItem])
 async def get_import_history(
     pagination: PaginationParams = Depends(),
     current_user: User = Depends(current_user),
     service: ImportService = Depends(get_import_service),
     _=Depends(require_permissions(DataImportPermission.VIEW, bypass_superuser=True)),
-) -> Response[PaginatedData[ImportHistoryItem]]:
+) -> PaginatedData[ImportHistoryItem]:
     histories, total = await service.list_import_history(
         user_id=current_user.id or 0, page=pagination.page, size=pagination.size
     )
@@ -290,10 +290,8 @@ async def get_import_history(
         for h in histories
     ]
 
-    return Response.success(
-        data=PaginatedData.create(
-            items=items, total=total, page=pagination.page, size=pagination.size
-        )
+    return PaginatedData.create(
+        items=items, total=total, page=pagination.page, size=pagination.size
     )
 
 
