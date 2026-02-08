@@ -3,12 +3,14 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from src.domains.data_import.enums import ImportStatus
+
 
 class ImportUploadResponse(BaseModel):
     id: int
     file_name: str
     file_size: int
-    status: str
+    status: ImportStatus
     created_at: datetime
 
 
@@ -37,7 +39,7 @@ class ImportConfirmResponse(BaseModel):
 class ImportHistoryItem(BaseModel):
     id: int
     file_name: str
-    status: str
+    status: ImportStatus
     total_rows: int
     success_rows: int
     failed_rows: int
@@ -56,7 +58,7 @@ class ImportDetailResponse(BaseModel):
     id: int
     file_name: str
     file_size: int
-    status: str
+    status: ImportStatus
     field_mapping: dict[str, str] | None
     total_rows: int
     success_rows: int
@@ -68,7 +70,7 @@ class ImportDetailResponse(BaseModel):
 
 class ImportCancelResponse(BaseModel):
     id: int
-    status: str
+    status: ImportStatus
     message: str
 
 
@@ -80,7 +82,7 @@ class ImportParseResponse(BaseModel):
 
 class ImportMappingResponse(BaseModel):
     id: int
-    status: str
+    status: ImportStatus
 
 
 class ImportUploadRequest(BaseModel):

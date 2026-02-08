@@ -25,7 +25,6 @@ from src.domains.data_source.schemas import (
     ScrapingRuleCreate,
     ScrapingRuleListItem,
     ScrapingRuleResponse,
-    ScrapingRuleType,
     ScrapingRuleUpdate,
 )
 from src.exceptions import BusinessException
@@ -94,7 +93,7 @@ class DataSourceTypeRegistry:
         return False, f"Unsupported source type: {ds.source_type}"
 
 
-@DataSourceTypeRegistry.register_validator(DataSourceType.DOUYIN_API)
+@DataSourceTypeRegistry.register_validator(DataSourceType.DOUYIN_SHOP)
 def _validate_douyin_api_config(config: dict[str, Any]) -> None:
     required = ["api_key", "api_secret"]
     missing = [f for f in required if not config.get(f)]
@@ -105,7 +104,7 @@ def _validate_douyin_api_config(config: dict[str, Any]) -> None:
         )
 
 
-@DataSourceTypeRegistry.register_validator(DataSourceType.FILE_UPLOAD)
+@DataSourceTypeRegistry.register_validator(DataSourceType.FILE_IMPORT)
 def _validate_file_upload_config(config: dict[str, Any]) -> None:
     if (
         not config.get("file_path")
@@ -118,17 +117,41 @@ def _validate_file_upload_config(config: dict[str, Any]) -> None:
         )
 
 
-@DataSourceTypeRegistry.register_validator(DataSourceType.DATABASE)
+@DataSourceTypeRegistry.register_validator(DataSourceType.FILE_UPLOAD)
+def _validate_file_upload_config_v2(config: dict[str, Any]) -> None:
+    if (
+        not config.get("file_path")
+        and not config.get("upload_endpoint")
+        and not config.get("path")
+    ):
+        raise BusinessException(
+            ErrorCode.DATA_VALIDATION_FAILED,
+            "File upload source requires 'file_path', 'upload_endpoint', or 'path'",
+        )
+
+
+@DataSourceTypeRegistry.register_validator(DataSourceType.SELF_HOSTED)
 def _validate_database_config(config: dict[str, Any]) -> None:
     pass
 
 
-@DataSourceTypeRegistry.register_validator(DataSourceType.WEBHOOK)
+@DataSourceTypeRegistry.register_validator(DataSourceType.DOUYIN_APP)
 def _validate_webhook_config(config: dict[str, Any]) -> None:
     pass
 
 
-@DataSourceTypeRegistry.register_extractor(DataSourceType.DOUYIN_API)
+@DataSourceTypeRegistry.register_validator(DataSourceType.DOUYIN_API)
+def _validate_douyin_api_config_v2(config: dict[str, Any]) -> None:
+    required = ["api_key", "api_secret"]
+    missing = [f for f in required if not config.get(f)]
+    if missing:
+        raise BusinessException(
+            ErrorCode.DATA_VALIDATION_FAILED,
+            f"Missing required fields: {', '.join(missing)}",
+        )
+
+
+@DataSourceTypeRegistry.register_extractor(DataSourceType.DOUYIN_SHOP)
 def _extract_douyin_api_config(config: dict[str, Any]) -> dict[str, Any]:
     return {
         "extra_config": config,
@@ -143,7 +166,7 @@ def _extract_douyin_api_config(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@DataSourceTypeRegistry.register_extractor(DataSourceType.DATABASE)
+@DataSourceTypeRegistry.register_extractor(DataSourceType.SELF_HOSTED)
 def _extract_database_config(config: dict[str, Any]) -> dict[str, Any]:
     return {
         "extra_config": config,
@@ -151,13 +174,23 @@ def _extract_database_config(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@DataSourceTypeRegistry.register_extractor(DataSourceType.FILE_UPLOAD)
+@DataSourceTypeRegistry.register_extractor(DataSourceType.FILE_IMPORT)
 def _extract_file_upload_config(config: dict[str, Any]) -> dict[str, Any]:
     return {"extra_config": config}
 
 
-@DataSourceTypeRegistry.register_extractor(DataSourceType.WEBHOOK)
+@DataSourceTypeRegistry.register_extractor(DataSourceType.DOUYIN_APP)
 def _extract_webhook_config(config: dict[str, Any]) -> dict[str, Any]:
+    return {"extra_config": config}
+
+
+@DataSourceTypeRegistry.register_extractor(DataSourceType.DOUYIN_API)
+def _extract_douyin_api_config_v2(config: dict[str, Any]) -> dict[str, Any]:
+    return {"extra_config": config}
+
+
+@DataSourceTypeRegistry.register_extractor(DataSourceType.FILE_UPLOAD)
+def _extract_file_upload_config_v2(config: dict[str, Any]) -> dict[str, Any]:
     return {"extra_config": config}
 
 
@@ -166,6 +199,21 @@ async def _test_douyin_shop_connection(ds: DataSource) -> tuple[bool, str]:
     if not ds.api_key or not ds.api_secret:
         return False, "Missing API credentials"
     return True, "Connection validated"
+
+
+@DataSourceTypeRegistry.register_connection_tester(ModelDataSourceType.DOUYIN_API)
+async def _test_douyin_api_connection(_ds: DataSource) -> tuple[bool, str]:
+    return True, "Douyin API connection validation skipped"
+
+
+@DataSourceTypeRegistry.register_connection_tester(ModelDataSourceType.DOUYIN_APP)
+async def _test_douyin_app_connection(_ds: DataSource) -> tuple[bool, str]:
+    return True, "Douyin App connection validation skipped"
+
+
+@DataSourceTypeRegistry.register_connection_tester(ModelDataSourceType.FILE_UPLOAD)
+async def _test_file_upload_connection(_ds: DataSource) -> tuple[bool, str]:
+    return True, "File upload connection validation skipped"
 
 
 @DataSourceTypeRegistry.register_connection_tester(ModelDataSourceType.FILE_IMPORT)
@@ -180,30 +228,15 @@ async def _test_self_hosted_connection(_ds: DataSource) -> tuple[bool, str]:
 
 class DataSourceService:
     _SCHEMA_TO_MODEL_TYPE: dict[DataSourceType, ModelDataSourceType] = {
-        DataSourceType.DOUYIN_API: ModelDataSourceType.DOUYIN_SHOP,
-        DataSourceType.FILE_UPLOAD: ModelDataSourceType.FILE_IMPORT,
-        DataSourceType.DATABASE: ModelDataSourceType.SELF_HOSTED,
+        DataSourceType.DOUYIN_API: ModelDataSourceType.DOUYIN_API,
+        DataSourceType.DOUYIN_SHOP: ModelDataSourceType.DOUYIN_SHOP,
+        DataSourceType.DOUYIN_APP: ModelDataSourceType.DOUYIN_APP,
+        DataSourceType.FILE_IMPORT: ModelDataSourceType.FILE_IMPORT,
+        DataSourceType.FILE_UPLOAD: ModelDataSourceType.FILE_UPLOAD,
+        DataSourceType.SELF_HOSTED: ModelDataSourceType.SELF_HOSTED,
     }
-
     _MODEL_TO_SCHEMA_TYPE: dict[ModelDataSourceType, DataSourceType] = {
-        ModelDataSourceType.DOUYIN_SHOP: DataSourceType.DOUYIN_API,
-        ModelDataSourceType.FILE_IMPORT: DataSourceType.FILE_UPLOAD,
-        ModelDataSourceType.SELF_HOSTED: DataSourceType.DATABASE,
-    }
-
-    _RULE_TYPE_TO_TARGET: dict[ScrapingRuleType, TargetType] = {
-        ScrapingRuleType.ORDERS: TargetType.ORDER_FULFILLMENT,
-        ScrapingRuleType.PRODUCTS: TargetType.PRODUCT,
-        ScrapingRuleType.USERS: TargetType.CUSTOMER,
-        ScrapingRuleType.COMMENTS: TargetType.CONTENT_VIDEO,
-    }
-
-    _TARGET_TO_RULE_TYPE: dict[TargetType, ScrapingRuleType] = {
-        TargetType.ORDER_FULFILLMENT: ScrapingRuleType.ORDERS,
-        TargetType.ORDER_FULFILLMENT: ScrapingRuleType.ORDERS,
-        TargetType.PRODUCT: ScrapingRuleType.PRODUCTS,
-        TargetType.CUSTOMER: ScrapingRuleType.USERS,
-        TargetType.CONTENT_VIDEO: ScrapingRuleType.COMMENTS,
+        v: k for k, v in _SCHEMA_TO_MODEL_TYPE.items()
     }
 
     def __init__(
@@ -377,7 +410,7 @@ class DataSourceService:
         rule_data = {
             "data_source_id": ds_id,
             "name": data.name,
-            "target_type": self._map_rule_type_to_target_type(data.rule_type),
+            "target_type": data.target_type,
             "description": data.description,
             "schedule": {"cron": data.schedule} if data.schedule else None,
             **data.config,
@@ -402,14 +435,10 @@ class DataSourceService:
         page: int,
         size: int,
         name: str | None = None,
-        rule_type: ScrapingRuleType | None = None,
+        target_type: TargetType | None = None,
         status: ScrapingRuleStatus | None = None,
         data_source_id: int | None = None,
     ) -> tuple[list[ScrapingRuleListItem], int]:
-        target_type = (
-            self._map_rule_type_to_target_type(rule_type) if rule_type else None
-        )
-
         rules, total = await self.rule_repo.get_paginated(
             page=page,
             size=size,
@@ -430,7 +459,7 @@ class DataSourceService:
             if rule.data_source_id is not None
             else 0,
             name=rule.name,
-            rule_type=self._map_target_type_to_rule_type(rule.target_type),
+            target_type=rule.target_type,
             config=rule.filters or {},
             schedule=rule.schedule.get("cron") if rule.schedule else None,
             is_active=rule.status == ScrapingRuleStatus.ACTIVE,
@@ -542,26 +571,6 @@ class DataSourceService:
             )
         return result
 
-    def _map_rule_type_to_target_type(self, rule_type: ScrapingRuleType) -> TargetType:
-        result = self._RULE_TYPE_TO_TARGET.get(rule_type)
-        if result is None:
-            raise BusinessException(
-                ErrorCode.DATASOURCE_UNKNOWN_TARGET_TYPE,
-                f"Unknown rule type: {rule_type}",
-            )
-        return result
-
-    def _map_target_type_to_rule_type(
-        self, target_type: TargetType
-    ) -> ScrapingRuleType:
-        result = self._TARGET_TO_RULE_TYPE.get(target_type)
-        if result is None:
-            raise BusinessException(
-                ErrorCode.DATASOURCE_UNKNOWN_TARGET_TYPE,
-                f"Unknown target type: {target_type}",
-            )
-        return result
-
     def _build_data_source_response(self, ds: DataSource) -> DataSourceResponse:
         return DataSourceResponse(
             id=ds.id if ds.id is not None else 0,
@@ -581,7 +590,7 @@ class DataSourceService:
             if rule.data_source_id is not None
             else 0,
             name=rule.name,
-            rule_type=self._map_target_type_to_rule_type(rule.target_type),
+            target_type=rule.target_type,
             config=rule.filters or {},
             schedule=rule.schedule.get("cron") if rule.schedule else None,
             is_active=rule.status == ScrapingRuleStatus.ACTIVE,

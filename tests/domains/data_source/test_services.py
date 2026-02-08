@@ -13,7 +13,6 @@ from src.domains.data_source.schemas import (
     DataSourceType,
     ScrapingRuleCreate,
     ScrapingRuleUpdate,
-    ScrapingRuleType,
 )
 from src.domains.data_source.services import DataSourceService
 from src.exceptions import BusinessException
@@ -32,7 +31,7 @@ class MockDataSource:
         self.description = kwargs.get("description", None)
         self.extra_config = kwargs.get("extra_config", {})
         # Response schema fields
-        self.type = kwargs.get("type", DataSourceType.DOUYIN_API)
+        self.type = kwargs.get("type", DataSourceType.DOUYIN_SHOP)
         self.config = kwargs.get("config", {})
         self.api_key = kwargs.get("api_key", None)
         self.api_secret = kwargs.get("api_secret", None)
@@ -79,7 +78,7 @@ class MockScrapingRule:
         self.session_level = kwargs.get("session_level", False)
         self.status = kwargs.get("status", "ACTIVE")
         # Response schema fields
-        self.rule_type = kwargs.get("rule_type", ScrapingRuleType.ORDERS)
+        self.rule_type = kwargs.get("rule_type", TargetType.ORDER_FULFILLMENT)
         self.config = kwargs.get("config", {})
         self.is_active = kwargs.get("is_active", True)
         self.last_executed_at = kwargs.get("last_executed_at", None)
@@ -106,7 +105,7 @@ class TestDataSourceServiceUnit:
         service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
         data = DataSourceCreate(
             name="Test DS",
-            type=DataSourceType.DOUYIN_API,
+            type=DataSourceType.DOUYIN_SHOP,
             config={"api_key": "test_key", "api_secret": "test_secret"},
             description="Test description",
         )
@@ -123,7 +122,7 @@ class TestDataSourceServiceUnit:
 
         data = DataSourceCreate(
             name="Test DS",
-            type=DataSourceType.DOUYIN_API,
+            type=DataSourceType.DOUYIN_SHOP,
             config={},
         )
 
@@ -336,7 +335,7 @@ class TestDataSourceServiceUnit:
         data = ScrapingRuleCreate(
             data_source_id=1,
             name="Test Rule",
-            rule_type=ScrapingRuleType.ORDERS,
+            target_type=TargetType.ORDER_FULFILLMENT,
         )
         result = await service.create_scraping_rule(1, data)
 
@@ -354,7 +353,7 @@ class TestDataSourceServiceUnit:
         data = ScrapingRuleCreate(
             data_source_id=1,
             name="Test Rule",
-            rule_type=ScrapingRuleType.ORDERS,
+            target_type=TargetType.ORDER_FULFILLMENT,
         )
 
         with pytest.raises(BusinessException) as exc_info:

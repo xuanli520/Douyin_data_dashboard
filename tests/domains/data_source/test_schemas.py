@@ -3,6 +3,7 @@ from datetime import datetime
 import pytest
 from pydantic import ValidationError
 
+from src.domains.data_source.enums import TargetType
 from src.domains.data_source.schemas import (
     DataSourceCreate,
     DataSourceResponse,
@@ -11,17 +12,16 @@ from src.domains.data_source.schemas import (
     DataSourceUpdate,
     ScrapingRuleCreate,
     ScrapingRuleResponse,
-    ScrapingRuleType,
     ScrapingRuleUpdate,
 )
 
 
 class TestDataSourceType:
     def test_enum_values(self):
-        assert DataSourceType.DOUYIN_API == "DOUYIN_API"
-        assert DataSourceType.FILE_UPLOAD == "FILE_UPLOAD"
-        assert DataSourceType.DATABASE == "DATABASE"
-        assert DataSourceType.WEBHOOK == "WEBHOOK"
+        assert DataSourceType.DOUYIN_SHOP == "DOUYIN_SHOP"
+        assert DataSourceType.DOUYIN_APP == "DOUYIN_APP"
+        assert DataSourceType.FILE_IMPORT == "FILE_IMPORT"
+        assert DataSourceType.SELF_HOSTED == "SELF_HOSTED"
 
 
 class TestDataSourceStatus:
@@ -31,37 +31,37 @@ class TestDataSourceStatus:
         assert DataSourceStatus.ERROR == "ERROR"
 
 
-class TestScrapingRuleType:
+class TestTargetType:
     def test_enum_values(self):
-        assert ScrapingRuleType.ORDERS == "ORDERS"
-        assert ScrapingRuleType.PRODUCTS == "PRODUCTS"
-        assert ScrapingRuleType.USERS == "USERS"
-        assert ScrapingRuleType.COMMENTS == "COMMENTS"
+        assert TargetType.ORDER_FULFILLMENT == "ORDER_FULFILLMENT"
+        assert TargetType.PRODUCT == "PRODUCT"
+        assert TargetType.CUSTOMER == "CUSTOMER"
+        assert TargetType.CONTENT_VIDEO == "CONTENT_VIDEO"
 
 
 class TestDataSourceCreate:
     def test_valid_creation(self):
         ds = DataSourceCreate(
             name="Test Data Source",
-            type=DataSourceType.DOUYIN_API,
+            type=DataSourceType.DOUYIN_SHOP,
             config={"api_key": "test_key"},
             description="Test description",
         )
         assert ds.name == "Test Data Source"
-        assert ds.type == DataSourceType.DOUYIN_API
+        assert ds.type == DataSourceType.DOUYIN_SHOP
         assert ds.config == {"api_key": "test_key"}
         assert ds.status == DataSourceStatus.ACTIVE
         assert ds.description == "Test description"
 
     def test_default_values(self):
-        ds = DataSourceCreate(name="Test", type=DataSourceType.DATABASE)
+        ds = DataSourceCreate(name="Test", type=DataSourceType.SELF_HOSTED)
         assert ds.config == {}
         assert ds.status == DataSourceStatus.ACTIVE
         assert ds.description is None
 
     def test_name_required(self):
         with pytest.raises(ValidationError) as exc_info:
-            DataSourceCreate(type=DataSourceType.DOUYIN_API)
+            DataSourceCreate(type=DataSourceType.DOUYIN_SHOP)
         assert "name" in str(exc_info.value)
 
     def test_type_required(self):
@@ -71,19 +71,19 @@ class TestDataSourceCreate:
 
     def test_name_min_length(self):
         with pytest.raises(ValidationError) as exc_info:
-            DataSourceCreate(name="", type=DataSourceType.DOUYIN_API)
+            DataSourceCreate(name="", type=DataSourceType.DOUYIN_SHOP)
         assert "name" in str(exc_info.value)
 
     def test_name_max_length(self):
         with pytest.raises(ValidationError) as exc_info:
-            DataSourceCreate(name="x" * 101, type=DataSourceType.DOUYIN_API)
+            DataSourceCreate(name="x" * 101, type=DataSourceType.DOUYIN_SHOP)
         assert "name" in str(exc_info.value)
 
     def test_description_max_length(self):
         with pytest.raises(ValidationError) as exc_info:
             DataSourceCreate(
                 name="Test",
-                type=DataSourceType.DOUYIN_API,
+                type=DataSourceType.DOUYIN_SHOP,
                 description="x" * 501,
             )
         assert "description" in str(exc_info.value)
@@ -157,7 +157,7 @@ class TestScrapingRuleCreate:
         rule = ScrapingRuleCreate(
             data_source_id=1,
             name="Test Rule",
-            rule_type=ScrapingRuleType.ORDERS,
+            target_type=TargetType.ORDER_FULFILLMENT,
             config={"param": "value"},
             schedule="0 */6 * * *",
             is_active=True,
@@ -165,7 +165,7 @@ class TestScrapingRuleCreate:
         )
         assert rule.data_source_id == 1
         assert rule.name == "Test Rule"
-        assert rule.rule_type == ScrapingRuleType.ORDERS
+        assert rule.target_type == TargetType.ORDER_FULFILLMENT
         assert rule.config == {"param": "value"}
         assert rule.schedule == "0 */6 * * *"
         assert rule.is_active is True
@@ -175,7 +175,7 @@ class TestScrapingRuleCreate:
         rule = ScrapingRuleCreate(
             data_source_id=1,
             name="Test Rule",
-            rule_type=ScrapingRuleType.PRODUCTS,
+            target_type=TargetType.PRODUCT,
         )
         assert rule.config == {}
         assert rule.schedule is None
@@ -184,30 +184,34 @@ class TestScrapingRuleCreate:
 
     def test_data_source_id_required(self):
         with pytest.raises(ValidationError) as exc_info:
-            ScrapingRuleCreate(name="Test", rule_type=ScrapingRuleType.ORDERS)
+            ScrapingRuleCreate(name="Test", target_type=TargetType.ORDER_FULFILLMENT)
         assert "data_source_id" in str(exc_info.value)
 
     def test_name_required(self):
         with pytest.raises(ValidationError) as exc_info:
-            ScrapingRuleCreate(data_source_id=1, rule_type=ScrapingRuleType.ORDERS)
+            ScrapingRuleCreate(
+                data_source_id=1, target_type=TargetType.ORDER_FULFILLMENT
+            )
         assert "name" in str(exc_info.value)
 
-    def test_rule_type_required(self):
+    def test_target_type_required(self):
         with pytest.raises(ValidationError) as exc_info:
             ScrapingRuleCreate(data_source_id=1, name="Test")
-        assert "rule_type" in str(exc_info.value)
+        assert "target_type" in str(exc_info.value)
 
     def test_name_min_length(self):
         with pytest.raises(ValidationError) as exc_info:
             ScrapingRuleCreate(
-                data_source_id=1, name="", rule_type=ScrapingRuleType.ORDERS
+                data_source_id=1, name="", target_type=TargetType.ORDER_FULFILLMENT
             )
         assert "name" in str(exc_info.value)
 
     def test_name_max_length(self):
         with pytest.raises(ValidationError) as exc_info:
             ScrapingRuleCreate(
-                data_source_id=1, name="x" * 101, rule_type=ScrapingRuleType.ORDERS
+                data_source_id=1,
+                name="x" * 101,
+                target_type=TargetType.ORDER_FULFILLMENT,
             )
         assert "name" in str(exc_info.value)
 
@@ -216,7 +220,7 @@ class TestScrapingRuleCreate:
             ScrapingRuleCreate(
                 data_source_id=1,
                 name="Test",
-                rule_type=ScrapingRuleType.ORDERS,
+                target_type=TargetType.ORDER_FULFILLMENT,
                 schedule="x" * 101,
             )
         assert "schedule" in str(exc_info.value)
@@ -226,7 +230,7 @@ class TestScrapingRuleCreate:
             ScrapingRuleCreate(
                 data_source_id=1,
                 name="Test",
-                rule_type=ScrapingRuleType.ORDERS,
+                target_type=TargetType.ORDER_FULFILLMENT,
                 description="x" * 501,
             )
         assert "description" in str(exc_info.value)
@@ -282,7 +286,7 @@ class TestScrapingRuleResponse:
             id=1,
             data_source_id=2,
             name="Test Rule",
-            rule_type=ScrapingRuleType.COMMENTS,
+            target_type=TargetType.CONTENT_VIDEO,
             config={"param": "value"},
             schedule="0 0 * * *",
             is_active=True,
@@ -293,7 +297,7 @@ class TestScrapingRuleResponse:
         assert rule.id == 1
         assert rule.data_source_id == 2
         assert rule.name == "Test Rule"
-        assert rule.rule_type == ScrapingRuleType.COMMENTS
+        assert rule.target_type == TargetType.CONTENT_VIDEO
         assert rule.created_at == now
         assert rule.updated_at == now
 
@@ -305,12 +309,12 @@ class TestSchemaSerialization:
     def test_datasource_create_serialization(self):
         ds = DataSourceCreate(
             name="Test",
-            type=DataSourceType.DATABASE,
+            type=DataSourceType.SELF_HOSTED,
             config={"host": "localhost", "port": 5432},
         )
         json_str = ds.model_dump_json()
         assert "Test" in json_str
-        assert "DATABASE" in json_str
+        assert "SELF_HOSTED" in json_str
         assert "localhost" in json_str
 
     def test_scraping_rule_response_serialization(self):
@@ -319,7 +323,7 @@ class TestSchemaSerialization:
             id=1,
             data_source_id=2,
             name="Test Rule",
-            rule_type=ScrapingRuleType.ORDERS,
+            target_type=TargetType.ORDER_FULFILLMENT,
             config={},
             schedule=None,
             is_active=True,
@@ -330,4 +334,4 @@ class TestSchemaSerialization:
         data = rule.model_dump()
         assert data["id"] == 1
         assert data["name"] == "Test Rule"
-        assert data["rule_type"] == "ORDERS"
+        assert data["target_type"] == "ORDER_FULFILLMENT"

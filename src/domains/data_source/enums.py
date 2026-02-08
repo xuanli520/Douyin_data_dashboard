@@ -1,25 +1,27 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class DataSourceStatus(str, Enum):
+class DataSourceStatus(StrEnum):
     ACTIVE = "ACTIVE"
     INACTIVE = "INACTIVE"
     ERROR = "ERROR"
 
 
-class DataSourceType(str, Enum):
+class DataSourceType(StrEnum):
+    DOUYIN_API = "DOUYIN_API"
     DOUYIN_SHOP = "DOUYIN_SHOP"
     DOUYIN_APP = "DOUYIN_APP"
     FILE_IMPORT = "FILE_IMPORT"
+    FILE_UPLOAD = "FILE_UPLOAD"
     SELF_HOSTED = "SELF_HOSTED"
 
 
-class ScrapingRuleStatus(str, Enum):
+class ScrapingRuleStatus(StrEnum):
     ACTIVE = "ACTIVE"
     INACTIVE = "INACTIVE"
 
 
-class TargetType(str, Enum):
+class TargetType(StrEnum):
     """抖店罗盘主题类型"""
 
     SHOP_OVERVIEW = "SHOP_OVERVIEW"
@@ -33,7 +35,7 @@ class TargetType(str, Enum):
     ADS = "ADS"
 
 
-class Granularity(str, Enum):
+class Granularity(StrEnum):
     """时间粒度"""
 
     HOUR = "HOUR"
@@ -42,14 +44,14 @@ class Granularity(str, Enum):
     MONTH = "MONTH"
 
 
-class IncrementalMode(str, Enum):
+class IncrementalMode(StrEnum):
     """增量方式"""
 
     BY_DATE = "BY_DATE"
     BY_CURSOR = "BY_CURSOR"
 
 
-class DataLatency(str, Enum):
+class DataLatency(StrEnum):
     """数据延迟假设"""
 
     REALTIME = "REALTIME"
