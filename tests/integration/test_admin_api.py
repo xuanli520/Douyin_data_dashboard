@@ -1,4 +1,5 @@
 import pytest
+from fastapi_pagination import add_pagination
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
@@ -150,7 +151,6 @@ async def admin_token(async_engine, admin_user):
 async def test_client(async_engine, test_session, admin_token):
     from contextlib import asynccontextmanager
     from fastapi import FastAPI
-    from fastapi_pagination import add_pagination
     from starlette.middleware import Middleware
 
     from src.api import (
@@ -240,7 +240,11 @@ class TestAdminUsersAPI:
         data = response.json()
         assert data["code"] == 200
         assert "items" in data["data"]
-        assert "total" in data["data"]
+        assert "meta" in data["data"]
+        assert "total" in data["data"]["meta"]
+        assert "page" in data["data"]["meta"]
+        assert "size" in data["data"]["meta"]
+        assert "pages" in data["data"]["meta"]
 
     async def test_list_users_with_filters(self, test_client):
         """Test user list with filters"""
@@ -337,7 +341,7 @@ class TestUserSearch:
         response = await test_client.get("/api/admin/users?username=admin")
         assert response.status_code == 200
         data = response.json()
-        assert data["data"]["total"] >= 1
+        assert data["data"]["meta"]["total"] >= 1
 
     async def test_filter_by_status(self, test_client):
         """Test filtering by status"""
@@ -357,7 +361,6 @@ class TestUnauthorizedAccess:
         """Test that unauthorized access returns 401"""
         from contextlib import asynccontextmanager
         from fastapi import FastAPI
-        from fastapi_pagination import add_pagination
         from starlette.middleware import Middleware
 
         from src.api import (
@@ -446,7 +449,6 @@ class TestForbiddenAccess:
         """Test that forbidden access returns 403 for users without permission"""
         from contextlib import asynccontextmanager
         from fastapi import FastAPI
-        from fastapi_pagination import add_pagination
         from starlette.middleware import Middleware
 
         from src.api import (

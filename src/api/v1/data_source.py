@@ -12,7 +12,7 @@ from src.domains.data_source.schemas import (
     DataSourceType,
     DataSourceUpdate,
     ScrapingRuleCreate,
-    ScrapingRuleListResponse,
+    ScrapingRuleListItem,
     ScrapingRuleResponse,
     ScrapingRuleType,
     ScrapingRuleUpdate,
@@ -23,30 +23,32 @@ from src.domains.data_source.services import (
     get_data_source_service,
 )
 from src.responses.base import Response
+from src.shared.schemas import PaginatedData, PaginationParams
 
 router = APIRouter(prefix="/data-sources", tags=["data-source"])
 scraping_rule_router = APIRouter(prefix="/scraping-rules", tags=["scraping-rule"])
 
 
-@router.get("", response_model=Response[dict[str, Any]])
+@router.get("", response_model=PaginatedData[DataSourceResponse])
 async def list_data_sources(
-    page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
+    pagination: PaginationParams = Depends(),
     status: DataSourceStatus | None = Query(None),
     source_type: DataSourceType | None = Query(None),
     name: str | None = Query(None, max_length=100),
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
     _=Depends(require_permissions(DataSourcePermission.VIEW, bypass_superuser=True)),
-) -> Response[dict[str, Any]]:
+) -> PaginatedData[DataSourceResponse]:
     ds_list, total = await service.list_paginated(
-        page=page,
-        size=size,
+        page=pagination.page,
+        size=pagination.size,
         status=status,
         source_type=source_type,
         name=name,
     )
-    return Response.success(data={"items": ds_list, "total": total})
+    return PaginatedData.create(
+        items=ds_list, total=total, page=pagination.page, size=pagination.size
+    )
 
 
 @router.post("", response_model=Response[DataSourceResponse])
@@ -149,10 +151,9 @@ async def create_scraping_rule(
     return Response.success(data=rule)
 
 
-@scraping_rule_router.get("", response_model=Response[ScrapingRuleListResponse])
+@scraping_rule_router.get("", response_model=PaginatedData[ScrapingRuleListItem])
 async def list_scraping_rules(
-    page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
+    pagination: PaginationParams = Depends(),
     name: str | None = Query(None, max_length=100),
     rule_type: ScrapingRuleType | None = Query(None),
     status: ScrapingRuleStatus | None = Query(None),
@@ -160,24 +161,17 @@ async def list_scraping_rules(
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
     _=Depends(require_permissions(DataSourcePermission.VIEW, bypass_superuser=True)),
-) -> Response[ScrapingRuleListResponse]:
+) -> PaginatedData[ScrapingRuleListItem]:
     rules, total = await service.list_scraping_rules_paginated(
-        page=page,
-        size=size,
+        page=pagination.page,
+        size=pagination.size,
         name=name,
         rule_type=rule_type,
         status=status,
         data_source_id=data_source_id,
     )
-    pages = (total + size - 1) // size
-    return Response.success(
-        data=ScrapingRuleListResponse(
-            items=rules,
-            total=total,
-            page=page,
-            size=size,
-            pages=pages,
-        )
+    return PaginatedData.create(
+        items=rules, total=total, page=pagination.page, size=pagination.size
     )
 
 
