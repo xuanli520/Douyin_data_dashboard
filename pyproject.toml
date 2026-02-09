@@ -6,6 +6,7 @@ dependencies = [
     "aiosqlite>=0.21.0",
     "alembic>=1.17.2",
     "asyncpg>=0.31.0",
+    "croniter>=5.0.1",
     "fastapi>=0.115.0",
     "fastapi-pagination[sqlalchemy]>=0.15.3",
     "fastapi-users[sqlalchemy]>=15.0.1",

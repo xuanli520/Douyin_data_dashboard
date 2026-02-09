@@ -107,5 +107,6 @@ class ScrapingRule(SQLModel, TimestampMixin, table=True):
         sa_type=DateTime(timezone=True),
     )
     last_execution_id: str | None = Field(default=None, max_length=100)
+    extra_config: dict | None = Field(default=None, sa_type=JSON)
 
     data_source: "DataSource" = Relationship(back_populates="scraping_rules")
