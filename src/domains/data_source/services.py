@@ -16,6 +16,7 @@ from src.domains.data_source.repository import (
     DataSourceRepository,
     ScrapingRuleRepository,
 )
+from src.domains.data_source.config_mapper import ScrapingRuleConfigMapper
 from src.domains.data_source.schemas import (
     DataSourceCreate,
     DataSourceResponse,
@@ -413,8 +414,8 @@ class DataSourceService:
             "target_type": data.target_type,
             "description": data.description,
             "schedule": {"cron": data.schedule} if data.schedule else None,
-            **data.config,
         }
+        rule_data.update(ScrapingRuleConfigMapper.map_to_model_fields(data.config))
 
         rule = await self.rule_repo.create(rule_data)
         await self.session.commit()
@@ -460,7 +461,7 @@ class DataSourceService:
             else 0,
             name=rule.name,
             target_type=rule.target_type,
-            config=rule.filters or {},
+            config=ScrapingRuleConfigMapper.build_config_from_model(rule),
             schedule=rule.schedule.get("cron") if rule.schedule else None,
             is_active=rule.status == ScrapingRuleStatus.ACTIVE,
             description=rule.description,
@@ -500,7 +501,9 @@ class DataSourceService:
                 else ScrapingRuleStatus.INACTIVE
             )
         if data.config is not None:
-            update_data.update(data.config)
+            update_data.update(
+                ScrapingRuleConfigMapper.map_to_model_fields(data.config)
+            )
 
         rule = await self.rule_repo.update(rule_id, update_data)
         await self.session.commit()
@@ -591,7 +594,7 @@ class DataSourceService:
             else 0,
             name=rule.name,
             target_type=rule.target_type,
-            config=rule.filters or {},
+            config=ScrapingRuleConfigMapper.build_config_from_model(rule),
             schedule=rule.schedule.get("cron") if rule.schedule else None,
             is_active=rule.status == ScrapingRuleStatus.ACTIVE,
             description=rule.description,
