@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import JSON, Column, DateTime, ForeignKey, Text
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, String, Text
 from sqlmodel import Field, SQLModel
 
 from src.shared.mixins import now
@@ -50,10 +50,16 @@ class AuditLog(SQLModel, table=True):
         default=None,
         sa_column=Column(ForeignKey("users.id", ondelete="SET NULL"), index=True),
     )
-    action: AuditAction = Field(nullable=False, max_length=64, index=True)
+    action: AuditAction = Field(
+        max_length=64,
+        sa_column=Column(String(64), nullable=False, index=True),
+    )
     resource_type: str | None = Field(default=None, max_length=64)
     resource_id: str | None = Field(default=None, sa_column=Column(Text))
-    result: AuditResult = Field(nullable=False, max_length=32)
+    result: AuditResult = Field(
+        max_length=32,
+        sa_column=Column(String(32), nullable=False),
+    )
     user_agent: str | None = Field(default=None, sa_column=Column(Text))
     ip: str | None = Field(default=None, max_length=45)
     extra: dict[str, Any] | None = Field(
