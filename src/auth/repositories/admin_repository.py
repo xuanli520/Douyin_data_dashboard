@@ -1,4 +1,4 @@
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -169,7 +169,7 @@ class AdminRepository(BaseRepository):
 
                 if data.role_ids is not None:
                     await self.session.execute(
-                        UserRole.__table__.delete().where(UserRole.user_id == user_id)
+                        delete(UserRole).where(UserRole.user_id == user_id)
                     )
                     for rid in set(data.role_ids):
                         self.session.add(UserRole(user_id=user_id, role_id=rid))
@@ -211,7 +211,7 @@ class AdminRepository(BaseRepository):
 
         async def _delete():
             await self.session.execute(
-                UserRole.__table__.delete().where(UserRole.user_id == user_id)
+                delete(UserRole).where(UserRole.user_id == user_id)
             )
             await self.session.delete(user)
 
@@ -225,7 +225,7 @@ class AdminRepository(BaseRepository):
 
         async def _assign():
             await self.session.execute(
-                UserRole.__table__.delete().where(UserRole.user_id == user_id)
+                delete(UserRole).where(UserRole.user_id == user_id)
             )
             for rid in set(role_ids):
                 self.session.add(UserRole(user_id=user_id, role_id=rid))
@@ -321,7 +321,7 @@ class AdminRepository(BaseRepository):
         async def _delete():
             role.permissions = []
             await self.session.execute(
-                UserRole.__table__.delete().where(UserRole.role_id == role_id)
+                delete(UserRole).where(UserRole.role_id == role_id)
             )
             await self.session.delete(role)
 
@@ -340,9 +340,7 @@ class AdminRepository(BaseRepository):
 
         async def _assign():
             await self.session.execute(
-                RolePermission.__table__.delete().where(
-                    RolePermission.role_id == role_id
-                )
+                delete(RolePermission).where(RolePermission.role_id == role_id)
             )
             for pid in permission_ids:
                 self.session.add(RolePermission(role_id=role_id, permission_id=pid))
@@ -386,17 +384,17 @@ class AdminRepository(BaseRepository):
         total = (await self.session.execute(select(func.count(User.id)))).scalar_one()
         active = (
             await self.session.execute(
-                select(func.count(User.id)).where(User.is_active)
+                select(func.count(User.id)).where(User.is_active.is_(True))
             )
         ).scalar_one()
         inactive = (
             await self.session.execute(
-                select(func.count(User.id)).where(not User.is_active)
+                select(func.count(User.id)).where(User.is_active.is_(False))
             )
         ).scalar_one()
         superusers = (
             await self.session.execute(
-                select(func.count(User.id)).where(User.is_superuser)
+                select(func.count(User.id)).where(User.is_superuser.is_(True))
             )
         ).scalar_one()
         return {
