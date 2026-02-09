@@ -1,13 +1,22 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from croniter import croniter
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.domains.data_source.enums import (
     DataSourceStatus,
     DataSourceType,
     TargetType,
 )
+
+
+def validate_cron(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not croniter.is_valid(value):
+        raise ValueError("Invalid cron expression")
+    return value
 
 
 class DataSourceCreate(BaseModel):
@@ -46,6 +55,11 @@ class ScrapingRuleCreate(BaseModel):
     is_active: bool = True
     description: str | None = Field(None, max_length=500)
 
+    @field_validator("schedule", mode="before")
+    @classmethod
+    def validate_schedule(cls, v: str | None) -> str | None:
+        return validate_cron(v)
+
 
 class ScrapingRuleUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=100)
@@ -53,6 +67,11 @@ class ScrapingRuleUpdate(BaseModel):
     schedule: str | None = Field(None, max_length=100)
     is_active: bool | None = None
     description: str | None = Field(None, max_length=500)
+
+    @field_validator("schedule", mode="before")
+    @classmethod
+    def validate_schedule(cls, v: str | None) -> str | None:
+        return validate_cron(v)
 
 
 class ScrapingRuleResponse(BaseModel):

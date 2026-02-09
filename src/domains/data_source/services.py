@@ -264,7 +264,11 @@ class DataSourceService:
         }
 
         ds = await self.ds_repo.create(ds_data)
-        await self.session.commit()
+        try:
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
         return self._build_data_source_response(ds)
 
     async def get_by_id(self, ds_id: int) -> DataSourceResponse:
@@ -323,12 +327,20 @@ class DataSourceService:
             )
 
         ds = await self.ds_repo.update(ds_id, update_data)
-        await self.session.commit()
+        try:
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
         return self._build_data_source_response(ds)
 
     async def delete(self, ds_id: int) -> None:
         await self.ds_repo.delete(ds_id)
-        await self.session.commit()
+        try:
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
 
     async def activate(self, ds_id: int, user_id: int) -> DataSourceResponse:
         ds = await self.ds_repo.get_by_id(ds_id)
@@ -350,7 +362,11 @@ class DataSourceService:
                 "last_error_msg": None,
             },
         )
-        await self.session.commit()
+        try:
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
         return self._build_data_source_response(ds)
 
     async def deactivate(self, ds_id: int, user_id: int) -> DataSourceResponse:
@@ -372,7 +388,11 @@ class DataSourceService:
                 "updated_by_id": user_id,
             },
         )
-        await self.session.commit()
+        try:
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
         return self._build_data_source_response(ds)
 
     async def validate_connection(self, ds_id: int) -> dict[str, Any]:
@@ -386,11 +406,19 @@ class DataSourceService:
 
         if is_valid:
             await self.ds_repo.update_last_used(ds_id)
-            await self.session.commit()
+            try:
+                await self.session.commit()
+            except Exception:
+                await self.session.rollback()
+                raise
             return {"valid": True, "message": message}
         else:
             await self.ds_repo.record_error(ds_id, message)
-            await self.session.commit()
+            try:
+                await self.session.commit()
+            except Exception:
+                await self.session.rollback()
+                raise
             return {"valid": False, "message": message}
 
     async def create_scraping_rule(
@@ -418,7 +446,11 @@ class DataSourceService:
         rule_data.update(ScrapingRuleConfigMapper.map_to_model_fields(data.config))
 
         rule = await self.rule_repo.create(rule_data)
-        await self.session.commit()
+        try:
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
         return self._build_scraping_rule_response(rule)
 
     async def list_scraping_rules(self, ds_id: int) -> list[ScrapingRuleResponse]:
@@ -506,12 +538,20 @@ class DataSourceService:
             )
 
         rule = await self.rule_repo.update(rule_id, update_data)
-        await self.session.commit()
+        try:
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
         return self._build_scraping_rule_response(rule)
 
     async def delete_scraping_rule(self, rule_id: int) -> None:
         await self.rule_repo.delete(rule_id)
-        await self.session.commit()
+        try:
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
 
     async def trigger_collection(
         self, ds_id: int, rule_id: int | None = None
