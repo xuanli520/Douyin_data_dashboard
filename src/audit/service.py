@@ -4,7 +4,7 @@ from fastapi import Depends, Request
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.audit.schemas import AuditAction, AuditLog, AuditResult
+from src.audit.schemas import AuditLog
 from src.session import get_session
 
 
@@ -14,8 +14,8 @@ class AuditRepository:
 
     async def create_audit_log(
         self,
-        action: AuditAction,
-        result: AuditResult,
+        action: str,
+        result: str,
         actor_id: int | None = None,
         resource_type: str | None = None,
         resource_id: str | None = None,
@@ -36,11 +36,7 @@ class AuditRepository:
             extra=extra,
         )
         self.session.add(audit_log)
-        try:
-            await self.session.commit()
-        except Exception:
-            await self.session.rollback()
-            raise
+        await self.session.commit()
 
 
 class AuditService:
@@ -49,8 +45,8 @@ class AuditService:
 
     async def log(
         self,
-        action: AuditAction,
-        result: AuditResult,
+        action: str,
+        result: str,
         actor_id: int | None = None,
         resource_type: str | None = None,
         resource_id: str | None = None,
