@@ -247,9 +247,7 @@ class AdminRepository(BaseRepository):
             await self.session.refresh(role)
             return role
         except IntegrityError as e:
-            raise BusinessException(
-                ErrorCode.ROLE_NAME_CONFLICT, "Role name already exists"
-            ) from e
+            _raise_integrity_error(e)
 
     async def update_role(self, role_id: int, data) -> Role:
         role = await self.get_role_by_id(role_id)
@@ -272,9 +270,7 @@ class AdminRepository(BaseRepository):
             await self.session.refresh(role)
             return role
         except IntegrityError as e:
-            raise BusinessException(
-                ErrorCode.ROLE_NAME_CONFLICT, "Role name already exists"
-            ) from e
+            _raise_integrity_error(e)
 
     async def delete_role(self, role_id: int) -> None:
         role = await self.get_role_by_id(role_id)

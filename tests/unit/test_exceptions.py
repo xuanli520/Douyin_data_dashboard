@@ -115,3 +115,16 @@ def test_raise_integrity_error_unknown_sqlstate():
     with pytest.raises(BusinessException) as exc_info:
         _raise_integrity_error(MockExc())
     assert exc_info.value.code == SrcErrorCode.DATABASE_ERROR
+
+
+def test_raise_integrity_error_role_name_conflict():
+    class MockOrig:
+        sqlstate = "23505"
+        constraint_name = "ix_roles_name"
+
+    class MockExc:
+        orig = MockOrig()
+
+    with pytest.raises(BusinessException) as exc_info:
+        _raise_integrity_error(MockExc())
+    assert exc_info.value.code == SrcErrorCode.ROLE_NAME_CONFLICT

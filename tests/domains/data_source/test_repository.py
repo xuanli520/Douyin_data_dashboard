@@ -89,8 +89,8 @@ class TestDataSourceRepositoryIntegration:
                         Exception("unique constraint failed: name"),
                     )
                     error.orig = MagicMock()
-                    error.orig.diag = MagicMock()
-                    error.orig.diag.constraint_name = "uq_data_sources_name"
+                    error.orig.constraint_name = "ix_data_sources_name"
+                    error.orig.sqlstate = "23505"
                     raise error
                 original_add(instance)
 

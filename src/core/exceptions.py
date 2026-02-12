@@ -9,6 +9,8 @@ CONSTRAINT_MAPPING = {
     "ix_users_username": ErrorCode.USER_USERNAME_CONFLICT,
     "ix_users_email": ErrorCode.USER_EMAIL_CONFLICT,
     "ix_users_phone": ErrorCode.USER_PHONE_CONFLICT,
+    "ix_roles_name": ErrorCode.ROLE_NAME_CONFLICT,
+    "ix_data_sources_name": ErrorCode.DATASOURCE_NAME_CONFLICT,
 }
 
 ERROR_CODE_MESSAGES = {
@@ -44,6 +46,8 @@ def _raise_integrity_error(e: IntegrityError):
             ErrorCode.USER_USERNAME_CONFLICT: "username",
             ErrorCode.USER_EMAIL_CONFLICT: "email",
             ErrorCode.USER_PHONE_CONFLICT: "phone",
+            ErrorCode.ROLE_NAME_CONFLICT: "role name",
+            ErrorCode.DATASOURCE_NAME_CONFLICT: "data source name",
         }
         field_name = field_name_map.get(error_code, "field")
         msg = f"{field_name} already exists"
