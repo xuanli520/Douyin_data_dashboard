@@ -296,3 +296,6 @@ k8s/secret.yaml
 
 # Copier Stuff
 **/.copier-answers.yml
+
+# Git worktrees
+.worktrees/

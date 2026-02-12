@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.auth.models import User, Role, Permission, UserRole, RolePermission
+from src.core.exceptions import _raise_integrity_error
 from src.exceptions import BusinessException
 from src.shared.errors import ErrorCode
 from src.shared.repository import BaseRepository
@@ -113,24 +114,7 @@ class AdminRepository(BaseRepository):
         try:
             await self._tx(_create)
         except IntegrityError as e:
-            constraint_name = (
-                str(e.orig.diag.constraint_name) if e.orig and e.orig.diag else ""
-            )
-            if "username" in constraint_name:
-                raise BusinessException(
-                    ErrorCode.USER_USERNAME_CONFLICT, "Username already exists"
-                ) from e
-            elif "email" in constraint_name:
-                raise BusinessException(
-                    ErrorCode.USER_EMAIL_CONFLICT, "Email already exists"
-                ) from e
-            elif "phone" in constraint_name:
-                raise BusinessException(
-                    ErrorCode.USER_PHONE_CONFLICT, "Phone already exists"
-                ) from e
-            raise BusinessException(
-                ErrorCode.USER_USERNAME_CONFLICT, "User unique conflict"
-            ) from e
+            _raise_integrity_error(e)
 
         stmt = select(User).options(selectinload(User.roles)).where(User.id == user.id)
         return (await self.session.execute(stmt)).scalar_one()
@@ -182,27 +166,7 @@ class AdminRepository(BaseRepository):
             user = (await self.session.execute(stmt)).scalar_one()
             return user
         except IntegrityError as e:
-            constraint_name = (
-                str(e.orig.diag.constraint_name) if e.orig and e.orig.diag else ""
-            )
-            if "username" in constraint_name:
-                raise BusinessException(
-                    ErrorCode.USER_USERNAME_CONFLICT, "Username already exists"
-                ) from e
-            elif "email" in constraint_name:
-                raise BusinessException(
-                    ErrorCode.USER_EMAIL_CONFLICT, "Email already exists"
-                ) from e
-            elif "phone" in constraint_name:
-                raise BusinessException(
-                    ErrorCode.USER_PHONE_CONFLICT, "Phone already exists"
-                ) from e
-            raise BusinessException(
-                ErrorCode.USER_USERNAME_CONFLICT, "User unique conflict"
-            ) from e
-
-        stmt = select(User).options(selectinload(User.roles)).where(User.id == user_id)
-        return (await self.session.execute(stmt)).scalar_one()
+            _raise_integrity_error(e)
 
     async def delete_user(self, user_id: int) -> None:
         user = await self.get_user_by_id(user_id)
@@ -215,7 +179,10 @@ class AdminRepository(BaseRepository):
             )
             await self.session.delete(user)
 
-        await self._tx(_delete)
+        try:
+            await self._tx(_delete)
+        except IntegrityError as e:
+            _raise_integrity_error(e)
 
     async def assign_user_roles(self, user_id: int, role_ids: list[int]) -> None:
         user = await self.get_user_by_id(user_id)
@@ -280,9 +247,7 @@ class AdminRepository(BaseRepository):
             await self.session.refresh(role)
             return role
         except IntegrityError as e:
-            raise BusinessException(
-                ErrorCode.ROLE_NAME_CONFLICT, "Role name already exists"
-            ) from e
+            _raise_integrity_error(e)
 
     async def update_role(self, role_id: int, data) -> Role:
         role = await self.get_role_by_id(role_id)
@@ -305,9 +270,7 @@ class AdminRepository(BaseRepository):
             await self.session.refresh(role)
             return role
         except IntegrityError as e:
-            raise BusinessException(
-                ErrorCode.ROLE_NAME_CONFLICT, "Role name already exists"
-            ) from e
+            _raise_integrity_error(e)
 
     async def delete_role(self, role_id: int) -> None:
         role = await self.get_role_by_id(role_id)

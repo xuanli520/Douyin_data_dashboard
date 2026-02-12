@@ -11,6 +11,7 @@ from src.domains.data_source.enums import (
     ScrapingRuleStatus,
     TargetType,
 )
+from src.core.exceptions import _raise_integrity_error
 from src.domains.data_source.models import DataSource, ScrapingRule
 from src.exceptions import BusinessException
 from src.shared.errors import ErrorCode
@@ -49,12 +50,7 @@ class DataSourceRepository(BaseRepository):
             await self.session.refresh(data_source)
             return data_source
         except IntegrityError as e:
-            await self.session.rollback()
-            await self._handle_integrity_error(
-                e,
-                {"name": ErrorCode.DATASOURCE_NAME_CONFLICT},
-                (ErrorCode.DATASOURCE_NAME_CONFLICT, "DataSource name already exists"),
-            )
+            _raise_integrity_error(e)
 
     async def get_by_id(
         self, data_source_id: int, include_rules: bool = False
@@ -80,12 +76,7 @@ class DataSourceRepository(BaseRepository):
             await self._flush()
             return data_source
         except IntegrityError as e:
-            await self.session.rollback()
-            await self._handle_integrity_error(
-                e,
-                {"name": ErrorCode.DATASOURCE_NAME_CONFLICT},
-                (ErrorCode.DATASOURCE_NAME_CONFLICT, "DataSource name already exists"),
-            )
+            _raise_integrity_error(e)
 
     async def delete(self, data_source_id: int) -> None:
         data_source = await self.get_by_id(data_source_id)
@@ -93,8 +84,11 @@ class DataSourceRepository(BaseRepository):
             raise BusinessException(
                 ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
             )
-        await self._delete(data_source)
-        await self.session.flush()
+        try:
+            await self._delete(data_source)
+            await self.session.flush()
+        except IntegrityError as e:
+            _raise_integrity_error(e)
 
     async def get_paginated(
         self,
