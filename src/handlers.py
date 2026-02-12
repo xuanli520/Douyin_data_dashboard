@@ -60,35 +60,13 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def handle_integrity_error(
         request: Request, exc: IntegrityError
     ) -> JSONResponse:
-        error_msg = str(exc.orig)
-        if "username" in error_msg.lower():
-            response = Response.error(
-                code=int(ErrorCode.USER_USERNAME_CONFLICT),
-                msg="Username already registered",
-                data=None,
-            )
-            return JSONResponse(content=response.model_dump(), status_code=409)
-        elif "email" in error_msg.lower():
-            response = Response.error(
-                code=int(ErrorCode.USER_EMAIL_CONFLICT),
-                msg="Email already registered",
-                data=None,
-            )
-            return JSONResponse(content=response.model_dump(), status_code=409)
-        elif "phone" in error_msg.lower():
-            response = Response.error(
-                code=int(ErrorCode.USER_PHONE_CONFLICT),
-                msg="Phone already registered",
-                data=None,
-            )
-            return JSONResponse(content=response.model_dump(), status_code=409)
-
+        logger.warning("未捕获的 IntegrityError: %s", exc.orig)
         response = Response.error(
-            code=409,
-            msg="Database integrity error",
-            data={"error_type": "IntegrityError"},
+            code=int(ErrorCode.DATABASE_ERROR),
+            msg="Database constraint error",
+            data=None,
         )
-        return JSONResponse(content=response.model_dump(), status_code=409)
+        return JSONResponse(content=response.model_dump(), status_code=500)
 
     @app.exception_handler(Exception)
     async def handle_fallback_exception(
