@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.auth.models import User, Role, Permission, UserRole, RolePermission
+from src.core.exceptions import _raise_integrity_error
 from src.exceptions import BusinessException
 from src.shared.errors import ErrorCode
 from src.shared.repository import BaseRepository
@@ -113,24 +114,7 @@ class AdminRepository(BaseRepository):
         try:
             await self._tx(_create)
         except IntegrityError as e:
-            constraint_name = (
-                str(e.orig.diag.constraint_name) if e.orig and e.orig.diag else ""
-            )
-            if "username" in constraint_name:
-                raise BusinessException(
-                    ErrorCode.USER_USERNAME_CONFLICT, "Username already exists"
-                ) from e
-            elif "email" in constraint_name:
-                raise BusinessException(
-                    ErrorCode.USER_EMAIL_CONFLICT, "Email already exists"
-                ) from e
-            elif "phone" in constraint_name:
-                raise BusinessException(
-                    ErrorCode.USER_PHONE_CONFLICT, "Phone already exists"
-                ) from e
-            raise BusinessException(
-                ErrorCode.USER_USERNAME_CONFLICT, "User unique conflict"
-            ) from e
+            _raise_integrity_error(e)
 
         stmt = select(User).options(selectinload(User.roles)).where(User.id == user.id)
         return (await self.session.execute(stmt)).scalar_one()
@@ -182,24 +166,7 @@ class AdminRepository(BaseRepository):
             user = (await self.session.execute(stmt)).scalar_one()
             return user
         except IntegrityError as e:
-            constraint_name = (
-                str(e.orig.diag.constraint_name) if e.orig and e.orig.diag else ""
-            )
-            if "username" in constraint_name:
-                raise BusinessException(
-                    ErrorCode.USER_USERNAME_CONFLICT, "Username already exists"
-                ) from e
-            elif "email" in constraint_name:
-                raise BusinessException(
-                    ErrorCode.USER_EMAIL_CONFLICT, "Email already exists"
-                ) from e
-            elif "phone" in constraint_name:
-                raise BusinessException(
-                    ErrorCode.USER_PHONE_CONFLICT, "Phone already exists"
-                ) from e
-            raise BusinessException(
-                ErrorCode.USER_USERNAME_CONFLICT, "User unique conflict"
-            ) from e
+            _raise_integrity_error(e)
 
         stmt = select(User).options(selectinload(User.roles)).where(User.id == user_id)
         return (await self.session.execute(stmt)).scalar_one()
