@@ -57,7 +57,7 @@ def test_raise_integrity_error_username_conflict():
         sqlstate = "23505"
         constraint_name = "ix_users_username"
 
-    class MockExc:
+    class MockExc(Exception):
         orig = MockOrig()
 
     with pytest.raises(BusinessException) as exc_info:
@@ -70,7 +70,7 @@ def test_raise_integrity_error_email_conflict():
         sqlstate = "23505"
         constraint_name = "ix_users_email"
 
-    class MockExc:
+    class MockExc(Exception):
         orig = MockOrig()
 
     with pytest.raises(BusinessException) as exc_info:
@@ -83,7 +83,7 @@ def test_raise_integrity_error_unknown_unique():
         sqlstate = "23505"
         constraint_name = "ix_other_table_column"
 
-    class MockExc:
+    class MockExc(Exception):
         orig = MockOrig()
 
     with pytest.raises(BusinessException) as exc_info:
@@ -96,7 +96,7 @@ def test_raise_integrity_error_foreign_key_violation():
         sqlstate = "23503"
         constraint_name = "data_sources_created_by_id_fkey"
 
-    class MockExc:
+    class MockExc(Exception):
         orig = MockOrig()
 
     with pytest.raises(BusinessException) as exc_info:
@@ -109,7 +109,7 @@ def test_raise_integrity_error_unknown_sqlstate():
         sqlstate = "99999"
         constraint_name = "some_constraint"
 
-    class MockExc:
+    class MockExc(Exception):
         orig = MockOrig()
 
     with pytest.raises(BusinessException) as exc_info:
@@ -122,7 +122,7 @@ def test_raise_integrity_error_role_name_conflict():
         sqlstate = "23505"
         constraint_name = "ix_roles_name"
 
-    class MockExc:
+    class MockExc(Exception):
         orig = MockOrig()
 
     with pytest.raises(BusinessException) as exc_info:

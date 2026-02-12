@@ -168,9 +168,6 @@ class AdminRepository(BaseRepository):
         except IntegrityError as e:
             _raise_integrity_error(e)
 
-        stmt = select(User).options(selectinload(User.roles)).where(User.id == user_id)
-        return (await self.session.execute(stmt)).scalar_one()
-
     async def delete_user(self, user_id: int) -> None:
         user = await self.get_user_by_id(user_id)
         if not user:
@@ -182,7 +179,10 @@ class AdminRepository(BaseRepository):
             )
             await self.session.delete(user)
 
-        await self._tx(_delete)
+        try:
+            await self._tx(_delete)
+        except IntegrityError as e:
+            _raise_integrity_error(e)
 
     async def assign_user_roles(self, user_id: int, role_ids: list[int]) -> None:
         user = await self.get_user_by_id(user_id)
