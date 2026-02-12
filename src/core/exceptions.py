@@ -12,9 +12,9 @@ CONSTRAINT_MAPPING = {
 }
 
 ERROR_CODE_MESSAGES = {
-    ErrorCode.USER_UNIQUE_CONFLICT: "唯一约束冲突",
-    ErrorCode.USER_CANNOT_DELETE: "记录被其他数据引用，无法删除",
-    ErrorCode.DATABASE_ERROR: "数据库约束失败",
+    ErrorCode.USER_UNIQUE_CONFLICT: "Unique constraint violation",
+    ErrorCode.USER_CANNOT_DELETE: "Record is referenced by other data and cannot be deleted",
+    ErrorCode.DATABASE_ERROR: "Database constraint error",
 }
 
 
@@ -41,12 +41,12 @@ def _raise_integrity_error(e: IntegrityError):
             constraint_name, ErrorCode.USER_UNIQUE_CONFLICT
         )
         field_name_map = {
-            ErrorCode.USER_USERNAME_CONFLICT: "用户名",
-            ErrorCode.USER_EMAIL_CONFLICT: "邮箱",
-            ErrorCode.USER_PHONE_CONFLICT: "手机号",
+            ErrorCode.USER_USERNAME_CONFLICT: "username",
+            ErrorCode.USER_EMAIL_CONFLICT: "email",
+            ErrorCode.USER_PHONE_CONFLICT: "phone",
         }
-        field_name = field_name_map.get(error_code, "字段")
-        msg = f"{field_name}已存在"
+        field_name = field_name_map.get(error_code, "field")
+        msg = f"{field_name} already exists"
         exc = BusinessException(error_code, msg)
         if isinstance(e, BaseException):
             exc.__cause__ = e
@@ -62,7 +62,9 @@ def _raise_integrity_error(e: IntegrityError):
         raise exc
 
     logger.warning(
-        "未处理的数据库约束错误: sqlstate=%s, constraint=%s", sqlstate, constraint_name
+        "Unhandled database constraint error: sqlstate=%s, constraint=%s",
+        sqlstate,
+        constraint_name,
     )
     exc = BusinessException(
         ErrorCode.DATABASE_ERROR, ERROR_CODE_MESSAGES[ErrorCode.DATABASE_ERROR]
