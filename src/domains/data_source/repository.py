@@ -84,8 +84,11 @@ class DataSourceRepository(BaseRepository):
             raise BusinessException(
                 ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
             )
-        await self._delete(data_source)
-        await self.session.flush()
+        try:
+            await self._delete(data_source)
+            await self.session.flush()
+        except IntegrityError as e:
+            _raise_integrity_error(e)
 
     async def get_paginated(
         self,
