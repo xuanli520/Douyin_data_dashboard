@@ -6,46 +6,11 @@ from src.shared.errors import ErrorCode
 logger = logging.getLogger(__name__)
 
 CONSTRAINT_MAPPING = {
-    "ix_users_username": ErrorCode.USER_USERNAME_CONFLICT,
-    "ix_users_email": ErrorCode.USER_EMAIL_CONFLICT,
-    "ix_users_phone": ErrorCode.USER_PHONE_CONFLICT,
-    "ix_roles_name": ErrorCode.ROLE_NAME_CONFLICT,
-    "ix_data_sources_name": ErrorCode.DATASOURCE_NAME_CONFLICT,
-}
-
-ERROR_CODE_MESSAGES = {
-    ErrorCode.USER_UNIQUE_CONFLICT: "Unique constraint violation",
-    ErrorCode.USER_CANNOT_DELETE: "Record is referenced by other data and cannot be deleted",
-    ErrorCode.DATABASE_ERROR: "Database constraint error",
-}
-
-
-def _get_sqlstate(e: IntegrityError) -> str:
-    orig = getattr(e, "orig", None)
-    if not orig:
-        return ""
-    return getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None) or ""
-
-
-def _get_constraint_name(e: IntegrityError) -> str:
-    orig = getattr(e, "orig", None)
-    if not orig:
-        return ""
-    return getattr(orig, "constraint_name", None) or ""
-
-
-CONSTRAINT_MAPPING = {
     "ix_users_username": (ErrorCode.USER_USERNAME_CONFLICT, "username"),
     "ix_users_email": (ErrorCode.USER_EMAIL_CONFLICT, "email"),
     "ix_users_phone": (ErrorCode.USER_PHONE_CONFLICT, "phone"),
     "ix_roles_name": (ErrorCode.ROLE_NAME_CONFLICT, "role name"),
     "ix_data_sources_name": (ErrorCode.DATASOURCE_NAME_CONFLICT, "data source name"),
-}
-
-ERROR_CODE_MESSAGES = {
-    ErrorCode.USER_UNIQUE_CONFLICT: "Unique constraint violation",
-    ErrorCode.USER_CANNOT_DELETE: "Record is referenced by other data and cannot be deleted",
-    ErrorCode.DATABASE_ERROR: "Database constraint error",
 }
 
 
@@ -77,7 +42,7 @@ def _raise_integrity_error(e: IntegrityError) -> None:
     if sqlstate == "23503":
         raise BusinessException(
             ErrorCode.USER_CANNOT_DELETE,
-            ERROR_CODE_MESSAGES[ErrorCode.USER_CANNOT_DELETE],
+            "Record is referenced by other data and cannot be deleted",
         ) from e
 
     logger.warning(
@@ -86,5 +51,5 @@ def _raise_integrity_error(e: IntegrityError) -> None:
         constraint_name,
     )
     raise BusinessException(
-        ErrorCode.DATABASE_ERROR, ERROR_CODE_MESSAGES[ErrorCode.DATABASE_ERROR]
+        ErrorCode.DATABASE_ERROR, "Database constraint error"
     ) from e
