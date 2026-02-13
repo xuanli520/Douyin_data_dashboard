@@ -402,6 +402,141 @@ async def fetch_with_manual_retry():
                 return response.json()
 ```
 
+### Endpoint Development Status
+
+Mark API endpoints with development status (in development, planned, deprecated) using decorators. Useful for feature flags, API lifecycle management, and gradual rollouts.
+
+#### `in_development` - Mark endpoints as in-development
+
+Returns mock data by default, with options to execute real logic:
+
+```python
+from fastapi import APIRouter
+from src.core.endpoint_status import in_development
+
+router = APIRouter()
+
+# Pure mock - function body not executed
+@router.get("/analytics/realtime")
+@in_development(mock_data={"visitors": 1234, "page_views": 5678})
+async def get_realtime_analytics():
+    pass  # This code never runs
+
+# Prefer real data, fall back to mock on exception
+@router.get("/analytics/dashboard")
+@in_development(
+    mock_data={"placeholder": True},
+    prefer_real=True,
+    fallback_on_exception=True,
+    expected_release="2026-03-01"
+)
+async def get_dashboard():
+    return await fetch_dashboard_data()  # Returns real data if successful
+
+# Response format (HTTP 200):
+# {
+#   "code": 70001,
+#   "msg": "该功能正在开发中，当前返回演示数据",
+#   "data": {
+#     "mock": true,
+#     "expected_release": "2026-03-01",
+#     "data": {"visitors": 1234, "page_views": 5678}
+#   }
+# }
+```
+
+**Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `mock_data` | `dict \| Callable[[], dict]` | Required | Mock data or callable returning mock data |
+| `expected_release` | `str \| None` | `None` | Expected release date shown in response |
+| `prefer_real` | `bool` | `False` | Execute real function, return real data on success |
+| `fallback_on_exception` | `bool` | `False` | Fall back to mock on exception (use with `prefer_real=True`) |
+
+#### `planned` - Mark endpoints as planned
+
+Returns HTTP 501 (Not Implemented). Requires authentication to prevent information leakage.
+
+```python
+from fastapi import APIRouter
+from src.core.endpoint_status import planned
+
+router = APIRouter()
+
+@router.get("/analytics/forecast")
+@planned(expected_release="2026-04-01")
+async def get_forecast():
+    pass  # Never executed
+
+# Unauthenticated -> HTTP 401
+# Authenticated -> HTTP 501
+# Response:
+# {
+#   "code": 70002,
+#   "msg": "该功能正在规划中，暂未实现",
+#   "data": {"expected_release": "2026-04-01"}
+# }
+```
+
+#### `deprecated` - Mark endpoints as deprecated
+
+Two modes: soft (warning headers only) and strict (HTTP 410 Gone).
+
+**Soft mode (default):** Executes function, adds deprecation headers:
+
+```python
+from fastapi import APIRouter
+from src.core.endpoint_status import deprecated
+
+router = APIRouter()
+
+@router.get("/legacy/export")
+@deprecated(alternative="/api/v2/export", removal_date="2026-06-01")
+async def legacy_export():
+    return {"data": "still works"}
+
+# HTTP 200, normal response
+# Headers:
+#   X-Deprecated: true
+#   X-Deprecated-Alternative: /api/v2/export
+#   X-Deprecated-Removal-Date: 2026-06-01
+```
+
+**Strict mode:** Returns HTTP 410, requires authentication:
+
+```python
+@router.get("/old/api")
+@deprecated(mode="strict", alternative="/api/v2/new")
+async def old_endpoint():
+    pass  # Never executed
+
+# Unauthenticated -> HTTP 401
+# Authenticated -> HTTP 410
+# Response:
+# {
+#   "code": 70003,
+#   "msg": "该接口已弃用，请迁移到新接口",
+#   "data": {"alternative": "/api/v2/new"}
+# }
+```
+
+**Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `alternative` | `str \| None` | `None` | Alternative endpoint path |
+| `removal_date` | `str \| None` | `None` | Planned removal date |
+| `mode` | `"soft" \| "strict"` | `"soft"` | Soft adds headers, strict returns 410 |
+
+#### Summary Table
+
+| Decorator | HTTP Status | Auth Required | Use Case |
+|-----------|-------------|---------------|----------|
+| `in_development` | 200 | No | Feature flags, gradual rollout |
+| `planned` | 501 | Yes | Roadmap visibility |
+| `deprecated(soft)` | 200 | No | Graceful migration period |
+| `deprecated(strict)` | 410 | Yes | Force migration |
+
+
 ## Development Setup
 
 - Python >= 3.12
