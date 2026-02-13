@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 
 from src.exceptions import BusinessException
 from src.responses.base import Response
-from src.shared.errors import ErrorCode, error_code_to_http_status
+from src.shared.errors import NON_ERROR_CODES, ErrorCode, error_code_to_http_status
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,12 @@ def register_exception_handlers(app: FastAPI) -> None:
     ) -> JSONResponse:
         http_status = error_code_to_http_status(exc.code)
         response = Response.error(code=int(exc.code), msg=exc.msg, data=exc.data)
+
+        if exc.code in NON_ERROR_CODES:
+            logger.debug("Non-error status: %s", exc)
+        else:
+            logger.error("BusinessException: %s", exc)
+
         return JSONResponse(content=response.model_dump(), status_code=http_status)
 
     @app.exception_handler(HTTPException)
