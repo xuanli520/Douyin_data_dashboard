@@ -10,6 +10,7 @@ from src.core.endpoint_status import in_development
 router = APIRouter(prefix="/tasks", tags=["task"])
 
 
+@router.get("")
 @in_development(
     mock_data=lambda: [
         {
@@ -31,7 +32,6 @@ router = APIRouter(prefix="/tasks", tags=["task"])
     ],
     expected_release="2026-03-01",
 )
-@router.get("")
 async def list_tasks(
     user: User = Depends(current_user),
     _=Depends(require_permissions(TaskPermission.VIEW, bypass_superuser=True)),
@@ -39,6 +39,7 @@ async def list_tasks(
     pass
 
 
+@router.post("")
 @in_development(
     mock_data={
         "id": 3,
@@ -49,7 +50,6 @@ async def list_tasks(
     },
     expected_release="2026-03-01",
 )
-@router.post("")
 async def create_task(
     data: dict[str, Any],
     user: User = Depends(current_user),
@@ -58,6 +58,7 @@ async def create_task(
     pass
 
 
+@router.post("/{task_id}/run")
 @in_development(
     mock_data={
         "execution_id": "exec_123",
@@ -66,7 +67,6 @@ async def create_task(
     },
     expected_release="2026-03-01",
 )
-@router.post("/{task_id}/run")
 async def run_task(
     task_id: int,
     user: User = Depends(current_user),
@@ -75,6 +75,7 @@ async def run_task(
     pass
 
 
+@router.get("/{task_id}/executions")
 @in_development(
     mock_data=lambda: [
         {
@@ -88,7 +89,6 @@ async def run_task(
     ],
     expected_release="2026-03-01",
 )
-@router.get("/{task_id}/executions")
 async def get_task_executions(
     task_id: int,
     user: User = Depends(current_user),
