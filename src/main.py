@@ -13,6 +13,12 @@ from src.api import (
     scraping_rule_router,
     data_import_router,
     task_router,
+    alerts_router,
+    shops_router,
+    metrics_router,
+    reports_router,
+    schedules_router,
+    analysis_router,
     permissions_router,
 )
 from src.cache import close_cache, get_cache, init_cache
@@ -88,6 +94,12 @@ def create_app() -> FastAPI:
     app.include_router(monitor_router, prefix="/monitor")
     app.include_router(data_import_router, prefix="/api/v1", tags=["data-import"])
     app.include_router(task_router, prefix="/api/v1", tags=["task"])
+    app.include_router(alerts_router, prefix="/api/v1", tags=["alerts"])
+    app.include_router(shops_router, prefix="/api/v1", tags=["shops"])
+    app.include_router(metrics_router, prefix="/api/v1", tags=["metrics"])
+    app.include_router(reports_router, prefix="/api/v1", tags=["reports"])
+    app.include_router(schedules_router, prefix="/api/v1", tags=["schedules"])
+    app.include_router(analysis_router, prefix="/api/v1", tags=["analysis"])
     app.include_router(permissions_router, prefix="/api/v1", tags=["permissions"])
 
     return app

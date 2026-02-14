@@ -87,6 +87,37 @@ class TestInDevelopment:
 
         assert exc_info.value.data["expected_release"] == "2026-03-01"
 
+    def test_mock_data_list(self):
+        @in_development(mock_data=[{"id": 1}, {"id": 2}])
+        def sync_func():
+            return [{"real": "data"}]
+
+        with pytest.raises(EndpointInDevelopmentException) as exc_info:
+            sync_func()
+
+        assert exc_info.value.data["data"] == [{"id": 1}, {"id": 2}]
+
+    def test_mock_data_list_from_callable(self):
+        @in_development(mock_data=lambda: [{"id": 1}, {"id": 2}])
+        def sync_func():
+            return [{"real": "data"}]
+
+        with pytest.raises(EndpointInDevelopmentException) as exc_info:
+            sync_func()
+
+        assert exc_info.value.data["data"] == [{"id": 1}, {"id": 2}]
+
+    @pytest.mark.asyncio
+    async def test_async_mock_data_list(self):
+        @in_development(mock_data=[{"id": 1}, {"id": 2}])
+        async def async_func():
+            return [{"real": "data"}]
+
+        with pytest.raises(EndpointInDevelopmentException) as exc_info:
+            await async_func()
+
+        assert exc_info.value.data["data"] == [{"id": 1}, {"id": 2}]
+
     @pytest.mark.asyncio
     async def test_async_returns_mock_data_by_default(self):
         @in_development(mock_data={"async": "mock"})

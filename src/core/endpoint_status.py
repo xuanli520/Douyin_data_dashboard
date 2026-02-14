@@ -17,7 +17,7 @@ from src.responses.base import Response
 logger = logging.getLogger(__name__)
 
 
-def _get_mock(mock_data: dict | Callable[[], dict]) -> dict:
+def _get_mock(mock_data: dict | list | Callable[[], dict | list]) -> dict | list:
     try:
         return mock_data() if callable(mock_data) else mock_data
     except Exception as e:
@@ -26,7 +26,7 @@ def _get_mock(mock_data: dict | Callable[[], dict]) -> dict:
 
 
 def _raise_in_development(
-    data: dict | None,
+    data: dict | list | None,
     *,
     is_mock: bool,
     expected_release: str | None,
@@ -39,7 +39,7 @@ def _raise_in_development(
 
 
 def in_development(
-    mock_data: dict | Callable[[], dict],
+    mock_data: dict | list | Callable[[], dict | list],
     *,
     expected_release: str | None = None,
     prefer_real: bool = False,
