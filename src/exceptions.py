@@ -46,7 +46,7 @@ class EndpointInDevelopmentException(BusinessException):
 
     def __init__(
         self,
-        data: dict | None,
+        data: dict | list | None,
         *,
         is_mock: bool = True,
         expected_release: str | None = None,
