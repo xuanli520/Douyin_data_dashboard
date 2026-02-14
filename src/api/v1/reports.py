@@ -8,6 +8,7 @@ from src.core.endpoint_status import in_development
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 
+@router.get("")
 @in_development(
     mock_data={
         "reports": [
@@ -31,7 +32,6 @@ router = APIRouter(prefix="/reports", tags=["reports"])
     },
     expected_release="2026-03-01",
 )
-@router.get("")
 async def list_reports(
     user: User = Depends(current_user),
     _=Depends(require_permissions(ReportPermission.VIEW, bypass_superuser=True)),

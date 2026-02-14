@@ -8,6 +8,7 @@ from src.core.endpoint_status import in_development
 router = APIRouter(prefix="/shops", tags=["shops"])
 
 
+@router.get("")
 @in_development(
     mock_data={
         "shops": [
@@ -27,7 +28,6 @@ router = APIRouter(prefix="/shops", tags=["shops"])
     },
     expected_release="2026-03-01",
 )
-@router.get("")
 async def list_shops(
     page: int = 1,
     size: int = 20,
@@ -37,6 +37,7 @@ async def list_shops(
     pass
 
 
+@router.get("/{shop_id}/score")
 @in_development(
     mock_data={
         "shop_id": 1,
@@ -55,7 +56,6 @@ async def list_shops(
     },
     expected_release="2026-03-01",
 )
-@router.get("/{shop_id}/score")
 async def get_shop_score(
     shop_id: int,
     user: User = Depends(current_user),

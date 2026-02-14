@@ -43,6 +43,32 @@ class TestInDevelopment:
 
         assert exc_info.value.data["data"] == {}
 
+    def test_mock_data_callable_exception_returns_list_for_list_type(self):
+        def failing_list_callable() -> list:
+            raise RuntimeError("fail")
+
+        @in_development(mock_data=failing_list_callable)
+        def sync_func():
+            return {"real": "data"}
+
+        with pytest.raises(EndpointInDevelopmentException) as exc_info:
+            sync_func()
+
+        assert exc_info.value.data["data"] == []
+
+    def test_mock_data_callable_exception_returns_dict_for_dict_type(self):
+        def failing_dict_callable() -> dict:
+            raise RuntimeError("fail")
+
+        @in_development(mock_data=failing_dict_callable)
+        def sync_func():
+            return [{"real": "data"}]
+
+        with pytest.raises(EndpointInDevelopmentException) as exc_info:
+            sync_func()
+
+        assert exc_info.value.data["data"] == {}
+
     def test_prefer_real_returns_real_data(self):
         @in_development(mock_data={"mock": "data"}, prefer_real=True)
         def sync_func():

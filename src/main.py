@@ -52,6 +52,11 @@ async def lifespan(app: FastAPI):
         retry_on_timeout=settings.cache.retry_on_timeout,
     )
 
+    from src.auth.seed import seed_permissions, seed_admin_role_permissions
+
+    await seed_permissions()
+    await seed_admin_role_permissions()
+
     async def add_redis_to_request(request: Request):
         cache = get_cache()
         request.state.redis = cache._client if hasattr(cache, "_client") else cache

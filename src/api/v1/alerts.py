@@ -8,6 +8,7 @@ from src.core.endpoint_status import in_development
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
 
+@router.get("")
 @in_development(
     mock_data={
         "alerts": [
@@ -37,7 +38,6 @@ router = APIRouter(prefix="/alerts", tags=["alerts"])
     },
     expected_release="2026-03-01",
 )
-@router.get("")
 async def list_alerts(
     user: User = Depends(current_user),
     _=Depends(require_permissions(AlertPermission.VIEW, bypass_superuser=True)),

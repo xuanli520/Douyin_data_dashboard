@@ -32,6 +32,14 @@ PERMISSIONS = [
     ("task:create", "创建任务", "task", "创建新任务"),
     ("task:execute", "执行任务", "task", "手动触发任务执行"),
     ("task:cancel", "取消任务", "task", "取消任务执行"),
+    ("analytics:view", "查看分析", "analytics", "查看分析数据"),
+    ("shop:view", "查看店铺", "shop", "查看店铺列表和评分"),
+    ("shop:score", "查看店铺评分", "shop", "查看店铺详细评分"),
+    ("metric:view", "查看指标", "metric", "查看体验指标详情"),
+    ("report:view", "查看报表", "report", "查看报表列表"),
+    ("schedule:view", "查看调度", "schedule", "查看任务调度"),
+    ("analysis:view", "查看分析", "analysis", "查看数据分析"),
+    ("alert:view", "查看预警", "alert", "查看风险预警"),
 ]
 
 

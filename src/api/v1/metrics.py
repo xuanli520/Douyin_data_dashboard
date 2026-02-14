@@ -115,11 +115,11 @@ MOCK_METRICS = {
 }
 
 
+@router.get("/{metric_type}")
 @in_development(
     mock_data=lambda: MOCK_METRICS["product"],
     expected_release="2026-03-01",
 )
-@router.get("/{metric_type}")
 async def get_metric_detail(
     metric_type: str,
     period: str = "30d",
