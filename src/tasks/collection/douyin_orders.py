@@ -7,6 +7,7 @@ from src.tasks.base import BaseTask, run_with_timeout_protection
 from src.tasks.exceptions import ScrapingRateLimitException
 
 
+### 占位实现
 @celery_app.task(
     bind=True,
     base=BaseTask,

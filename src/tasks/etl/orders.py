@@ -6,6 +6,7 @@ from src.tasks.celery_app import celery_app
 from src.tasks.base import BaseTask, run_with_timeout_protection
 
 
+### 占位实现
 @celery_app.task(
     bind=True,
     base=BaseTask,
