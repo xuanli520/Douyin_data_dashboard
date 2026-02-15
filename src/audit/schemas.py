@@ -22,6 +22,17 @@ class AuditAction(StrEnum):
     CREATE = "create"
     UPDATE = "update"
     DELETE = "delete"
+    DATA_SOURCE_BIND = "data_source_bind"
+    DATA_SOURCE_UNBIND = "data_source_unbind"
+    DATA_SOURCE_UPDATE = "data_source_update"
+    DATA_SOURCE_SYNC = "data_source_sync"
+    TASK_CREATE = "task_create"
+    TASK_UPDATE = "task_update"
+    TASK_ENABLE = "task_enable"
+    TASK_DISABLE = "task_disable"
+    TASK_RUN = "task_run"
+    TASK_STOP = "task_stop"
+    TASK_FAIL = "task_fail"
 
 
 class AuditResult(StrEnum):

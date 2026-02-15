@@ -19,3 +19,37 @@ class TaskPermission:
     CREATE = "task:create"
     EXECUTE = "task:execute"
     CANCEL = "task:cancel"
+
+
+class AnalyticsPermission:
+    VIEW = "analytics:view"
+
+
+class ShopPermission:
+    VIEW = "shop:view"
+    SCORE = "shop:score"
+
+
+class MetricPermission:
+    VIEW = "metric:view"
+
+
+class ReportPermission:
+    VIEW = "report:view"
+
+
+class SchedulePermission:
+    VIEW = "schedule:view"
+
+
+class AnalysisPermission:
+    VIEW = "analysis:view"
+
+
+class AlertPermission:
+    VIEW = "alert:view"
+
+
+class AuditPermission:
+    READ = "audit:read"
+    EXPORT = "audit:export"

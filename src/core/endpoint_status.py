@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import logging
 from functools import wraps
 from typing import Any, Callable, Literal
@@ -17,16 +18,21 @@ from src.responses.base import Response
 logger = logging.getLogger(__name__)
 
 
-def _get_mock(mock_data: dict | Callable[[], dict]) -> dict:
+def _get_mock(mock_data: dict | list | Callable[[], dict | list]) -> dict | list:
     try:
         return mock_data() if callable(mock_data) else mock_data
     except Exception as e:
         logger.warning("mock_data callable failed: %s", e)
-        return {}
+        if callable(mock_data):
+            sig = inspect.signature(mock_data)
+            if sig.return_annotation is list:
+                return []
+            return {}
+        return {} if isinstance(mock_data, dict) else []
 
 
 def _raise_in_development(
-    data: dict | None,
+    data: dict | list | None,
     *,
     is_mock: bool,
     expected_release: str | None,
@@ -39,7 +45,7 @@ def _raise_in_development(
 
 
 def in_development(
-    mock_data: dict | Callable[[], dict],
+    mock_data: dict | list | Callable[[], dict | list],
     *,
     expected_release: str | None = None,
     prefer_real: bool = False,

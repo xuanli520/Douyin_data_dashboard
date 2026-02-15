@@ -43,6 +43,32 @@ class TestInDevelopment:
 
         assert exc_info.value.data["data"] == {}
 
+    def test_mock_data_callable_exception_returns_list_for_list_type(self):
+        def failing_list_callable() -> list:
+            raise RuntimeError("fail")
+
+        @in_development(mock_data=failing_list_callable)
+        def sync_func():
+            return {"real": "data"}
+
+        with pytest.raises(EndpointInDevelopmentException) as exc_info:
+            sync_func()
+
+        assert exc_info.value.data["data"] == []
+
+    def test_mock_data_callable_exception_returns_dict_for_dict_type(self):
+        def failing_dict_callable() -> dict:
+            raise RuntimeError("fail")
+
+        @in_development(mock_data=failing_dict_callable)
+        def sync_func():
+            return [{"real": "data"}]
+
+        with pytest.raises(EndpointInDevelopmentException) as exc_info:
+            sync_func()
+
+        assert exc_info.value.data["data"] == {}
+
     def test_prefer_real_returns_real_data(self):
         @in_development(mock_data={"mock": "data"}, prefer_real=True)
         def sync_func():
@@ -86,6 +112,37 @@ class TestInDevelopment:
             sync_func()
 
         assert exc_info.value.data["expected_release"] == "2026-03-01"
+
+    def test_mock_data_list(self):
+        @in_development(mock_data=[{"id": 1}, {"id": 2}])
+        def sync_func():
+            return [{"real": "data"}]
+
+        with pytest.raises(EndpointInDevelopmentException) as exc_info:
+            sync_func()
+
+        assert exc_info.value.data["data"] == [{"id": 1}, {"id": 2}]
+
+    def test_mock_data_list_from_callable(self):
+        @in_development(mock_data=lambda: [{"id": 1}, {"id": 2}])
+        def sync_func():
+            return [{"real": "data"}]
+
+        with pytest.raises(EndpointInDevelopmentException) as exc_info:
+            sync_func()
+
+        assert exc_info.value.data["data"] == [{"id": 1}, {"id": 2}]
+
+    @pytest.mark.asyncio
+    async def test_async_mock_data_list(self):
+        @in_development(mock_data=[{"id": 1}, {"id": 2}])
+        async def async_func():
+            return [{"real": "data"}]
+
+        with pytest.raises(EndpointInDevelopmentException) as exc_info:
+            await async_func()
+
+        assert exc_info.value.data["data"] == [{"id": 1}, {"id": 2}]
 
     @pytest.mark.asyncio
     async def test_async_returns_mock_data_by_default(self):

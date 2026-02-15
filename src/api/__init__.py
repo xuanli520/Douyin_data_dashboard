@@ -7,6 +7,12 @@ from .v1.data_source import router as data_source_router
 from .v1.data_source import scraping_rule_router
 from .v1.data_import import router as data_import_router
 from .v1.task import router as task_router
+from .v1.alerts import router as alerts_router
+from .v1.shops import router as shops_router
+from .v1.metrics import router as metrics_router
+from .v1.reports import router as reports_router
+from .v1.schedules import router as schedules_router
+from .v1.analysis import router as analysis_router
 from .v1 import permissions_router
 
 __all__ = [
@@ -19,5 +25,11 @@ __all__ = [
     "scraping_rule_router",
     "data_import_router",
     "task_router",
+    "alerts_router",
+    "shops_router",
+    "metrics_router",
+    "reports_router",
+    "schedules_router",
+    "analysis_router",
     "permissions_router",
 ]
