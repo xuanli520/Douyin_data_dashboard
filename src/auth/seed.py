@@ -40,6 +40,8 @@ PERMISSIONS = [
     ("schedule:view", "查看调度", "schedule", "查看任务调度"),
     ("analysis:view", "查看分析", "analysis", "查看数据分析"),
     ("alert:view", "查看预警", "alert", "查看风险预警"),
+    ("audit:read", "查看审计日志", "audit", "查看审计日志"),
+    ("audit:export", "导出审计日志", "audit", "导出审计日志"),
 ]
 
 

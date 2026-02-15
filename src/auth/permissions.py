@@ -48,3 +48,8 @@ class AnalysisPermission:
 
 class AlertPermission:
     VIEW = "alert:view"
+
+
+class AuditPermission:
+    READ = "audit:read"
+    EXPORT = "audit:export"
