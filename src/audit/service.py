@@ -50,6 +50,8 @@ class AuditRepository:
         stmt = select(AuditLog)
         if filters.action:
             stmt = stmt.where(AuditLog.action == filters.action)
+        if filters.actions:
+            stmt = stmt.where(AuditLog.action.in_(filters.actions))
         if filters.result:
             stmt = stmt.where(AuditLog.result == filters.result)
         if filters.actor_id is not None:

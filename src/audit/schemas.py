@@ -2,6 +2,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
+from pydantic import ConfigDict, field_serializer, model_validator
 from sqlalchemy import JSON, Column, DateTime, ForeignKey, String, Text
 from sqlmodel import Field, SQLModel
 
@@ -44,6 +45,7 @@ class AuditResult(StrEnum):
 
 class AuditLog(SQLModel, table=True):
     __tablename__ = "audit_logs"
+    model_config = ConfigDict(str_strip_whitespace=True, from_attributes=True)
 
     id: int | None = Field(default=None, primary_key=True)
     occurred_at: datetime = Field(
@@ -76,3 +78,25 @@ class AuditLog(SQLModel, table=True):
     extra: dict[str, Any] | None = Field(
         default=None, sa_column=Column(JSON, nullable=True)
     )
+
+    @field_serializer("action")
+    def serialize_action(self, action: AuditAction) -> str:
+        if isinstance(action, str):
+            return action
+        return action.value
+
+    @field_serializer("result")
+    def serialize_result(self, result: AuditResult) -> str:
+        if isinstance(result, str):
+            return result
+        return result.value
+
+    @model_validator(mode="before")
+    @classmethod
+    def parse_action_result(cls, data):
+        if isinstance(data, dict):
+            if isinstance(data.get("action"), str):
+                data["action"] = AuditAction(data["action"])
+            if isinstance(data.get("result"), str):
+                data["result"] = AuditResult(data["result"])
+        return data

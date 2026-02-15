@@ -70,7 +70,16 @@ async def list_login_audit_logs(
     _=Depends(require_permissions(AuditPermission.READ, bypass_superuser=True)),
     request_id: str = Depends(generate_request_id),
 ):
-    filters = AuditLogFilters(action=None, page=page, size=size)
+    filters = AuditLogFilters(
+        actions=[
+            AuditAction.LOGIN,
+            AuditAction.LOGOUT,
+            AuditAction.REFRESH,
+            AuditAction.REGISTER,
+        ],
+        page=page,
+        size=size,
+    )
     items, total = await audit_service.list_logs(filters)
     user_agent, ip = extract_client_info(request)
     await audit_service.log(
