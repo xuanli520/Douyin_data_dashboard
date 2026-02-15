@@ -7,7 +7,19 @@ import time
 class TestIdempotency:
     @pytest.fixture
     def mock_redis(self):
-        return fakeredis.FakeRedis(decode_responses=True)
+        r = fakeredis.FakeRedis(decode_responses=True)
+
+        def mock_eval(script, numkeys, *keys_and_args):
+            key = keys_and_args[0]
+            expected_token = keys_and_args[1]
+            current_token = r.get(key)
+            if current_token == expected_token:
+                r.delete(key)
+                return 1
+            return 0
+
+        r.eval = mock_eval
+        return r
 
     @pytest.fixture
     def clean_redis(self, mock_redis):
@@ -146,7 +158,19 @@ class TestIdempotency:
 class TestIdempotencyIntegration:
     @pytest.fixture
     def mock_redis(self):
-        return fakeredis.FakeRedis(decode_responses=True)
+        r = fakeredis.FakeRedis(decode_responses=True)
+
+        def mock_eval(script, numkeys, *keys_and_args):
+            key = keys_and_args[0]
+            expected_token = keys_and_args[1]
+            current_token = r.get(key)
+            if current_token == expected_token:
+                r.delete(key)
+                return 1
+            return 0
+
+        r.eval = mock_eval
+        return r
 
     def test_full_idempotency_flow(self, mock_redis):
         from src.tasks.base import (

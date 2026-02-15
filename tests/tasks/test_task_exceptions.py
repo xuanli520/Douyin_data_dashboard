@@ -58,7 +58,7 @@ class TestTaskExceptions:
         exc = ScrapingFailedException(target="test", reason="error")
         exc_str = str(exc)
 
-        assert "[81001]" in exc_str
+        assert "[85001]" in exc_str
         assert "test" in exc_str
         assert "error" in exc_str
 
@@ -87,19 +87,19 @@ class TestTaskExceptions:
 
 class TestErrorCodeMapping:
     def test_task_error_codes_exist(self):
-        assert ErrorCode.TASK_NOT_FOUND == 80001
-        assert ErrorCode.TASK_ALREADY_RUNNING == 80002
-        assert ErrorCode.TASK_TIMEOUT == 80003
-        assert ErrorCode.TASK_RETRY_EXHAUSTED == 80004
-        assert ErrorCode.TASK_IDEMPOTENCY_CONFLICT == 80005
+        assert ErrorCode.TASK_NOT_FOUND == 84001
+        assert ErrorCode.TASK_ALREADY_RUNNING == 84002
+        assert ErrorCode.TASK_TIMEOUT == 84003
+        assert ErrorCode.TASK_RETRY_EXHAUSTED == 84004
+        assert ErrorCode.TASK_IDEMPOTENCY_CONFLICT == 84005
 
     def test_scraping_error_codes_exist(self):
-        assert ErrorCode.SCRAPING_FAILED == 81001
-        assert ErrorCode.SCRAPING_RATE_LIMIT == 81002
-        assert ErrorCode.SCRAPING_AUTH_FAILED == 81003
-        assert ErrorCode.SCRAPING_HTML_PARSE_ERROR == 81004
+        assert ErrorCode.SCRAPING_FAILED == 85001
+        assert ErrorCode.SCRAPING_RATE_LIMIT == 85002
+        assert ErrorCode.SCRAPING_AUTH_FAILED == 85003
+        assert ErrorCode.SCRAPING_HTML_PARSE_ERROR == 85004
 
     def test_etl_error_codes_exist(self):
-        assert ErrorCode.ETL_TRANSFORM_FAILED == 82001
-        assert ErrorCode.ETL_VALIDATION_FAILED == 82002
-        assert ErrorCode.ETL_DATA_QUALITY_ERROR == 82003
+        assert ErrorCode.ETL_TRANSFORM_FAILED == 86001
+        assert ErrorCode.ETL_VALIDATION_FAILED == 86002
+        assert ErrorCode.ETL_DATA_QUALITY_ERROR == 86003
