@@ -7,6 +7,7 @@ class CorsSettings(BaseSettings):
         default_factory=lambda: [
             "http://localhost:3000",
             "http://127.0.0.1:3000",
+            "http://8.137.84.161:3456",
         ]
     )
     allow_methods: list[str] = Field(
