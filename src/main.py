@@ -20,6 +20,7 @@ from src.api import (
     schedules_router,
     analysis_router,
     permissions_router,
+    audit_router,
 )
 from src.cache import close_cache, get_cache, init_cache
 from src.config import get_settings
@@ -106,6 +107,7 @@ def create_app() -> FastAPI:
     app.include_router(schedules_router, prefix="/api/v1", tags=["schedules"])
     app.include_router(analysis_router, prefix="/api/v1", tags=["analysis"])
     app.include_router(permissions_router, prefix="/api/v1", tags=["permissions"])
+    app.include_router(audit_router, prefix="/api/v1", tags=["audit"])
 
     return app
 

@@ -60,3 +60,21 @@ async def test_log_handles_exception(audit_service, mock_session):
         result=AuditResult.FAILURE,
         actor_id=1,
     )
+
+
+@pytest.mark.asyncio
+async def test_list_audit_logs_returns_paginated(mock_session):
+    from src.audit.service import AuditService, AuditRepository
+    from src.audit.filters import AuditLogFilters
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = []
+    mock_result.scalar_one.return_value = 0
+    mock_session.execute = AsyncMock(return_value=mock_result)
+
+    service = AuditService(AuditRepository(mock_session))
+    filters = AuditLogFilters(page=1, size=10)
+    items, total = await service.list_logs(filters)
+    assert isinstance(items, list)
+    assert isinstance(total, int)
