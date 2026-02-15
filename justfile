@@ -1,3 +1,5 @@
+set shell := ["cmd", "/c"]
+
 PORT := "8000"
 
 default:
@@ -50,3 +52,19 @@ run port=PORT:
 alias r := run
 alias t := test
 alias c := check
+
+# Start Celery worker (prefork pool, default concurrency 4)
+@celery-worker:
+    uv run celery -A src.tasks worker -l info -c 4
+
+# Start Celery worker with specific queue
+@celery-worker-q queue:
+    uv run celery -A src.tasks worker -l info -c 4 -Q {{queue}}
+
+# Start Celery beat scheduler
+@celery-beat:
+    uv run celery -A src.tasks beat -l info
+
+# Start Celery flower monitoring UI
+@celery-flower:
+    uv run celery -A src.tasks flower --port=5555
