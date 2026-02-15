@@ -1,7 +1,11 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
+from src.audit import AuditService, get_audit_service
+from src.audit.schemas import AuditAction, AuditResult
+from src.audit.service import extract_client_info
+from src.audit.dependencies import generate_request_id
 from src.auth import current_user, User
 from src.auth.rbac import require_permissions
 from src.auth.permissions import TaskPermission
@@ -51,10 +55,25 @@ async def list_tasks(
     expected_release="2026-03-01",
 )
 async def create_task(
+    request: Request,
     data: dict[str, Any],
     user: User = Depends(current_user),
+    audit_service: AuditService = Depends(get_audit_service),
+    request_id: str = Depends(generate_request_id),
     _=Depends(require_permissions(TaskPermission.CREATE, bypass_superuser=True)),
 ):
+    user_agent, ip = extract_client_info(request)
+    await audit_service.log(
+        action=AuditAction.TASK_CREATE,
+        result=AuditResult.SUCCESS,
+        actor_id=user.id,
+        resource_type="task",
+        resource_id=str(data.get("id", "")),
+        request_id=request_id,
+        user_agent=user_agent,
+        ip=ip,
+        extra={"task_type": data.get("task_type"), "name": data.get("name")},
+    )
     pass
 
 
@@ -68,10 +87,24 @@ async def create_task(
     expected_release="2026-03-01",
 )
 async def run_task(
+    request: Request,
     task_id: int,
     user: User = Depends(current_user),
+    audit_service: AuditService = Depends(get_audit_service),
+    request_id: str = Depends(generate_request_id),
     _=Depends(require_permissions(TaskPermission.EXECUTE, bypass_superuser=True)),
 ):
+    user_agent, ip = extract_client_info(request)
+    await audit_service.log(
+        action=AuditAction.TASK_RUN,
+        result=AuditResult.SUCCESS,
+        actor_id=user.id,
+        resource_type="task",
+        resource_id=str(task_id),
+        request_id=request_id,
+        user_agent=user_agent,
+        ip=ip,
+    )
     pass
 
 
@@ -94,4 +127,35 @@ async def get_task_executions(
     user: User = Depends(current_user),
     _=Depends(require_permissions(TaskPermission.VIEW, bypass_superuser=True)),
 ):
+    pass
+
+
+@router.post("/{task_id}/stop")
+@in_development(
+    mock_data={
+        "execution_id": "exec_123",
+        "status": "stopped",
+        "stopped_at": "2026-01-15T12:00:00",
+    },
+    expected_release="2026-03-01",
+)
+async def stop_task(
+    request: Request,
+    task_id: int,
+    user: User = Depends(current_user),
+    audit_service: AuditService = Depends(get_audit_service),
+    request_id: str = Depends(generate_request_id),
+    _=Depends(require_permissions(TaskPermission.EXECUTE, bypass_superuser=True)),
+):
+    user_agent, ip = extract_client_info(request)
+    await audit_service.log(
+        action=AuditAction.TASK_STOP,
+        result=AuditResult.SUCCESS,
+        actor_id=user.id,
+        resource_type="task",
+        resource_id=str(task_id),
+        request_id=request_id,
+        user_agent=user_agent,
+        ip=ip,
+    )
     pass

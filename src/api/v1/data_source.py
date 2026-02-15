@@ -1,7 +1,11 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 
+from src.audit import AuditService, get_audit_service
+from src.audit.schemas import AuditAction, AuditResult
+from src.audit.service import extract_client_info
+from src.audit.dependencies import generate_request_id
 from src.auth import current_user, User
 from src.auth.rbac import require_permissions
 from src.auth.permissions import DataSourcePermission
@@ -52,12 +56,27 @@ async def list_data_sources(
 
 @router.post("", response_model=Response[DataSourceResponse])
 async def create_data_source(
+    request: Request,
     data: DataSourceCreate,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    audit_service: AuditService = Depends(get_audit_service),
+    request_id: str = Depends(generate_request_id),
     _=Depends(require_permissions(DataSourcePermission.CREATE, bypass_superuser=True)),
 ) -> Response[DataSourceResponse]:
     ds = await service.create(data, user_id=user.id)
+    user_agent, ip = extract_client_info(request)
+    await audit_service.log(
+        action=AuditAction.DATA_SOURCE_BIND,
+        result=AuditResult.SUCCESS,
+        actor_id=user.id,
+        resource_type="data_source",
+        resource_id=str(ds.id),
+        request_id=request_id,
+        user_agent=user_agent,
+        ip=ip,
+        extra={"source_type": ds.type, "name": ds.name},
+    )
     return Response.success(data=ds)
 
 
@@ -74,57 +93,134 @@ async def get_data_source(
 
 @router.put("/{ds_id}", response_model=Response[DataSourceResponse])
 async def update_data_source(
+    request: Request,
     ds_id: int,
     data: DataSourceUpdate,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    audit_service: AuditService = Depends(get_audit_service),
+    request_id: str = Depends(generate_request_id),
     _=Depends(require_permissions(DataSourcePermission.UPDATE, bypass_superuser=True)),
 ) -> Response[DataSourceResponse]:
     ds = await service.update(ds_id, data, user_id=user.id)
+    user_agent, ip = extract_client_info(request)
+    await audit_service.log(
+        action=AuditAction.DATA_SOURCE_UPDATE,
+        result=AuditResult.SUCCESS,
+        actor_id=user.id,
+        resource_type="data_source",
+        resource_id=str(ds.id),
+        request_id=request_id,
+        user_agent=user_agent,
+        ip=ip,
+        extra={"name": ds.name, "source_type": ds.type},
+    )
     return Response.success(data=ds)
 
 
 @router.delete("/{ds_id}", response_model=Response[None])
 async def delete_data_source(
+    request: Request,
     ds_id: int,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    audit_service: AuditService = Depends(get_audit_service),
+    request_id: str = Depends(generate_request_id),
     _=Depends(require_permissions(DataSourcePermission.DELETE, bypass_superuser=True)),
 ) -> Response[None]:
+    ds = await service.get_by_id(ds_id)
     await service.delete(ds_id)
+    user_agent, ip = extract_client_info(request)
+    await audit_service.log(
+        action=AuditAction.DATA_SOURCE_UNBIND,
+        result=AuditResult.SUCCESS,
+        actor_id=user.id,
+        resource_type="data_source",
+        resource_id=str(ds_id),
+        request_id=request_id,
+        user_agent=user_agent,
+        ip=ip,
+        extra={"name": ds.name, "source_type": ds.type} if ds else {},
+    )
     return Response.success()
 
 
 @router.post("/{ds_id}/activate", response_model=Response[DataSourceResponse])
 async def activate_data_source(
+    request: Request,
     ds_id: int,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    audit_service: AuditService = Depends(get_audit_service),
+    request_id: str = Depends(generate_request_id),
     _=Depends(require_permissions(DataSourcePermission.UPDATE, bypass_superuser=True)),
 ) -> Response[DataSourceResponse]:
     ds = await service.activate(ds_id, user_id=user.id)
+    user_agent, ip = extract_client_info(request)
+    await audit_service.log(
+        action=AuditAction.DATA_SOURCE_BIND,
+        result=AuditResult.SUCCESS,
+        actor_id=user.id,
+        resource_type="data_source",
+        resource_id=str(ds.id),
+        request_id=request_id,
+        user_agent=user_agent,
+        ip=ip,
+        extra={"source_type": ds.type, "name": ds.name},
+    )
     return Response.success(data=ds)
 
 
 @router.post("/{ds_id}/deactivate", response_model=Response[DataSourceResponse])
 async def deactivate_data_source(
+    request: Request,
     ds_id: int,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    audit_service: AuditService = Depends(get_audit_service),
+    request_id: str = Depends(generate_request_id),
     _=Depends(require_permissions(DataSourcePermission.UPDATE, bypass_superuser=True)),
 ) -> Response[DataSourceResponse]:
     ds = await service.deactivate(ds_id, user_id=user.id)
+    user_agent, ip = extract_client_info(request)
+    await audit_service.log(
+        action=AuditAction.DATA_SOURCE_UNBIND,
+        result=AuditResult.SUCCESS,
+        actor_id=user.id,
+        resource_type="data_source",
+        resource_id=str(ds.id),
+        request_id=request_id,
+        user_agent=user_agent,
+        ip=ip,
+        extra={"source_type": ds.type, "name": ds.name},
+    )
     return Response.success(data=ds)
 
 
 @router.post("/{ds_id}/validate", response_model=Response[dict[str, Any]])
 async def validate_connection(
+    request: Request,
     ds_id: int,
     service: DataSourceService = Depends(get_data_source_service),
     user: User = Depends(current_user),
+    audit_service: AuditService = Depends(get_audit_service),
+    request_id: str = Depends(generate_request_id),
     _=Depends(require_permissions(DataSourcePermission.VIEW, bypass_superuser=True)),
 ) -> Response[dict[str, Any]]:
     result = await service.validate_connection(ds_id)
+    ds = await service.get_by_id(ds_id)
+    user_agent, ip = extract_client_info(request)
+    await audit_service.log(
+        action=AuditAction.DATA_SOURCE_SYNC,
+        result=AuditResult.SUCCESS if result.get("success") else AuditResult.FAILURE,
+        actor_id=user.id,
+        resource_type="data_source",
+        resource_id=str(ds_id),
+        request_id=request_id,
+        user_agent=user_agent,
+        ip=ip,
+        extra={"name": ds.name, "source_type": ds.type, "validation_result": result},
+    )
     return Response.success(data=result)
 
 

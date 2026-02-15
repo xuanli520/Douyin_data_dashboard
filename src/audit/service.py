@@ -2,9 +2,11 @@ from typing import Any
 
 from fastapi import Depends, Request
 from loguru import logger
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.audit.schemas import AuditAction, AuditLog, AuditResult
+from src.audit.filters import AuditLogFilters
 from src.session import get_session
 
 
@@ -42,6 +44,42 @@ class AuditRepository:
             await self.session.rollback()
             raise
 
+    async def list_audit_logs(
+        self, filters: AuditLogFilters
+    ) -> tuple[list[AuditLog], int]:
+        stmt = select(AuditLog)
+        if filters.action:
+            stmt = stmt.where(AuditLog.action == filters.action)
+        if filters.actions:
+            stmt = stmt.where(AuditLog.action.in_(filters.actions))
+        if filters.result:
+            stmt = stmt.where(AuditLog.result == filters.result)
+        if filters.actor_id is not None:
+            stmt = stmt.where(AuditLog.actor_id == filters.actor_id)
+        if filters.resource_type:
+            stmt = stmt.where(AuditLog.resource_type == filters.resource_type)
+        if filters.resource_id:
+            stmt = stmt.where(AuditLog.resource_id == filters.resource_id)
+        if filters.ip:
+            stmt = stmt.where(AuditLog.ip == filters.ip)
+        if filters.request_id:
+            stmt = stmt.where(AuditLog.request_id == filters.request_id)
+        if filters.occurred_from:
+            stmt = stmt.where(AuditLog.occurred_at >= filters.occurred_from)
+        if filters.occurred_to:
+            stmt = stmt.where(AuditLog.occurred_at <= filters.occurred_to)
+
+        total_stmt = select(func.count()).select_from(stmt.subquery())
+        total = (await self.session.execute(total_stmt)).scalar_one()
+
+        stmt = (
+            stmt.order_by(AuditLog.occurred_at.desc())
+            .offset((filters.page - 1) * filters.size)
+            .limit(filters.size)
+        )
+        items = (await self.session.execute(stmt)).scalars().all()
+        return items, total
+
 
 class AuditService:
     def __init__(self, repository: AuditRepository):
@@ -73,6 +111,9 @@ class AuditService:
             )
         except Exception:
             logger.exception("Failed to create audit log")
+
+    async def list_logs(self, filters: AuditLogFilters) -> tuple[list[AuditLog], int]:
+        return await self.repository.list_audit_logs(filters)
 
 
 async def get_audit_service(

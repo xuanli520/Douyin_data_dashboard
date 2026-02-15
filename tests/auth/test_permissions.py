@@ -2,6 +2,7 @@ from src.auth.permissions import (
     DataSourcePermission,
     DataImportPermission,
     TaskPermission,
+    AuditPermission,
 )
 
 
@@ -47,3 +48,8 @@ def test_task_permission_codes():
     assert TaskPermission.CREATE == "task:create"
     assert TaskPermission.EXECUTE == "task:execute"
     assert TaskPermission.CANCEL == "task:cancel"
+
+
+def test_audit_permissions_constants():
+    assert AuditPermission.READ == "audit:read"
+    assert AuditPermission.EXPORT == "audit:export"
