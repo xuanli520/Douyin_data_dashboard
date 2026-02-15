@@ -88,3 +88,39 @@ class EndpointDeprecatedException(BusinessException):
             msg="该接口已弃用，请迁移到新接口",
             data=data if data else None,
         )
+
+
+class AuditInvalidActionException(BusinessException):
+    def __init__(self, invalid_value: str):
+        super().__init__(
+            code=ErrorCode.AUDIT_INVALID_ACTION,
+            msg=f"Invalid action: '{invalid_value}'",
+            data={"invalid_action": invalid_value},
+        )
+
+
+class AuditInvalidResultException(BusinessException):
+    def __init__(self, invalid_value: str):
+        super().__init__(
+            code=ErrorCode.AUDIT_INVALID_RESULT,
+            msg=f"Invalid result: '{invalid_value}'",
+            data={"invalid_result": invalid_value},
+        )
+
+
+class AuditInvalidTimeRangeException(BusinessException):
+    def __init__(self, occurred_from: str, occurred_to: str):
+        super().__init__(
+            code=ErrorCode.AUDIT_INVALID_TIME_RANGE,
+            msg="occurred_from must be less than or equal to occurred_to",
+            data={"occurred_from": occurred_from, "occurred_to": occurred_to},
+        )
+
+
+class AuditConflictActionFiltersException(BusinessException):
+    def __init__(self):
+        super().__init__(
+            code=ErrorCode.AUDIT_CONFLICT_ACTION_FILTERS,
+            msg="action and actions cannot be used together",
+            data={"action": None, "actions": None},
+        )
