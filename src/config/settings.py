@@ -11,6 +11,7 @@ from .rate_limit import RateLimitSettings
 from .circuit_breaker import CircuitBreakerSettings
 from .monitor import MonitorSettings
 from .cors import CorsSettings
+from .celery import CelerySettings
 
 
 class Settings(BaseSettings):
@@ -32,3 +33,4 @@ class Settings(BaseSettings):
     )
     monitor: MonitorSettings = Field(default_factory=MonitorSettings)
     cors: CorsSettings = Field(default_factory=CorsSettings)
+    celery: CelerySettings = Field(default_factory=CelerySettings)

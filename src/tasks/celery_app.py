@@ -1,12 +1,15 @@
 from celery import Celery
+from celery.signals import worker_process_init
 from src.config import get_settings
+from src.tasks.base import BaseTask
+
 
 settings = get_settings()
 
 celery_app = Celery(
     "douyin_dashboard",
-    broker=settings.cache.url,
-    backend=settings.cache.url,
+    broker=settings.celery.broker_url or settings.cache.url,
+    backend=settings.celery.result_backend or settings.cache.url,
     include=[
         "src.tasks.collection.douyin_orders",
         "src.tasks.collection.douyin_products",
@@ -38,4 +41,21 @@ celery_app.conf.update(
         "global_keyprefix": "douyin:celery:",
     },
     beat_schedule={},
+    task_routes={
+        "src.tasks.collection.*": {"queue": "collection"},
+        "src.tasks.etl.*": {"queue": "etl"},
+    },
 )
+
+
+@worker_process_init.connect
+def init_redis_connection(**kwargs):
+    from src.tasks.base import create_redis_connection
+
+    BaseTask._redis = None
+    BaseTask._redis = create_redis_connection()
+    import logging
+
+    logging.getLogger(__name__).info(
+        f"Redis connection initialized for worker pid={kwargs.get('pid')}"
+    )

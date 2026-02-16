@@ -117,12 +117,16 @@ class BaseTask(Task):
         return out
 
     def _safe_update_status(self, task_id: str, status: str, data: dict):
+        from src.config import get_settings
+
+        settings = get_settings()
+        ttl = settings.celery.task_status_ttl
         try:
             key = self.get_state_key(task_id)
             mapping = self._normalize_redis_hash({**data, "status": status})
             pipe = self.sync_redis.pipeline()
             pipe.hset(key, mapping=mapping)
-            pipe.expire(key, 60)
+            pipe.expire(key, ttl)
             pipe.execute()
         except Exception as e:
             logger.warning(f"Failed to update task status: {e}", exc_info=True)

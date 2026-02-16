@@ -149,7 +149,7 @@ class TestBaseTaskStatus:
         assert data["status"] == "RETRY"
 
     @patch("src.tasks.base.logger")
-    def test_status_ttl_is_60_seconds(
+    def test_status_ttl_is_configurable(
         self, mock_logger, base_task_instance, mock_redis
     ):
         from src.tasks.base import BaseTask
@@ -163,7 +163,7 @@ class TestBaseTaskStatus:
         key = task.get_state_key("test-task-id-ttl")
         ttl = mock_redis.ttl(key)
 
-        assert ttl <= 60
+        assert ttl == 3600  # 默认 task_status_ttl
         assert ttl > 0
 
     @patch("src.tasks.base.logger")
