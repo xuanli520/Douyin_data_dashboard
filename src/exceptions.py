@@ -124,3 +124,12 @@ class AuditConflictActionFiltersException(BusinessException):
             msg="action and actions cannot be used together",
             data={"action": None, "actions": None},
         )
+
+
+class ConfigInvalidException(BusinessException):
+    def __init__(self, field: str, reason: str):
+        super().__init__(
+            code=ErrorCode.CONFIG_INVALID,
+            msg=f"Invalid configuration: {field}",
+            data={"field": field, "reason": reason},
+        )

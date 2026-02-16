@@ -51,11 +51,14 @@ celery_app.conf.update(
 @worker_process_init.connect
 def init_redis_connection(**kwargs):
     from src.tasks.base import create_redis_connection
-
-    BaseTask._redis = None
-    BaseTask._redis = create_redis_connection()
     import logging
 
-    logging.getLogger(__name__).info(
-        f"Redis connection initialized for worker pid={kwargs.get('pid')}"
-    )
+    logger = logging.getLogger(__name__)
+
+    try:
+        BaseTask._redis = None
+        BaseTask._redis = create_redis_connection()
+        logger.info(f"Redis connection initialized for worker pid={kwargs.get('pid')}")
+    except Exception as e:
+        logger.error(f"Failed to initialize Redis connection: {e}")
+        BaseTask._redis = None

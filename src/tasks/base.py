@@ -118,9 +118,22 @@ class BaseTask(Task):
 
     def _safe_update_status(self, task_id: str, status: str, data: dict):
         from src.config import get_settings
+        from src.exceptions import ConfigInvalidException
 
         settings = get_settings()
         ttl = settings.celery.task_status_ttl
+
+        if ttl <= 0:
+            raise ConfigInvalidException(
+                field="celery.task_status_ttl",
+                reason=f"task_status_ttl must be greater than 0, got {ttl}",
+            )
+        if ttl > 31536000:
+            raise ConfigInvalidException(
+                field="celery.task_status_ttl",
+                reason=f"task_status_ttl cannot exceed 1 year (31536000 seconds), got {ttl}",
+            )
+
         try:
             key = self.get_state_key(task_id)
             mapping = self._normalize_redis_hash({**data, "status": status})
