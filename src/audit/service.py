@@ -64,6 +64,11 @@ class AuditRepository:
             stmt = stmt.where(AuditLog.ip == filters.ip)
         if filters.request_id:
             stmt = stmt.where(AuditLog.request_id == filters.request_id)
+        if filters.account_type:
+            account_type = filters.account_type.lower()
+            stmt = stmt.where(
+                func.lower(AuditLog.extra["account_type"].as_string()) == account_type
+            )
         if filters.occurred_from:
             stmt = stmt.where(AuditLog.occurred_at >= filters.occurred_from)
         if filters.occurred_to:
