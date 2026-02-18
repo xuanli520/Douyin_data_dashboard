@@ -21,6 +21,7 @@ class AuditLogFilters(BaseModel):
     resource_id: str | None = None
     ip: str | None = None
     request_id: str | None = None
+    account_type: str | None = None
     occurred_from: datetime | None = None
     occurred_to: datetime | None = None
     page: int = Field(1, ge=1)
@@ -91,6 +92,13 @@ class AuditLogFilters(BaseModel):
             if v is None:
                 return None
             return cls._coerce_result(v)
+        return v
+
+    @field_validator("account_type", mode="before")
+    @classmethod
+    def parse_account_type(cls, v):
+        if isinstance(v, str):
+            return cls._normalize_str(v)
         return v
 
     @model_validator(mode="after")
