@@ -34,8 +34,40 @@ class MetricPermission:
     VIEW = "metric:view"
 
 
+class ExperiencePermission:
+    VIEW = "experience:view"
+
+
+class DashboardPermission:
+    VIEW = "dashboard:view"
+
+
+class OrderPermission:
+    VIEW = "order:view"
+
+
+class ProductPermission:
+    VIEW = "product:view"
+
+
+class SalePermission:
+    VIEW = "sale:view"
+
+
+class AfterSalePermission:
+    VIEW = "after_sale:view"
+
+
 class ReportPermission:
     VIEW = "report:view"
+    GENERATE = "report:generate"
+    DOWNLOAD = "report:download"
+
+
+class ExportPermission:
+    VIEW = "export:view"
+    CREATE = "export:create"
+    DOWNLOAD = "export:download"
 
 
 class SchedulePermission:
@@ -48,6 +80,24 @@ class AnalysisPermission:
 
 class AlertPermission:
     VIEW = "alert:view"
+    ASSIGN = "alert:assign"
+    RESOLVE = "alert:resolve"
+    IGNORE = "alert:ignore"
+    RULE = "alert:rule"
+    ACKNOWLEDGE = "alert:acknowledge"
+
+
+class NotificationPermission:
+    VIEW = "notification:view"
+    TEST = "notification:test"
+
+
+class SystemPermission:
+    CONFIG = "system:config"
+    HEALTH = "system:health"
+    BACKUP = "system:backup"
+    CLEANUP = "system:cleanup"
+    USER_SETTINGS = "system:user_settings"
 
 
 class AuditPermission:

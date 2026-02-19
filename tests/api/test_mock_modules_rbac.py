@@ -55,10 +55,21 @@ async def permission_data(test_db):
             ("shop:view", "查看店铺", "shop"),
             ("shop:score", "查看店铺评分", "shop"),
             ("metric:view", "查看指标", "metric"),
+            ("experience:view", "查看体验分析", "experience"),
             ("report:view", "查看报表", "report"),
+            ("report:generate", "生成报表", "report"),
+            ("report:download", "下载报表", "report"),
             ("schedule:view", "查看调度", "schedule"),
             ("analysis:view", "查看分析", "analysis"),
             ("alert:view", "查看预警", "alert"),
+            ("alert:assign", "指派预警", "alert"),
+            ("alert:resolve", "解决预警", "alert"),
+            ("alert:ignore", "忽略预警", "alert"),
+            ("alert:rule", "管理预警规则", "alert"),
+            ("alert:acknowledge", "确认预警", "alert"),
+            ("task:view", "查看任务", "task"),
+            ("task:create", "创建任务", "task"),
+            ("task:execute", "执行任务", "task"),
         ]
 
         for code, name, module in perms_to_create:
@@ -71,10 +82,21 @@ async def permission_data(test_db):
         perm_shop_view = perm_map.get("shop:view")
         perm_shop_score = perm_map.get("shop:score")
         perm_metric_view = perm_map.get("metric:view")
+        perm_experience_view = perm_map.get("experience:view")
         perm_report_view = perm_map.get("report:view")
+        perm_report_generate = perm_map.get("report:generate")
+        perm_report_download = perm_map.get("report:download")
         perm_schedule_view = perm_map.get("schedule:view")
         perm_analysis_view = perm_map.get("analysis:view")
         perm_alert_view = perm_map.get("alert:view")
+        perm_alert_assign = perm_map.get("alert:assign")
+        perm_alert_resolve = perm_map.get("alert:resolve")
+        perm_alert_ignore = perm_map.get("alert:ignore")
+        perm_alert_rule = perm_map.get("alert:rule")
+        perm_alert_acknowledge = perm_map.get("alert:acknowledge")
+        perm_task_view = perm_map.get("task:view")
+        perm_task_create = perm_map.get("task:create")
+        perm_task_execute = perm_map.get("task:execute")
 
         role_result = await session.execute(
             select(Role).where(Role.name == "shop_manager")
@@ -110,10 +132,21 @@ async def permission_data(test_db):
             perm_shop_view,
             perm_shop_score,
             perm_metric_view,
+            perm_experience_view,
             perm_report_view,
+            perm_report_generate,
+            perm_report_download,
             perm_schedule_view,
             perm_analysis_view,
             perm_alert_view,
+            perm_alert_assign,
+            perm_alert_resolve,
+            perm_alert_ignore,
+            perm_alert_rule,
+            perm_alert_acknowledge,
+            perm_task_view,
+            perm_task_create,
+            perm_task_execute,
         ]
         for perm in perms:
             if perm:
@@ -175,6 +208,23 @@ class TestAlertsRBAC:
             api_client, "superuser@example.com", "superuser123"
         )
         response = await api_client.get("/api/v1/alerts", headers=headers)
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_alert_rules_requires_permission(self, api_client):
+        response = await api_client.get("/api/v1/alerts/rules")
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_alert_assign_with_permission(self, api_client, permission_data):
+        headers = await get_auth_headers(
+            api_client, "shopuser@example.com", "shopuser123"
+        )
+        response = await api_client.post(
+            "/api/v1/alerts/alert_1/assign",
+            json={"assignee": "owner_1"},
+            headers=headers,
+        )
         assert response.status_code == 200
 
 
@@ -267,6 +317,23 @@ class TestReportsRBAC:
         response = await api_client.get("/api/v1/reports", headers=headers)
         assert response.status_code == 200
 
+    @pytest.mark.asyncio
+    async def test_generate_report_requires_permission(self, api_client):
+        response = await api_client.post(
+            "/api/v1/reports/generate", json={"name": "demo", "type": "sales"}
+        )
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_download_report_with_permission(self, api_client, permission_data):
+        headers = await get_auth_headers(
+            api_client, "shopuser@example.com", "shopuser123"
+        )
+        response = await api_client.post(
+            "/api/v1/reports/report_1/download", headers=headers
+        )
+        assert response.status_code == 200
+
 
 class TestSchedulesRBAC:
     @pytest.mark.asyncio
@@ -337,4 +404,19 @@ class TestTaskRBAC:
     @pytest.mark.asyncio
     async def test_get_task_executions_requires_permission(self, api_client):
         response = await api_client.get("/api/v1/tasks/1/executions")
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_stop_task_requires_permission(self, api_client):
+        response = await api_client.post("/api/v1/tasks/1/stop")
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_execution_detail_requires_permission(self, api_client):
+        response = await api_client.get("/api/v1/tasks/1/executions/exec_1")
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_retry_execution_requires_permission(self, api_client):
+        response = await api_client.post("/api/v1/tasks/1/executions/exec_1/retry")
         assert response.status_code == 401
