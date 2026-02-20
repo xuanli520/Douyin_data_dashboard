@@ -205,6 +205,26 @@ class TestPlanned:
 
         assert exc_info.value.data == {"expected_release": "2026-04-01"}
 
+    def test_public_endpoint_hides_expected_release_for_anonymous(self):
+        @planned(expected_release="2026-04-01", is_public=True)
+        def sync_func():
+            pass
+
+        with pytest.raises(EndpointPlannedException) as exc_info:
+            sync_func(_planned_user=None)
+
+        assert exc_info.value.data is None
+
+    def test_public_endpoint_includes_expected_release_for_authenticated(self):
+        @planned(expected_release="2026-04-01", is_public=True)
+        def sync_func():
+            pass
+
+        with pytest.raises(EndpointPlannedException) as exc_info:
+            sync_func(_planned_user=object())
+
+        assert exc_info.value.data == {"expected_release": "2026-04-01"}
+
     @pytest.mark.asyncio
     async def test_async_raises_endpoint_planned_exception(self):
         @planned()

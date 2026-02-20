@@ -16,9 +16,18 @@ from src.api import (
     alerts_router,
     shops_router,
     metrics_router,
+    experience_router,
+    dashboard_router,
+    orders_router,
+    products_router,
+    sales_router,
+    after_sales_router,
+    notifications_router,
     reports_router,
+    exports_router,
     schedules_router,
     analysis_router,
+    system_router,
     permissions_router,
     audit_router,
 )
@@ -103,9 +112,18 @@ def create_app() -> FastAPI:
     app.include_router(alerts_router, prefix="/api/v1", tags=["alerts"])
     app.include_router(shops_router, prefix="/api/v1", tags=["shops"])
     app.include_router(metrics_router, prefix="/api/v1", tags=["metrics"])
+    app.include_router(experience_router, prefix="/api/v1", tags=["experience"])
+    app.include_router(dashboard_router, prefix="/api/v1", tags=["dashboard"])
+    app.include_router(orders_router, prefix="/api/v1", tags=["orders"])
+    app.include_router(products_router, prefix="/api/v1", tags=["products"])
+    app.include_router(sales_router, prefix="/api/v1", tags=["sales"])
+    app.include_router(after_sales_router, prefix="/api/v1", tags=["after-sales"])
+    app.include_router(notifications_router, prefix="/api/v1", tags=["notifications"])
     app.include_router(reports_router, prefix="/api/v1", tags=["reports"])
+    app.include_router(exports_router, prefix="/api/v1", tags=["exports"])
     app.include_router(schedules_router, prefix="/api/v1", tags=["schedules"])
     app.include_router(analysis_router, prefix="/api/v1", tags=["analysis"])
+    app.include_router(system_router, prefix="/api/v1", tags=["system"])
     app.include_router(permissions_router, prefix="/api/v1", tags=["permissions"])
     app.include_router(audit_router, prefix="/api/v1", tags=["audit"])
 

@@ -1,129 +1,37 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
-from src.auth import current_user, User
-from src.auth.rbac import require_permissions
+from src.api.v1.mock_data import build_metric_detail, normalize_dimension
+from src.auth import User, current_user
 from src.auth.permissions import MetricPermission
+from src.auth.rbac import require_permissions
 from src.core.endpoint_status import in_development
+from src.exceptions import EndpointInDevelopmentException
 
 router = APIRouter(prefix="/metrics", tags=["metrics"])
-
-
-MOCK_METRICS = {
-    "product": {
-        "id": "product",
-        "score": 100,
-        "themeKey": "product",
-        "subMetrics": [
-            {
-                "id": "p1",
-                "title": "商品综合评分",
-                "score": 100,
-                "weight": "90%",
-                "value": "4.8702",
-                "unit": "分",
-                "desc": "近30天消费者评价加权平均分",
-            },
-            {
-                "id": "p2",
-                "title": "商品品质退货率",
-                "score": 100,
-                "weight": "10%",
-                "value": "0.195%",
-                "unit": "",
-                "desc": "品质原因退货占比",
-            },
-        ],
-    },
-    "logistics": {
-        "id": "logistics",
-        "score": 100,
-        "themeKey": "logistics",
-        "subMetrics": [
-            {
-                "id": "l1",
-                "title": "揽收时效达成率",
-                "score": 100,
-                "weight": "15%",
-                "value": "100%",
-                "unit": "",
-            },
-            {
-                "id": "l2",
-                "title": "运单配送时效达成率",
-                "score": 100,
-                "weight": "70%",
-                "value": "95.79%",
-                "unit": "",
-            },
-            {
-                "id": "l3",
-                "title": "发货物流品退率",
-                "score": 100,
-                "weight": "15%",
-                "value": "0.02%",
-                "unit": "",
-            },
-        ],
-    },
-    "service": {
-        "id": "service",
-        "score": 100,
-        "themeKey": "service",
-        "subMetrics": [
-            {
-                "id": "s1",
-                "title": "飞鸽平均响应时长",
-                "score": 100,
-                "weight": "70%",
-                "value": "10.6s",
-                "unit": "",
-            },
-            {
-                "id": "s2",
-                "title": "售后处理时长达成率",
-                "score": 100,
-                "weight": "30%",
-                "value": "95.6%",
-                "unit": "",
-            },
-        ],
-    },
-    "risk": {
-        "id": "risk",
-        "score": 0,
-        "themeKey": "risk",
-        "isDeduction": True,
-        "subMetrics": [
-            {
-                "id": "r1",
-                "title": "虚假交易刷体验分扣分",
-                "score": 0,
-                "value": "0分",
-                "unit": "",
-                "isRisk": True,
-            },
-            {
-                "id": "r2",
-                "title": "影响消费者体验扣分",
-                "score": 0,
-                "value": "0分",
-                "unit": "",
-                "isRisk": True,
-            },
-        ],
-    },
-}
+EXPECTED_RELEASE = "2026-04-30"
 
 
 @router.get("/{metric_type}")
 @in_development(
-    mock_data=lambda: MOCK_METRICS["product"],
-    expected_release="2026-03-01",
+    mock_data={},
+    expected_release=EXPECTED_RELEASE,
+    prefer_real=True,
 )
 async def get_metric_detail(
     metric_type: str,
     period: str = "30d",
+    shop_id: int = Query(default=1001),
+    date_range: str | None = Query(default="30d"),
     user: User = Depends(current_user),
     _=Depends(require_permissions(MetricPermission.VIEW, bypass_superuser=True)),
 ):
-    pass
+    raise EndpointInDevelopmentException(
+        data=build_metric_detail(
+            metric_type=normalize_dimension(metric_type),
+            shop_id=shop_id,
+            date_range=date_range,
+            period=period,
+        ),
+        is_mock=True,
+        expected_release=EXPECTED_RELEASE,
+    )

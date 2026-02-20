@@ -7,7 +7,7 @@ from typing import Any, Callable, Literal
 from fastapi import Depends
 from fastapi.responses import JSONResponse
 
-from src.auth import User, current_user
+from src.auth import User, current_user, fastapi_users
 from src.exceptions import (
     EndpointDeprecatedException,
     EndpointInDevelopmentException,
@@ -125,23 +125,35 @@ def in_development(
 
 def planned(
     expected_release: str | None = None,
+    *,
+    is_public: bool = False,
 ):
+    planned_user_dependency = (
+        fastapi_users.current_user(active=True, optional=True)
+        if is_public
+        else current_user
+    )
+
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         async def async_wrapper(
             *args,
-            _planned_user: User = Depends(current_user),
+            _planned_user: User | None = Depends(planned_user_dependency),
             **kwargs,
         ) -> Any:
-            raise EndpointPlannedException(expected_release=expected_release)
+            raise EndpointPlannedException(
+                expected_release=expected_release if _planned_user else None
+            )
 
         @wraps(func)
         def sync_wrapper(
             *args,
-            _planned_user: User = Depends(current_user),
+            _planned_user: User | None = Depends(planned_user_dependency),
             **kwargs,
         ) -> Any:
-            raise EndpointPlannedException(expected_release=expected_release)
+            raise EndpointPlannedException(
+                expected_release=expected_release if _planned_user else None
+            )
 
         return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
 
