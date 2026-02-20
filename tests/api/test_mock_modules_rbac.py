@@ -420,3 +420,45 @@ class TestTaskRBAC:
     async def test_retry_execution_requires_permission(self, api_client):
         response = await api_client.post("/api/v1/tasks/1/executions/exec_1/retry")
         assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_list_tasks_with_permission(self, api_client, permission_data):
+        headers = await get_auth_headers(
+            api_client, "shopuser@example.com", "shopuser123"
+        )
+        response = await api_client.get("/api/v1/tasks", headers=headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert "data" in data
+
+    @pytest.mark.asyncio
+    async def test_create_task_with_permission(self, api_client, permission_data):
+        headers = await get_auth_headers(
+            api_client, "shopuser@example.com", "shopuser123"
+        )
+        response = await api_client.post(
+            "/api/v1/tasks",
+            json={"name": "mock-task", "task_type": "sync"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "data" in data
+
+    @pytest.mark.asyncio
+    async def test_run_task_with_permission(self, api_client, permission_data):
+        headers = await get_auth_headers(
+            api_client, "shopuser@example.com", "shopuser123"
+        )
+        response = await api_client.post("/api/v1/tasks/1/run", headers=headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert "data" in data
+
+    @pytest.mark.asyncio
+    async def test_run_task_superuser_bypass(self, api_client, superuser_data):
+        headers = await get_auth_headers(
+            api_client, "superuser@example.com", "superuser123"
+        )
+        response = await api_client.post("/api/v1/tasks/1/run", headers=headers)
+        assert response.status_code == 200

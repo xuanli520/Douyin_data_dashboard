@@ -75,7 +75,7 @@ async def create_task(
         request_id=request_id,
         user_agent=user_agent,
         ip=ip,
-        extra={"task_type": payload.task_type, "name": payload.name},
+        extra={"task_type": payload.task_type, "name": payload.name, "is_mock": True},
     )
     raise EndpointInDevelopmentException(
         data=build_task_create(payload.model_dump()),
@@ -104,6 +104,7 @@ async def run_task(
         request_id=request_id,
         user_agent=user_agent,
         ip=ip,
+        extra={"is_mock": True},
     )
     raise EndpointInDevelopmentException(
         data=build_task_action(task_id=task_id, action="run"),
@@ -132,6 +133,7 @@ async def stop_task(
         request_id=request_id,
         user_agent=user_agent,
         ip=ip,
+        extra={"is_mock": True},
     )
     raise EndpointInDevelopmentException(
         data=build_task_action(task_id=task_id, action="stop"),
