@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 
 from src.api.v1.mock_data import (
     build_system_backup,
@@ -95,14 +95,13 @@ async def run_system_cleanup(
 @router.get("/user-settings")
 @in_development(mock_data={}, expected_release=EXPECTED_RELEASE, prefer_real=True)
 async def get_user_settings(
-    user_id: int = Query(default=1),
     user: User = Depends(current_user),
     _=Depends(
         require_permissions(SystemPermission.USER_SETTINGS, bypass_superuser=True)
     ),
 ):
     raise EndpointInDevelopmentException(
-        data=build_system_user_settings(user_id=user_id),
+        data=build_system_user_settings(user_id=user.id),
         is_mock=True,
         expected_release=EXPECTED_RELEASE,
     )
@@ -112,7 +111,6 @@ async def get_user_settings(
 @in_development(mock_data={}, expected_release=EXPECTED_RELEASE, prefer_real=True)
 async def update_user_settings(
     payload: UserSettingsPatchPayload,
-    user_id: int = Query(default=1),
     user: User = Depends(current_user),
     _=Depends(
         require_permissions(SystemPermission.USER_SETTINGS, bypass_superuser=True)
@@ -120,7 +118,7 @@ async def update_user_settings(
 ):
     raise EndpointInDevelopmentException(
         data=patch_system_user_settings(
-            user_id=user_id,
+            user_id=user.id,
             payload=payload.model_dump(exclude_none=True),
         ),
         is_mock=True,

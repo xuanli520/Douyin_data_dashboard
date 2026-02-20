@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from math import ceil
 from typing import Literal
 
-ExperienceDimension = Literal["product", "logistics", "service", "risk"]
+from src.api.v1.mock_schemas import build_pagination_meta
+
+ExperienceDimension = Literal["product", "logistics", "service", "risk", "all"]
 
 SUPPORTED_EXPERIENCE_DIMENSIONS: tuple[ExperienceDimension, ...] = (
     "product",
@@ -123,24 +124,14 @@ _METRIC_LIBRARY: dict[ExperienceDimension, list[dict[str, str]]] = {
 }
 
 
-def build_pagination_meta(page: int, size: int, total: int) -> dict[str, int | bool]:
-    size = max(size, 1)
-    page = max(page, 1)
-    pages = max(ceil(total / size), 1) if total else 0
-    return {
-        "page": page,
-        "size": size,
-        "total": total,
-        "pages": pages,
-        "has_next": page < pages,
-        "has_prev": page > 1 and pages > 0,
-    }
-
-
 def normalize_dimension(dimension: str | None) -> ExperienceDimension:
     if dimension in SUPPORTED_EXPERIENCE_DIMENSIONS:
         return dimension
-    return "product"
+    if dimension == "all":
+        return "all"
+    if dimension is None:
+        return "product"
+    raise ValueError(f"Unsupported dimension: {dimension}")
 
 
 def _parse_date_range(date_range: str | None) -> tuple[datetime, datetime]:

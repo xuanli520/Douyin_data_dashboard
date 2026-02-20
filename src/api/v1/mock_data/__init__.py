@@ -41,11 +41,11 @@ from .experience import (
     build_experience_overview,
     build_experience_trend,
     build_metric_detail,
-    build_pagination_meta,
     build_shop_score,
     build_shops_data,
     normalize_dimension,
 )
+from src.api.v1.mock_schemas import build_pagination_meta
 
 __all__ = [
     "SUPPORTED_EXPERIENCE_DIMENSIONS",

@@ -1,21 +1,8 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from math import ceil
 
-
-def build_pagination_meta(page: int, size: int, total: int) -> dict[str, int | bool]:
-    size = max(size, 1)
-    page = max(page, 1)
-    pages = max(ceil(total / size), 1) if total else 0
-    return {
-        "page": page,
-        "size": size,
-        "total": total,
-        "pages": pages,
-        "has_next": page < pages,
-        "has_prev": page > 1 and pages > 0,
-    }
+from src.api.v1.mock_schemas import build_pagination_meta
 
 
 def _core_numbers(shop_id: int, date_range: str | None) -> dict[str, float | int]:
@@ -313,7 +300,20 @@ def build_alerts(
         if (not level or item["level"] == level)
         and (not status or item["status"] == status)
         and (not assignee or item["assignee"] == assignee)
+        and (not shop_id or item["shop_id"] == shop_id)
     ]
+    if date_range and date_range != "30d":
+        try:
+            start_dt, end_dt = _parse_date_range_for_alerts(date_range)
+            filtered = [
+                item
+                for item in filtered
+                if start_dt
+                <= datetime.fromisoformat(item["occurred_at"].replace("Z", "+00:00"))
+                <= end_dt
+            ]
+        except (ValueError, TypeError):
+            pass
     page = max(page, 1)
     size = max(size, 1)
     start = (page - 1) * size
@@ -332,6 +332,27 @@ def build_alerts(
         "meta": build_pagination_meta(page=page, size=size, total=len(filtered)),
         "summary": summary,
     }
+
+
+def _parse_date_range_for_alerts(date_range: str) -> tuple[datetime, datetime]:
+    now = datetime.now(tz=UTC)
+    clean = date_range.strip()
+    if "," in clean:
+        start_raw, end_raw = [part.strip() for part in clean.split(",", 1)]
+        try:
+            start = datetime.strptime(start_raw, "%Y-%m-%d").replace(tzinfo=UTC)
+            end = datetime.strptime(end_raw, "%Y-%m-%d").replace(tzinfo=UTC)
+            if start <= end:
+                return start, end
+        except ValueError:
+            pass
+    if clean.endswith("d"):
+        try:
+            days = int(clean[:-1])
+            return now - timedelta(days=days), now
+        except ValueError:
+            pass
+    return now - timedelta(days=29), now
 
 
 def build_alert_action(
@@ -458,6 +479,19 @@ def build_tasks(
         if (not status or item["last_status"] == status)
         and (not task_type or item["task_type"] == task_type)
     ]
+    if date_range and date_range != "30d":
+        try:
+            start_dt, end_dt = _parse_date_range_for_alerts(date_range)
+            filtered = [
+                item
+                for item in filtered
+                if item["last_run_at"]
+                and start_dt
+                <= datetime.fromisoformat(item["last_run_at"].replace("Z", "+00:00"))
+                <= end_dt
+            ]
+        except (ValueError, TypeError):
+            pass
     page = max(page, 1)
     size = max(size, 1)
     start = (page - 1) * size
