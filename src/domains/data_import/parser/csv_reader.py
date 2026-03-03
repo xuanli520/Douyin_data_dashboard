@@ -21,14 +21,26 @@ class CSVParser:
             if not raw_data:
                 return "utf-8"
             result = chardet.detect(raw_data)
-            encoding = result.get("encoding", "utf-8")
-            if encoding is None or encoding.lower() in (
+            detected = result.get("encoding")
+            detected_lower = detected.lower() if detected else ""
+            candidates: list[str] = []
+            if detected and detected_lower not in {
                 "ascii",
                 "macroman",
+                "windows-1250",
                 "windows-1252",
-            ):
-                return "utf-8"
-            return encoding
+            }:
+                candidates.append(detected)
+            candidates.extend(["utf-8", "gbk"])
+            if detected and detected not in candidates:
+                candidates.append(detected)
+            for encoding in candidates:
+                try:
+                    raw_data.decode(encoding)
+                    return encoding
+                except UnicodeDecodeError:
+                    continue
+            return "utf-8"
 
     def _count_rows(self, encoding: str) -> int:
         with open(self.file_path, encoding=encoding, newline="") as f:
