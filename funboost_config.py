@@ -14,9 +14,7 @@ class BrokerConnConfig(DataClassBase):
     REDIS_DB = settings.funboost.queue_redis_db
     REDIS_DB_FILTER_AND_RPC_RESULT = settings.funboost.filter_and_rpc_result_redis_db
     if REDIS_PASSWORD:
-        REDIS_URL = (
-            f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
-        )
+        REDIS_URL = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
     else:
         REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
 
