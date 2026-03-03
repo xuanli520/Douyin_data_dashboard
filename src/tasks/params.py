@@ -1,20 +1,33 @@
 from funboost import BoosterParams
 from funboost.constant import ConcurrentModeEnum
+from pydantic import Field
 
 from src.config import get_settings
 
-_funboost_settings = get_settings().funboost
+
+def _get_funboost_settings():
+    return get_settings().funboost
 
 
 class DouyinTaskParams(BoosterParams):
-    broker_kind: str = _funboost_settings.broker_kind
-    max_retry_times: int = _funboost_settings.default_max_retry_times
-    retry_interval: int = _funboost_settings.default_retry_interval
-    function_timeout: int = _funboost_settings.default_function_timeout
+    broker_kind: str = Field(
+        default_factory=lambda: _get_funboost_settings().broker_kind
+    )
+    max_retry_times: int = Field(
+        default_factory=lambda: _get_funboost_settings().default_max_retry_times
+    )
+    retry_interval: int = Field(
+        default_factory=lambda: _get_funboost_settings().default_retry_interval
+    )
+    function_timeout: int = Field(
+        default_factory=lambda: _get_funboost_settings().default_function_timeout
+    )
     is_using_rpc_mode: bool = False
-    broker_exclusive_config = {
-        "pull_msg_batch_size": _funboost_settings.pull_msg_batch_size
-    }
+    broker_exclusive_config: dict = Field(
+        default_factory=lambda: {
+            "pull_msg_batch_size": _get_funboost_settings().pull_msg_batch_size
+        }
+    )
 
 
 class CollectionTaskParams(DouyinTaskParams):

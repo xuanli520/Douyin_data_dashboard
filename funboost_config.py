@@ -1,5 +1,6 @@
+import logging
+
 from funboost.utils.simple_data_class import DataClassBase
-from loguru import logger
 
 from src.config import get_settings
 
@@ -21,4 +22,4 @@ class BrokerConnConfig(DataClassBase):
 class FunboostCommonConfig(DataClassBase):
     TIMEZONE = "Asia/Shanghai"
     NB_LOG_FORMATER_INDEX_FOR_CONSUMER_AND_PUBLISHER = 11
-    FUNBOOST_PROMPT_LOG_LEVEL = logger.level("INFO").name
+    FUNBOOST_PROMPT_LOG_LEVEL = logging.INFO
