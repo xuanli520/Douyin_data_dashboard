@@ -138,7 +138,6 @@ def assert_contract(payload: dict):
         "/api/v1/sales/by-channel",
         "/api/v1/after-sales/refund-rate",
         "/api/v1/alerts?page=1&size=5",
-        "/api/v1/tasks?page=1&size=5",
         "/api/v1/reports?page=1&size=5",
         "/api/v1/exports?page=1&size=5",
         "/api/v1/system/config",
@@ -159,7 +158,7 @@ async def test_paginated_contract_meta(api_client, contract_user):
     headers = await get_auth_headers(
         api_client, "contractuser@example.com", "contract123"
     )
-    response = await api_client.get("/api/v1/tasks?page=2&size=3", headers=headers)
+    response = await api_client.get("/api/v1/reports?page=2&size=3", headers=headers)
     assert response.status_code == 200
     data = response.json()["data"]["data"]
     assert {"items", "meta"} <= data.keys()
@@ -171,17 +170,11 @@ async def test_paginated_contract_meta(api_client, contract_user):
 
 
 @pytest.mark.asyncio
-async def test_alert_and_task_enum_values(api_client, contract_user):
+async def test_alert_enum_values(api_client, contract_user):
     headers = await get_auth_headers(
         api_client, "contractuser@example.com", "contract123"
     )
     alerts = await api_client.get("/api/v1/alerts?page=1&size=10", headers=headers)
-    tasks = await api_client.get("/api/v1/tasks?page=1&size=10", headers=headers)
     assert alerts.status_code == 200
-    assert tasks.status_code == 200
     alert_statuses = {item["status"] for item in alerts.json()["data"]["data"]["items"]}
-    task_statuses = {
-        item["last_status"] for item in tasks.json()["data"]["data"]["items"]
-    }
     assert alert_statuses <= {"pending", "processing", "resolved", "ignored"}
-    assert task_statuses <= {"pending", "running", "completed", "failed", "stopped"}

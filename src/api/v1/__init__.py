@@ -15,6 +15,7 @@ from . import (
     shops,
     system,
     task,
+    task_status,
 )
 from . import alerts as alert_module
 from .permissions import router as permissions_router
@@ -38,4 +39,5 @@ __all__ = [
     "shops",
     "system",
     "task",
+    "task_status",
 ]
