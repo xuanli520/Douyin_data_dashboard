@@ -27,6 +27,18 @@ run port=PORT:
 @test:
     uv run --frozen pytest -xvs tests
 
+# Start all funboost workers
+@funboost-worker:
+    uv run --frozen python -m src.tasks.worker
+
+# Start a single funboost queue worker
+@funboost-worker-q queue:
+    uv run --frozen python -m src.tasks.worker --queue {{queue}}
+
+# Start funboost beat scheduler
+@funboost-beat:
+    uv run --frozen python -m src.tasks.beat
+
 # Generate database migration
 @db-migrate message:
     uv run alembic revision --autogenerate -m "{{message}}"
