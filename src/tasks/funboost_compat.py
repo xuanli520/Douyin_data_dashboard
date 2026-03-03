@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 import uuid
 from dataclasses import dataclass
@@ -8,21 +9,32 @@ from typing import Any, Callable
 
 from pydantic import BaseModel
 
-try:
-    from funboost import (  # type: ignore
-        ApsJobAdder,
-        AbstractConsumer,
-        BoosterParams,
-        BrokerEnum,
-        boost,
-        fct,
-    )
-    from funboost.constant import ConcurrentModeEnum  # type: ignore
-    from funboost.core.exceptions import FunboostException  # type: ignore
-    from funboost.core.function_result_status_saver import (  # type: ignore
-        FunctionResultStatus,
-    )
-except ModuleNotFoundError:
+_FORCE_LOCAL_COMPAT = os.getenv("TASKS_FUNBOOST_COMPAT_MODE", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+if not _FORCE_LOCAL_COMPAT:
+    try:
+        from funboost import (  # type: ignore
+            ApsJobAdder,
+            AbstractConsumer,
+            BoosterParams,
+            BrokerEnum,
+            boost,
+            fct,
+        )
+        from funboost.constant import ConcurrentModeEnum  # type: ignore
+        from funboost.core.exceptions import FunboostException  # type: ignore
+        from funboost.core.function_result_status_saver import (  # type: ignore
+            FunctionResultStatus,
+        )
+    except ModuleNotFoundError:
+        _FORCE_LOCAL_COMPAT = True
+
+if _FORCE_LOCAL_COMPAT:
 
     class BrokerEnum:
         REDIS_ACK_ABLE = "REDIS_ACK_ABLE"
