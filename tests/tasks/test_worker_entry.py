@@ -35,11 +35,68 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
         lambda n: calls.append(("etl_products", n)),
         raising=False,
     )
+    monkeypatch.setattr(
+        module.douyin_orders.handle_collection_orders_dead_letter,
+        "consume",
+        lambda: calls.append("collection_orders_dlx"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        module.douyin_products.handle_collection_products_dead_letter,
+        "consume",
+        lambda: calls.append("collection_products_dlx"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        module.etl_orders.handle_etl_orders_dead_letter,
+        "consume",
+        lambda: calls.append("etl_orders_dlx"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        module.etl_products.handle_etl_products_dead_letter,
+        "consume",
+        lambda: calls.append("etl_products_dlx"),
+        raising=False,
+    )
+
+    class _FakeThread:
+        def __init__(self, target, name):
+            self._target = target
+            self.name = name
+
+        def start(self):
+            self._target()
+
+        def join(self):
+            return None
+
+    monkeypatch.setattr(module, "Thread", _FakeThread)
 
     module.run_all(etl_processes=2)
-    assert calls == [
+    assert len(calls) == 8
+    assert {
         "collection_orders",
         "collection_products",
         ("etl_orders", 2),
         ("etl_products", 2),
-    ]
+        "collection_orders_dlx",
+        "collection_products_dlx",
+        "etl_orders_dlx",
+        "etl_products_dlx",
+    } == set(calls)
+
+
+def test_worker_run_queue_supports_dead_letter_queue(monkeypatch):
+    from src.tasks import worker as module
+
+    calls = []
+    monkeypatch.setattr(
+        module.etl_orders.handle_etl_orders_dead_letter,
+        "consume",
+        lambda: calls.append("etl_orders_dlx"),
+        raising=False,
+    )
+
+    module.run_queue("etl_orders_dlx", etl_processes=2)
+    assert calls == ["etl_orders_dlx"]

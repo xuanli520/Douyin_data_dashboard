@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from functools import wraps
 from typing import Any
@@ -11,6 +12,16 @@ from src.tasks.funboost_compat import boost, fct
 from src.tasks.idempotency import FunboostIdempotencyHelper
 from src.tasks.params import CollectionTaskParams
 
+logger = logging.getLogger(__name__)
+
+
+def _parse_retry_after(value: Any) -> int:
+    try:
+        retry_after = int(float(value))
+    except (TypeError, ValueError):
+        return 1
+    return retry_after if retry_after > 0 else 0
+
 
 def retry_with_backoff(func):
     @wraps(func)
@@ -18,7 +29,7 @@ def retry_with_backoff(func):
         try:
             return func(*args, **kwargs)
         except ScrapingRateLimitException as exc:
-            retry_after = int(exc.error_data.get("retry_after", 1))
+            retry_after = _parse_retry_after(exc.error_data.get("retry_after", 1))
             if retry_after > 0:
                 time.sleep(retry_after)
             raise
@@ -27,19 +38,22 @@ def retry_with_backoff(func):
 
 
 def _write_started_status(task_func, task_name: str, triggered_by: int | None) -> None:
-    redis_client = task_func.publisher.redis_db_frame
-    task_id = str(getattr(fct, "task_id", "unknown"))
-    key = f"douyin:task:status:{task_id}"
-    redis_client.hset(
-        key,
-        mapping={
-            "status": "STARTED",
-            "started_at": time.time(),
-            "task_name": task_name,
-            "triggered_by": triggered_by if triggered_by is not None else "",
-        },
-    )
-    redis_client.expire(key, get_settings().funboost.status_ttl_seconds)
+    try:
+        redis_client = task_func.publisher.redis_db_frame
+        task_id = str(getattr(fct, "task_id", "unknown"))
+        key = f"douyin:task:status:{task_id}"
+        redis_client.hset(
+            key,
+            mapping={
+                "status": "STARTED",
+                "started_at": time.time(),
+                "task_name": task_name,
+                "triggered_by": triggered_by if triggered_by is not None else "",
+            },
+        )
+        redis_client.expire(key, get_settings().funboost.status_ttl_seconds)
+    except Exception:
+        logger.exception("failed to write started task status: %s", task_name)
 
 
 @boost(

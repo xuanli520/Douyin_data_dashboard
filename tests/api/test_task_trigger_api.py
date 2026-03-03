@@ -1,11 +1,14 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
+from datetime import date as date_type
 
 from src.auth.captcha import get_captcha_service
 from src.audit.schemas import AuditAction, AuditLog
 from src.cache import get_cache
+from src.exceptions import BusinessException
 from src.main import app
+from src.shared.errors import ErrorCode
 
 
 class MockCaptchaService:
@@ -54,7 +57,7 @@ async def permission_data(test_db):
         result = await session.execute(select(Permission))
         perm_map = {p.code: p for p in result.scalars().all()}
 
-        for code in ("task:view", "task:execute"):
+        for code in ("task:view", "task:execute", "task:create"):
             if code not in perm_map:
                 perm = Permission(code=code, name=code, module="task")
                 session.add(perm)
@@ -84,7 +87,7 @@ async def permission_data(test_db):
         await session.refresh(user)
 
         session.add(UserRole(user_id=user.id, role_id=role.id))
-        for code in ("task:view", "task:execute"):
+        for code in ("task:view", "task:execute", "task:create"):
             session.add(
                 RolePermission(role_id=role.id, permission_id=perm_map[code].id)
             )
@@ -172,3 +175,104 @@ async def test_collection_orders_trigger_push_and_audit(
     assert audit_log.extra is not None
     assert audit_log.extra["queue_name"] == "collection_orders"
     assert audit_log.extra["payload"]["shop_id"] == "shop-1"
+
+
+@pytest.mark.asyncio
+async def test_legacy_create_task_dispatches_by_task_type(
+    api_client, permission_data, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from src.api.v1 import task as task_module
+
+    called = {"orders": 0, "products": 0}
+    pushed_kwargs = {}
+
+    def _fake_orders_push(**_kwargs):
+        called["orders"] += 1
+        return SimpleNamespace(task_id="legacy-orders-task")
+
+    def _fake_products_push(**kwargs):
+        called["products"] += 1
+        pushed_kwargs.update(kwargs)
+        return SimpleNamespace(task_id="legacy-products-task")
+
+    monkeypatch.setattr(
+        task_module.sync_orders, "push", _fake_orders_push, raising=False
+    )
+    monkeypatch.setattr(
+        task_module.sync_products, "push", _fake_products_push, raising=False
+    )
+
+    headers = await get_auth_headers(api_client, "shopuser@example.com", "shopuser123")
+    response = await api_client.post(
+        "/api/v1/tasks",
+        json={"name": "shop-9", "task_type": "PRODUCT_SYNC"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["queue_name"] == "collection_products"
+    assert data["task_id"] == "legacy-products-task"
+    assert called["orders"] == 0
+    assert called["products"] == 1
+    assert pushed_kwargs["shop_id"] == "shop-9"
+
+
+@pytest.mark.asyncio
+async def test_legacy_run_task_accepts_task_type_override(
+    api_client, permission_data, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from src.api.v1 import task as task_module
+
+    calls = []
+
+    def _fake_etl_orders_push(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(task_id="legacy-run-etl-orders")
+
+    monkeypatch.setattr(
+        task_module.process_orders, "push", _fake_etl_orders_push, raising=False
+    )
+
+    headers = await get_auth_headers(api_client, "shopuser@example.com", "shopuser123")
+    response = await api_client.post(
+        "/api/v1/tasks/12/run?task_type=ETL_ORDERS",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["queue_name"] == "etl_orders"
+    assert data["task_id"] == "legacy-run-etl-orders"
+    assert calls and calls[0]["batch_date"] == date_type.today().isoformat()
+
+
+@pytest.mark.asyncio
+async def test_legacy_create_task_invalid_task_type_returns_business_error(
+    api_client, permission_data
+):
+    headers = await get_auth_headers(api_client, "shopuser@example.com", "shopuser123")
+    response = await api_client.post(
+        "/api/v1/tasks",
+        json={"name": "shop-9", "task_type": "INVALID_TASK_TYPE"},
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["code"] == int(ErrorCode.TASK_TYPE_UNSUPPORTED)
+
+
+def test_trigger_result_missing_task_id_raises_business_exception():
+    from src.api.v1.task import _trigger_result
+
+    with pytest.raises(BusinessException) as exc_info:
+        _trigger_result(
+            async_result=object(), queue_name="collection_orders", user_id=1
+        )
+
+    assert exc_info.value.code == ErrorCode.TASK_PUSH_FAILED

@@ -3,8 +3,9 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from redis import Redis
+from redis.exceptions import RedisError
 
 from src.audit import AuditService, get_audit_service
 from src.audit.dependencies import generate_request_id
@@ -14,6 +15,7 @@ from src.auth import User, current_user
 from src.auth.permissions import TaskPermission
 from src.auth.rbac import require_permissions
 from src.config import get_settings
+from src.exceptions import TaskNotFoundException, TaskStatusBackendUnavailableException
 
 router = APIRouter(prefix="/task-status", tags=["task-status"])
 
@@ -21,7 +23,16 @@ router = APIRouter(prefix="/task-status", tags=["task-status"])
 @lru_cache(maxsize=1)
 def _get_redis_client() -> Redis:
     settings = get_settings()
-    return Redis.from_url(settings.cache.url, decode_responses=True)
+    cache_settings = settings.cache
+    status_db = settings.funboost.filter_and_rpc_result_redis_db
+    if cache_settings.password:
+        url = (
+            f"redis://:{cache_settings.password}@"
+            f"{cache_settings.host}:{cache_settings.port}/{status_db}"
+        )
+    else:
+        url = f"redis://{cache_settings.host}:{cache_settings.port}/{status_db}"
+    return Redis.from_url(url, decode_responses=True)
 
 
 @router.get("/{task_id}")
@@ -37,11 +48,13 @@ async def get_task_status(
     key = f"douyin:task:status:{task_id}"
     try:
         data = redis_client.hgetall(key)
-    except Exception:
-        data = {}
+    except RedisError as exc:
+        raise TaskStatusBackendUnavailableException() from exc
+    except Exception as exc:
+        raise TaskStatusBackendUnavailableException() from exc
 
     if not data:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise TaskNotFoundException(task_id=task_id)
 
     user_agent, ip = extract_client_info(request)
     await audit_service.log(

@@ -6,6 +6,7 @@ from src.auth.captcha import get_captcha_service
 from src.audit.schemas import AuditAction, AuditLog
 from src.cache import get_cache
 from src.main import app
+from src.shared.errors import ErrorCode
 
 
 class MockCaptchaService:
@@ -98,12 +99,22 @@ async def test_get_task_status_requires_permission(api_client):
 
 
 @pytest.mark.asyncio
-async def test_get_task_status_not_found(api_client, permission_data):
+async def test_get_task_status_not_found(api_client, permission_data, monkeypatch):
+    from src.api.v1 import task_status as module
+
+    class _FakeRedis:
+        def hgetall(self, _key):
+            return {}
+
+    monkeypatch.setattr(module, "_get_redis_client", lambda: _FakeRedis())
+
     headers = await get_auth_headers(
         api_client, "statususer@example.com", "statususer123"
     )
     response = await api_client.get("/api/v1/task-status/task-id-1", headers=headers)
     assert response.status_code == 404
+    payload = response.json()
+    assert payload["code"] == int(ErrorCode.TASK_NOT_FOUND)
 
 
 @pytest.mark.asyncio
@@ -149,3 +160,24 @@ async def test_get_task_status_success_and_audit(
     assert audit_log is not None
     assert audit_log.extra is not None
     assert audit_log.extra["status_key"] == "douyin:task:status:task-id-2"
+
+
+@pytest.mark.asyncio
+async def test_get_task_status_redis_error_returns_503(
+    api_client, permission_data, monkeypatch
+):
+    from src.api.v1 import task_status as module
+
+    class _BrokenRedis:
+        def hgetall(self, _key):
+            raise RuntimeError("redis down")
+
+    monkeypatch.setattr(module, "_get_redis_client", lambda: _BrokenRedis())
+
+    headers = await get_auth_headers(
+        api_client, "statususer@example.com", "statususer123"
+    )
+    response = await api_client.get("/api/v1/task-status/task-id-3", headers=headers)
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload["code"] == int(ErrorCode.TASK_STATUS_BACKEND_UNAVAILABLE)

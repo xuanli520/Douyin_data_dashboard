@@ -1,33 +1,53 @@
 from __future__ import annotations
 
 import argparse
+from threading import Thread
+from typing import Callable
 
 from src.tasks.collection import douyin_orders, douyin_products
 from src.tasks.etl import orders as etl_orders
 from src.tasks.etl import products as etl_products
 
 
+def _queue_runners(etl_processes: int) -> dict[str, Callable[[], None]]:
+    return {
+        "collection_orders": lambda: douyin_orders.sync_orders.consume(),
+        "collection_products": lambda: douyin_products.sync_products.consume(),
+        "etl_orders": lambda: etl_orders.process_orders.multi_process_consume(
+            etl_processes
+        ),
+        "etl_products": lambda: etl_products.process_products.multi_process_consume(
+            etl_processes
+        ),
+        "collection_orders_dlx": lambda: (
+            douyin_orders.handle_collection_orders_dead_letter.consume()
+        ),
+        "collection_products_dlx": lambda: (
+            douyin_products.handle_collection_products_dead_letter.consume()
+        ),
+        "etl_orders_dlx": lambda: etl_orders.handle_etl_orders_dead_letter.consume(),
+        "etl_products_dlx": lambda: (
+            etl_products.handle_etl_products_dead_letter.consume()
+        ),
+    }
+
+
 def run_all(etl_processes: int = 2) -> None:
-    douyin_orders.sync_orders.consume()
-    douyin_products.sync_products.consume()
-    etl_orders.process_orders.multi_process_consume(etl_processes)
-    etl_products.process_products.multi_process_consume(etl_processes)
+    threads = [
+        Thread(target=runner, name=f"worker-{queue_name}")
+        for queue_name, runner in _queue_runners(etl_processes).items()
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
 
 
 def run_queue(queue_name: str, etl_processes: int = 2) -> None:
-    if queue_name == "collection_orders":
-        douyin_orders.sync_orders.consume()
-        return
-    if queue_name == "collection_products":
-        douyin_products.sync_products.consume()
-        return
-    if queue_name == "etl_orders":
-        etl_orders.process_orders.multi_process_consume(etl_processes)
-        return
-    if queue_name == "etl_products":
-        etl_products.process_products.multi_process_consume(etl_processes)
-        return
-    raise ValueError(f"unsupported queue name: {queue_name}")
+    runner = _queue_runners(etl_processes).get(queue_name)
+    if runner is None:
+        raise ValueError(f"unsupported queue name: {queue_name}")
+    runner()
 
 
 def _parse_args() -> argparse.Namespace:

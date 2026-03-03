@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date as date_type
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 
 from src.audit import AuditService, get_audit_service
@@ -13,6 +13,7 @@ from src.audit.service import extract_client_info
 from src.auth import User, current_user
 from src.auth.permissions import TaskPermission
 from src.auth.rbac import require_permissions
+from src.exceptions import TaskPushFailedException, TaskTypeUnsupportedException
 from src.tasks.collection.douyin_orders import sync_orders
 from src.tasks.collection.douyin_products import sync_products
 from src.tasks.etl.orders import process_orders
@@ -62,7 +63,7 @@ async def _log_task_trigger(
 def _trigger_result(async_result: Any, queue_name: str, user_id: int) -> dict[str, Any]:
     task_id = getattr(async_result, "task_id", None)
     if not task_id:
-        raise HTTPException(status_code=500, detail="Task push failed: missing task_id")
+        raise TaskPushFailedException()
     return {"task_id": str(task_id), "queue_name": queue_name, "triggered_by": user_id}
 
 
@@ -199,6 +200,56 @@ class LegacyTaskCreatePayload(BaseModel):
     task_type: str
 
 
+def _normalize_legacy_task_type(task_type: str) -> str:
+    return task_type.strip().upper().replace("-", "_")
+
+
+def _push_legacy_task(
+    task_type: str, task_name: str, triggered_by: int
+) -> tuple[Any, str]:
+    normalized = _normalize_legacy_task_type(task_type)
+    today = date_type.today().isoformat()
+
+    if normalized in {"ORDER_COLLECTION", "COLLECTION_ORDERS", "SYNC_ORDERS"}:
+        return (
+            sync_orders.push(
+                shop_id=task_name,
+                date=today,
+                triggered_by=triggered_by,
+            ),
+            "collection_orders",
+        )
+
+    if normalized in {
+        "PRODUCT_SYNC",
+        "PRODUCT_COLLECTION",
+        "COLLECTION_PRODUCTS",
+        "SYNC_PRODUCTS",
+    }:
+        return (
+            sync_products.push(
+                shop_id=task_name,
+                date=today,
+                triggered_by=triggered_by,
+            ),
+            "collection_products",
+        )
+
+    if normalized in {"ETL_ORDERS", "ORDER_ETL"}:
+        return (
+            process_orders.push(batch_date=today, triggered_by=triggered_by),
+            "etl_orders",
+        )
+
+    if normalized in {"ETL_PRODUCTS", "PRODUCT_ETL"}:
+        return (
+            process_products.push(batch_date=today, triggered_by=triggered_by),
+            "etl_products",
+        )
+
+    raise TaskTypeUnsupportedException(task_type=task_type)
+
+
 @router.post("")
 async def create_task(
     request: Request,
@@ -208,18 +259,18 @@ async def create_task(
     request_id: str = Depends(generate_request_id),
     _=Depends(require_permissions(TaskPermission.CREATE, bypass_superuser=True)),
 ) -> dict[str, Any]:
-    push_result = sync_orders.push(
-        shop_id=payload.name,
-        date=date_type.today().isoformat(),
+    push_result, queue_name = _push_legacy_task(
+        task_type=payload.task_type,
+        task_name=payload.name,
         triggered_by=user.id,
     )
-    response_data = _trigger_result(push_result, "collection_orders", user.id)
+    response_data = _trigger_result(push_result, queue_name, user.id)
     await _log_task_trigger(
         request=request,
         audit_service=audit_service,
         request_id=request_id,
         user=user,
-        queue_name="collection_orders",
+        queue_name=queue_name,
         payload=payload.model_dump(mode="json"),
         task_id=response_data["task_id"],
     )
@@ -230,24 +281,25 @@ async def create_task(
 async def run_task(
     request: Request,
     task_id: int,
+    task_type: str = Query(default="ORDER_COLLECTION"),
     user: User = Depends(current_user),
     audit_service: AuditService = Depends(get_audit_service),
     request_id: str = Depends(generate_request_id),
     _=Depends(require_permissions(TaskPermission.EXECUTE, bypass_superuser=True)),
 ) -> dict[str, Any]:
-    push_result = sync_orders.push(
-        shop_id=f"task-{task_id}",
-        date=date_type.today().isoformat(),
+    push_result, queue_name = _push_legacy_task(
+        task_type=task_type,
+        task_name=f"task-{task_id}",
         triggered_by=user.id,
     )
-    response_data = _trigger_result(push_result, "collection_orders", user.id)
+    response_data = _trigger_result(push_result, queue_name, user.id)
     await _log_task_trigger(
         request=request,
         audit_service=audit_service,
         request_id=request_id,
         user=user,
-        queue_name="collection_orders",
-        payload={"legacy_task_id": task_id},
+        queue_name=queue_name,
+        payload={"legacy_task_id": task_id, "task_type": task_type},
         task_id=response_data["task_id"],
     )
     return response_data
