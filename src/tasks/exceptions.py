@@ -1,6 +1,6 @@
 from enum import IntEnum
 
-from funboost.core.exceptions import FunboostException
+from src.tasks.funboost_compat import FunboostException
 
 
 class TaskErrorCode(IntEnum):

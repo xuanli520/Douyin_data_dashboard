@@ -1,8 +1,7 @@
-from funboost import BoosterParams
-from funboost.constant import ConcurrentModeEnum
 from pydantic import Field
 
 from src.config import get_settings
+from src.tasks.funboost_compat import BoosterParams, ConcurrentModeEnum
 
 
 def _get_funboost_settings():

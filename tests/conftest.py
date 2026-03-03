@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -13,6 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
 
 dotenv.load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env-example")  # noqa: E402
+os.environ.setdefault("TASKS_FUNBOOST_COMPAT_MODE", "1")  # noqa: E402
 
 from migrations.seed_data import insert_rbac_seed_data_async  # noqa: E402
 from src.auth.captcha import get_captcha_service  # noqa: E402

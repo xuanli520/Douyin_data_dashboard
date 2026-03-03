@@ -124,3 +124,39 @@ class AuditConflictActionFiltersException(BusinessException):
             msg="action and actions cannot be used together",
             data={"action": None, "actions": None},
         )
+
+
+class TaskNotFoundException(BusinessException):
+    def __init__(self, task_id: str):
+        super().__init__(
+            code=ErrorCode.TASK_NOT_FOUND,
+            msg="Task not found",
+            data={"task_id": task_id},
+        )
+
+
+class TaskPushFailedException(BusinessException):
+    def __init__(self):
+        super().__init__(
+            code=ErrorCode.TASK_PUSH_FAILED,
+            msg="Task push failed: missing task_id",
+            data=None,
+        )
+
+
+class TaskTypeUnsupportedException(BusinessException):
+    def __init__(self, task_type: str):
+        super().__init__(
+            code=ErrorCode.TASK_TYPE_UNSUPPORTED,
+            msg="Unsupported legacy task_type",
+            data={"task_type": task_type},
+        )
+
+
+class TaskStatusBackendUnavailableException(BusinessException):
+    def __init__(self):
+        super().__init__(
+            code=ErrorCode.TASK_STATUS_BACKEND_UNAVAILABLE,
+            msg="Task status backend unavailable",
+            data=None,
+        )

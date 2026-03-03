@@ -13,6 +13,7 @@ from src.api import (
     scraping_rule_router,
     data_import_router,
     task_router,
+    task_status_router,
     alerts_router,
     shops_router,
     metrics_router,
@@ -109,6 +110,7 @@ def create_app() -> FastAPI:
     app.include_router(monitor_router, prefix="/monitor")
     app.include_router(data_import_router, prefix="/api/v1", tags=["data-import"])
     app.include_router(task_router, prefix="/api/v1", tags=["task"])
+    app.include_router(task_status_router, prefix="/api/v1", tags=["task-status"])
     app.include_router(alerts_router, prefix="/api/v1", tags=["alerts"])
     app.include_router(shops_router, prefix="/api/v1", tags=["shops"])
     app.include_router(metrics_router, prefix="/api/v1", tags=["metrics"])

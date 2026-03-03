@@ -1,7 +1,5 @@
-from funboost import AbstractConsumer
-from funboost.core.function_result_status_saver import FunctionResultStatus
-
 from src.config import get_settings
+from src.tasks.funboost_compat import AbstractConsumer, FunctionResultStatus
 
 
 class TaskStatusMixin(AbstractConsumer):

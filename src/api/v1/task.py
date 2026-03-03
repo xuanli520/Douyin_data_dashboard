@@ -1,16 +1,11 @@
+from __future__ import annotations
+
+from datetime import date as date_type
 from typing import Any
 
-from pydantic import BaseModel
 from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel, Field
 
-from src.api.v1.mock_data import (
-    build_task_action,
-    build_task_create,
-    build_task_execution_detail,
-    build_task_executions,
-    build_task_retry,
-    build_tasks,
-)
 from src.audit import AuditService, get_audit_service
 from src.audit.dependencies import generate_request_id
 from src.audit.schemas import AuditAction, AuditResult
@@ -18,171 +13,303 @@ from src.audit.service import extract_client_info
 from src.auth import User, current_user
 from src.auth.permissions import TaskPermission
 from src.auth.rbac import require_permissions
-from src.core.endpoint_status import in_development
-from src.exceptions import EndpointInDevelopmentException
+from src.exceptions import TaskPushFailedException, TaskTypeUnsupportedException
+from src.tasks.collection.douyin_orders import sync_orders
+from src.tasks.collection.douyin_products import sync_products
+from src.tasks.etl.orders import process_orders
+from src.tasks.etl.products import process_products
 
 router = APIRouter(prefix="/tasks", tags=["task"])
-EXPECTED_RELEASE = "2026-04-30"
 
 
-class TaskCreatePayload(BaseModel):
-    name: str
-    task_type: str
-    config: dict[str, Any] | None = None
+class CollectionTriggerPayload(BaseModel):
+    shop_id: str = Field(min_length=1)
+    date: date_type
 
 
-@router.get("")
-@in_development(mock_data={}, expected_release=EXPECTED_RELEASE, prefer_real=True)
-async def list_tasks(
-    status: str | None = Query(default=None),
-    task_type: str | None = Query(default=None),
-    date_range: str | None = Query(default="30d"),
-    page: int = Query(default=1, ge=1),
-    size: int = Query(default=20, ge=1, le=200),
-    user: User = Depends(current_user),
-    _=Depends(require_permissions(TaskPermission.VIEW, bypass_superuser=True)),
-):
-    raise EndpointInDevelopmentException(
-        data=build_tasks(
-            status=status,
-            task_type=task_type,
-            date_range=date_range,
-            page=page,
-            size=size,
-        ),
-        is_mock=True,
-        expected_release=EXPECTED_RELEASE,
-    )
+class EtlTriggerPayload(BaseModel):
+    batch_date: date_type
 
 
-@router.post("")
-@in_development(mock_data={}, expected_release=EXPECTED_RELEASE, prefer_real=True)
-async def create_task(
+def _audit_extra(
+    queue_name: str, payload: dict[str, Any], task_id: str
+) -> dict[str, Any]:
+    return {"queue_name": queue_name, "payload": payload, "task_id": task_id}
+
+
+async def _log_task_trigger(
     request: Request,
-    payload: TaskCreatePayload,
-    user: User = Depends(current_user),
-    audit_service: AuditService = Depends(get_audit_service),
-    request_id: str = Depends(generate_request_id),
-    _=Depends(require_permissions(TaskPermission.CREATE, bypass_superuser=True)),
-):
-    user_agent, ip = extract_client_info(request)
-    await audit_service.log(
-        action=AuditAction.TASK_CREATE,
-        result=AuditResult.SUCCESS,
-        actor_id=user.id,
-        resource_type="task",
-        resource_id=payload.name,
-        request_id=request_id,
-        user_agent=user_agent,
-        ip=ip,
-        extra={"task_type": payload.task_type, "name": payload.name, "is_mock": True},
-    )
-    raise EndpointInDevelopmentException(
-        data=build_task_create(payload.model_dump()),
-        is_mock=True,
-        expected_release=EXPECTED_RELEASE,
-    )
-
-
-@router.post("/{task_id}/run")
-@in_development(mock_data={}, expected_release=EXPECTED_RELEASE, prefer_real=True)
-async def run_task(
-    request: Request,
-    task_id: int,
-    user: User = Depends(current_user),
-    audit_service: AuditService = Depends(get_audit_service),
-    request_id: str = Depends(generate_request_id),
-    _=Depends(require_permissions(TaskPermission.EXECUTE, bypass_superuser=True)),
-):
+    audit_service: AuditService,
+    request_id: str,
+    user: User,
+    queue_name: str,
+    payload: dict[str, Any],
+    task_id: str,
+) -> None:
     user_agent, ip = extract_client_info(request)
     await audit_service.log(
         action=AuditAction.TASK_RUN,
         result=AuditResult.SUCCESS,
         actor_id=user.id,
         resource_type="task",
-        resource_id=str(task_id),
+        resource_id=task_id,
         request_id=request_id,
         user_agent=user_agent,
         ip=ip,
-        extra={"is_mock": True},
-    )
-    raise EndpointInDevelopmentException(
-        data=build_task_action(task_id=task_id, action="run"),
-        is_mock=True,
-        expected_release=EXPECTED_RELEASE,
+        extra=_audit_extra(queue_name=queue_name, payload=payload, task_id=task_id),
     )
 
 
-@router.post("/{task_id}/stop")
-@in_development(mock_data={}, expected_release=EXPECTED_RELEASE, prefer_real=True)
-async def stop_task(
+def _trigger_result(async_result: Any, queue_name: str, user_id: int) -> dict[str, Any]:
+    task_id = getattr(async_result, "task_id", None)
+    if not task_id:
+        raise TaskPushFailedException()
+    return {"task_id": str(task_id), "queue_name": queue_name, "triggered_by": user_id}
+
+
+@router.post("/collection/orders/trigger")
+async def trigger_collection_orders(
     request: Request,
-    task_id: int,
+    payload: CollectionTriggerPayload,
     user: User = Depends(current_user),
     audit_service: AuditService = Depends(get_audit_service),
     request_id: str = Depends(generate_request_id),
     _=Depends(require_permissions(TaskPermission.EXECUTE, bypass_superuser=True)),
-):
-    user_agent, ip = extract_client_info(request)
-    await audit_service.log(
-        action=AuditAction.TASK_STOP,
-        result=AuditResult.SUCCESS,
-        actor_id=user.id,
-        resource_type="task",
-        resource_id=str(task_id),
+) -> dict[str, Any]:
+    push_result = sync_orders.push(
+        shop_id=payload.shop_id,
+        date=payload.date.isoformat(),
+        triggered_by=user.id,
+    )
+    response_data = _trigger_result(push_result, "collection_orders", user.id)
+    await _log_task_trigger(
+        request=request,
+        audit_service=audit_service,
         request_id=request_id,
-        user_agent=user_agent,
-        ip=ip,
-        extra={"is_mock": True},
+        user=user,
+        queue_name="collection_orders",
+        payload=payload.model_dump(mode="json"),
+        task_id=response_data["task_id"],
     )
-    raise EndpointInDevelopmentException(
-        data=build_task_action(task_id=task_id, action="stop"),
-        is_mock=True,
-        expected_release=EXPECTED_RELEASE,
-    )
+    return response_data
 
 
-@router.get("/{task_id}/executions")
-@in_development(mock_data={}, expected_release=EXPECTED_RELEASE, prefer_real=True)
-async def get_task_executions(
-    task_id: int,
+@router.post("/collection/products/trigger")
+async def trigger_collection_products(
+    request: Request,
+    payload: CollectionTriggerPayload,
+    user: User = Depends(current_user),
+    audit_service: AuditService = Depends(get_audit_service),
+    request_id: str = Depends(generate_request_id),
+    _=Depends(require_permissions(TaskPermission.EXECUTE, bypass_superuser=True)),
+) -> dict[str, Any]:
+    push_result = sync_products.push(
+        shop_id=payload.shop_id,
+        date=payload.date.isoformat(),
+        triggered_by=user.id,
+    )
+    response_data = _trigger_result(push_result, "collection_products", user.id)
+    await _log_task_trigger(
+        request=request,
+        audit_service=audit_service,
+        request_id=request_id,
+        user=user,
+        queue_name="collection_products",
+        payload=payload.model_dump(mode="json"),
+        task_id=response_data["task_id"],
+    )
+    return response_data
+
+
+@router.post("/etl/orders/trigger")
+async def trigger_etl_orders(
+    request: Request,
+    payload: EtlTriggerPayload,
+    user: User = Depends(current_user),
+    audit_service: AuditService = Depends(get_audit_service),
+    request_id: str = Depends(generate_request_id),
+    _=Depends(require_permissions(TaskPermission.EXECUTE, bypass_superuser=True)),
+) -> dict[str, Any]:
+    push_result = process_orders.push(
+        batch_date=payload.batch_date.isoformat(),
+        triggered_by=user.id,
+    )
+    response_data = _trigger_result(push_result, "etl_orders", user.id)
+    await _log_task_trigger(
+        request=request,
+        audit_service=audit_service,
+        request_id=request_id,
+        user=user,
+        queue_name="etl_orders",
+        payload=payload.model_dump(mode="json"),
+        task_id=response_data["task_id"],
+    )
+    return response_data
+
+
+@router.post("/etl/products/trigger")
+async def trigger_etl_products(
+    request: Request,
+    payload: EtlTriggerPayload,
+    user: User = Depends(current_user),
+    audit_service: AuditService = Depends(get_audit_service),
+    request_id: str = Depends(generate_request_id),
+    _=Depends(require_permissions(TaskPermission.EXECUTE, bypass_superuser=True)),
+) -> dict[str, Any]:
+    push_result = process_products.push(
+        batch_date=payload.batch_date.isoformat(),
+        triggered_by=user.id,
+    )
+    response_data = _trigger_result(push_result, "etl_products", user.id)
+    await _log_task_trigger(
+        request=request,
+        audit_service=audit_service,
+        request_id=request_id,
+        user=user,
+        queue_name="etl_products",
+        payload=payload.model_dump(mode="json"),
+        task_id=response_data["task_id"],
+    )
+    return response_data
+
+
+# Backward compatible endpoints kept during migration window.
+@router.get("")
+async def list_tasks(
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=200),
     user: User = Depends(current_user),
     _=Depends(require_permissions(TaskPermission.VIEW, bypass_superuser=True)),
-):
-    raise EndpointInDevelopmentException(
-        data=build_task_executions(task_id=task_id, page=page, size=size),
-        is_mock=True,
-        expected_release=EXPECTED_RELEASE,
+) -> dict[str, Any]:
+    _ = user
+    return {
+        "items": [],
+        "meta": {
+            "page": page,
+            "size": size,
+            "total": 0,
+            "pages": 0,
+            "has_next": False,
+            "has_prev": page > 1,
+        },
+    }
+
+
+class LegacyTaskCreatePayload(BaseModel):
+    name: str
+    task_type: str
+
+
+def _normalize_legacy_task_type(task_type: str) -> str:
+    return task_type.strip().upper().replace("-", "_")
+
+
+def _push_legacy_task(
+    task_type: str, task_name: str, triggered_by: int
+) -> tuple[Any, str]:
+    normalized = _normalize_legacy_task_type(task_type)
+    today = date_type.today().isoformat()
+
+    if normalized in {"ORDER_COLLECTION", "COLLECTION_ORDERS", "SYNC_ORDERS"}:
+        return (
+            sync_orders.push(
+                shop_id=task_name,
+                date=today,
+                triggered_by=triggered_by,
+            ),
+            "collection_orders",
+        )
+
+    if normalized in {
+        "PRODUCT_SYNC",
+        "PRODUCT_COLLECTION",
+        "COLLECTION_PRODUCTS",
+        "SYNC_PRODUCTS",
+    }:
+        return (
+            sync_products.push(
+                shop_id=task_name,
+                date=today,
+                triggered_by=triggered_by,
+            ),
+            "collection_products",
+        )
+
+    if normalized in {"ETL_ORDERS", "ORDER_ETL"}:
+        return (
+            process_orders.push(batch_date=today, triggered_by=triggered_by),
+            "etl_orders",
+        )
+
+    if normalized in {"ETL_PRODUCTS", "PRODUCT_ETL"}:
+        return (
+            process_products.push(batch_date=today, triggered_by=triggered_by),
+            "etl_products",
+        )
+
+    raise TaskTypeUnsupportedException(task_type=task_type)
+
+
+@router.post("")
+async def create_task(
+    request: Request,
+    payload: LegacyTaskCreatePayload,
+    user: User = Depends(current_user),
+    audit_service: AuditService = Depends(get_audit_service),
+    request_id: str = Depends(generate_request_id),
+    _=Depends(require_permissions(TaskPermission.CREATE, bypass_superuser=True)),
+) -> dict[str, Any]:
+    push_result, queue_name = _push_legacy_task(
+        task_type=payload.task_type,
+        task_name=payload.name,
+        triggered_by=user.id,
     )
+    response_data = _trigger_result(push_result, queue_name, user.id)
+    await _log_task_trigger(
+        request=request,
+        audit_service=audit_service,
+        request_id=request_id,
+        user=user,
+        queue_name=queue_name,
+        payload=payload.model_dump(mode="json"),
+        task_id=response_data["task_id"],
+    )
+    return response_data
 
 
-@router.get("/{task_id}/executions/{execution_id}")
-@in_development(mock_data={}, expected_release=EXPECTED_RELEASE, prefer_real=True)
-async def get_task_execution_detail(
+@router.post("/{task_id}/run")
+async def run_task(
+    request: Request,
     task_id: int,
-    execution_id: str,
+    task_type: str = Query(default="ORDER_COLLECTION"),
+    user: User = Depends(current_user),
+    audit_service: AuditService = Depends(get_audit_service),
+    request_id: str = Depends(generate_request_id),
+    _=Depends(require_permissions(TaskPermission.EXECUTE, bypass_superuser=True)),
+) -> dict[str, Any]:
+    push_result, queue_name = _push_legacy_task(
+        task_type=task_type,
+        task_name=f"task-{task_id}",
+        triggered_by=user.id,
+    )
+    response_data = _trigger_result(push_result, queue_name, user.id)
+    await _log_task_trigger(
+        request=request,
+        audit_service=audit_service,
+        request_id=request_id,
+        user=user,
+        queue_name=queue_name,
+        payload={"legacy_task_id": task_id, "task_type": task_type},
+        task_id=response_data["task_id"],
+    )
+    return response_data
+
+
+@router.get("/{task_id}/executions")
+async def get_task_executions(
+    task_id: int,
     user: User = Depends(current_user),
     _=Depends(require_permissions(TaskPermission.VIEW, bypass_superuser=True)),
-):
-    raise EndpointInDevelopmentException(
-        data=build_task_execution_detail(task_id=task_id, execution_id=execution_id),
-        is_mock=True,
-        expected_release=EXPECTED_RELEASE,
-    )
-
-
-@router.post("/{task_id}/executions/{execution_id}/retry")
-@in_development(mock_data={}, expected_release=EXPECTED_RELEASE, prefer_real=True)
-async def retry_task_execution(
-    task_id: int,
-    execution_id: str,
-    user: User = Depends(current_user),
-    _=Depends(require_permissions(TaskPermission.EXECUTE, bypass_superuser=True)),
-):
-    raise EndpointInDevelopmentException(
-        data=build_task_retry(task_id=task_id, execution_id=execution_id),
-        is_mock=True,
-        expected_release=EXPECTED_RELEASE,
-    )
+) -> dict[str, Any]:
+    _ = user
+    return {"task_id": task_id, "items": []}

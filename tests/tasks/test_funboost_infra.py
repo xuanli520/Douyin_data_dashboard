@@ -16,6 +16,7 @@ def _load_module(module_name: str, file_path: Path):
     if spec is None or spec.loader is None:
         raise RuntimeError(f"failed to load module: {module_name}")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -81,3 +82,20 @@ def test_task_params_read_latest_settings_per_instance(monkeypatch):
     get_settings.cache_clear()
     second = module.DouyinTaskParams(queue_name="q")
     assert second.max_retry_times == 9
+
+
+def test_funboost_compat_can_force_local_stub(monkeypatch):
+    fake_funboost = types.ModuleType("funboost")
+    monkeypatch.setitem(sys.modules, "funboost", fake_funboost)
+    monkeypatch.setenv("TASKS_FUNBOOST_COMPAT_MODE", "1")
+
+    module = _load_module("test_funboost_compat", ROOT / "src/tasks/funboost_compat.py")
+
+    params = module.BoosterParams(queue_name="q-test")
+
+    @module.boost(params)
+    def _task(x):
+        return x
+
+    assert _task("ok") == "ok"
+    assert _task.boost_params.queue_name == "q-test"

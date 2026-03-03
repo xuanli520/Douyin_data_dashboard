@@ -300,3 +300,6 @@ k8s/secret.yaml
 
 # Git worktrees
 .worktrees/
+
+# Local upload artifacts
+uploads/
