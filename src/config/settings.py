@@ -6,6 +6,7 @@ from .auth import AuthSettings
 from .cache import CacheSettings
 from .captcha import CaptchaSettings
 from .database import DatabaseSettings
+from .funboost import FunboostSettings
 from .log import LogSettings
 from .rate_limit import RateLimitSettings
 from .circuit_breaker import CircuitBreakerSettings
@@ -32,3 +33,4 @@ class Settings(BaseSettings):
     )
     monitor: MonitorSettings = Field(default_factory=MonitorSettings)
     cors: CorsSettings = Field(default_factory=CorsSettings)
+    funboost: FunboostSettings = Field(default_factory=FunboostSettings)

@@ -24,6 +24,7 @@ dependencies = [
     "alibabacloud_tea_util>=0.3.0",
     "openpyxl>=3.1.0",
     "chardet>=5.2.0",
+    "funboost>=48.4.1",
 ]
 
 [dependency-groups]
