@@ -1,7 +1,9 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
 from src.auth.captcha import get_captcha_service
+from src.audit.schemas import AuditAction, AuditLog
 from src.cache import get_cache
 from src.main import app
 
@@ -102,3 +104,48 @@ async def test_get_task_status_not_found(api_client, permission_data):
     )
     response = await api_client.get("/api/v1/task-status/task-id-1", headers=headers)
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_task_status_success_and_audit(
+    api_client, permission_data, test_db, monkeypatch
+):
+    from src.api.v1 import task_status as module
+
+    class _FakeRedis:
+        def hgetall(self, key):
+            assert key == "douyin:task:status:task-id-2"
+            return {
+                "status": "SUCCESS",
+                "task_name": "sync_orders",
+                "triggered_by": str(permission_data.id),
+            }
+
+    monkeypatch.setattr(module, "_get_redis_client", lambda: _FakeRedis())
+
+    headers = await get_auth_headers(
+        api_client, "statususer@example.com", "statususer123"
+    )
+    response = await api_client.get("/api/v1/task-status/task-id-2", headers=headers)
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["task_id"] == "task-id-2"
+    assert payload["status"]["status"] == "SUCCESS"
+
+    async with test_db() as session:
+        result = await session.execute(
+            select(AuditLog)
+            .where(
+                AuditLog.action == AuditAction.PROTECTED_RESOURCE_ACCESS,
+                AuditLog.actor_id == permission_data.id,
+                AuditLog.resource_type == "task_status",
+                AuditLog.resource_id == "task-id-2",
+            )
+            .order_by(AuditLog.id.desc())
+        )
+        audit_log = result.scalars().first()
+
+    assert audit_log is not None
+    assert audit_log.extra is not None
+    assert audit_log.extra["status_key"] == "douyin:task:status:task-id-2"
