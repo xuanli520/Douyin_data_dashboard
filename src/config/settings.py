@@ -12,6 +12,7 @@ from .rate_limit import RateLimitSettings
 from .circuit_breaker import CircuitBreakerSettings
 from .monitor import MonitorSettings
 from .cors import CorsSettings
+from .shop_dashboard import ShopDashboardSettings
 
 
 class Settings(BaseSettings):
@@ -34,3 +35,6 @@ class Settings(BaseSettings):
     monitor: MonitorSettings = Field(default_factory=MonitorSettings)
     cors: CorsSettings = Field(default_factory=CorsSettings)
     funboost: FunboostSettings = Field(default_factory=FunboostSettings)
+    shop_dashboard: ShopDashboardSettings = Field(
+        default_factory=ShopDashboardSettings
+    )
