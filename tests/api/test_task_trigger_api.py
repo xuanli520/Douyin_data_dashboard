@@ -95,6 +95,57 @@ async def permission_data(test_db):
         yield user
 
 
+@pytest.fixture
+async def no_execute_permission_data(test_db):
+    from fastapi_users.password import PasswordHelper
+    from sqlalchemy import select
+
+    from src.auth import User
+    from src.auth.models import Permission, Role, RolePermission, UserRole
+
+    password_helper = PasswordHelper()
+    hashed_password = password_helper.hash("readonly123")
+
+    async with test_db() as session:
+        result = await session.execute(select(Permission))
+        perm_map = {p.code: p for p in result.scalars().all()}
+
+        if "task:view" not in perm_map:
+            perm = Permission(code="task:view", name="task:view", module="task")
+            session.add(perm)
+            await session.commit()
+            perm_map["task:view"] = perm
+
+        role_result = await session.execute(
+            select(Role).where(Role.name == "task_viewer")
+        )
+        role = role_result.scalar_one_or_none()
+        if not role:
+            role = Role(name="task_viewer", description="Task Viewer")
+            session.add(role)
+            await session.commit()
+            await session.refresh(role)
+
+        user = User(
+            username="readonly",
+            email="readonly@example.com",
+            hashed_password=hashed_password,
+            is_active=True,
+            is_verified=True,
+            is_superuser=False,
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+
+        session.add(UserRole(user_id=user.id, role_id=role.id))
+        session.add(
+            RolePermission(role_id=role.id, permission_id=perm_map["task:view"].id)
+        )
+        await session.commit()
+        yield user
+
+
 @pytest.mark.asyncio
 async def test_collection_orders_trigger_requires_permission(api_client):
     response = await api_client.post(
@@ -102,6 +153,19 @@ async def test_collection_orders_trigger_requires_permission(api_client):
         json={"shop_id": "shop-1", "date": "2026-03-03"},
     )
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_collection_orders_trigger_forbidden_without_execute_permission(
+    api_client, no_execute_permission_data
+):
+    headers = await get_auth_headers(api_client, "readonly@example.com", "readonly123")
+    response = await api_client.post(
+        "/api/v1/tasks/collection/orders/trigger",
+        json={"shop_id": "shop-1", "date": "2026-03-03"},
+        headers=headers,
+    )
+    assert response.status_code == 403
 
 
 @pytest.mark.asyncio
