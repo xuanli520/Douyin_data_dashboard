@@ -325,6 +325,26 @@ class TestAdminRolesAPI:
         data = response.json()
         assert data["data"]["name"] == "test_role"
 
+    async def test_update_role_description_persists(self, test_client):
+        create_resp = await test_client.post(
+            "/api/admin/roles",
+            json={
+                "name": "updatable_role",
+                "description": "before",
+            },
+        )
+        role_id = create_resp.json()["data"]["id"]
+
+        update_resp = await test_client.patch(
+            f"/api/admin/roles/{role_id}",
+            json={"description": "after"},
+        )
+        assert update_resp.status_code == 200
+
+        detail_resp = await test_client.get(f"/api/admin/roles/{role_id}")
+        assert detail_resp.status_code == 200
+        assert detail_resp.json()["data"]["description"] == "after"
+
 
 class TestAdminPermissionsAPI:
     async def test_list_permissions(self, test_client):
