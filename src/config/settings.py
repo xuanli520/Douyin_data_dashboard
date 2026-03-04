@@ -35,6 +35,4 @@ class Settings(BaseSettings):
     monitor: MonitorSettings = Field(default_factory=MonitorSettings)
     cors: CorsSettings = Field(default_factory=CorsSettings)
     funboost: FunboostSettings = Field(default_factory=FunboostSettings)
-    shop_dashboard: ShopDashboardSettings = Field(
-        default_factory=ShopDashboardSettings
-    )
+    shop_dashboard: ShopDashboardSettings = Field(default_factory=ShopDashboardSettings)

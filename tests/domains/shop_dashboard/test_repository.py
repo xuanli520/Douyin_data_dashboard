@@ -92,15 +92,19 @@ async def test_replace_reviews_by_shop_and_date(test_db):
         )
 
         rows = (
-            await session.execute(
-                select(ShopDashboardReview)
-                .where(
-                    ShopDashboardReview.shop_id == "shop-1",
-                    ShopDashboardReview.metric_date == metric_date,
+            (
+                await session.execute(
+                    select(ShopDashboardReview)
+                    .where(
+                        ShopDashboardReview.shop_id == "shop-1",
+                        ShopDashboardReview.metric_date == metric_date,
+                    )
+                    .order_by(ShopDashboardReview.review_id)
                 )
-                .order_by(ShopDashboardReview.review_id)
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
         assert len(rows) == 2
         assert [row.review_id for row in rows] == ["r-2", "r-3"]
@@ -154,15 +158,19 @@ async def test_replace_violations_by_shop_and_date(test_db):
         )
 
         rows = (
-            await session.execute(
-                select(ShopDashboardViolation)
-                .where(
-                    ShopDashboardViolation.shop_id == "shop-1",
-                    ShopDashboardViolation.metric_date == metric_date,
+            (
+                await session.execute(
+                    select(ShopDashboardViolation)
+                    .where(
+                        ShopDashboardViolation.shop_id == "shop-1",
+                        ShopDashboardViolation.metric_date == metric_date,
+                    )
+                    .order_by(ShopDashboardViolation.violation_id)
                 )
-                .order_by(ShopDashboardViolation.violation_id)
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
         assert len(rows) == 2
         assert [row.violation_id for row in rows] == ["v-2", "v-3"]

@@ -32,7 +32,9 @@ def upgrade() -> None:
         sa.Column("service_score", sa.Float(), nullable=False),
         sa.Column("source", sa.String(length=20), nullable=False),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("shop_id", "metric_date", name="uq_shop_dashboard_score_day"),
+        sa.UniqueConstraint(
+            "shop_id", "metric_date", name="uq_shop_dashboard_score_day"
+        ),
     )
     op.create_index(
         op.f("ix_shop_dashboard_scores_metric_date"),
