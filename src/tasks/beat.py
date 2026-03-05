@@ -5,13 +5,14 @@ import time
 
 from sqlalchemy import select
 
+from src import session
+from src.config import get_settings
 from src.domains.data_source.enums import ScrapingRuleStatus
 from src.domains.data_source.models import ScrapingRule
 from src.tasks.collection.douyin_orders import sync_orders
 from src.tasks.collection.douyin_products import sync_products
 from src.tasks.collection.douyin_shop_dashboard import sync_shop_dashboard
 from src.tasks.funboost_compat import ApsJobAdder
-from src.session import async_session_factory
 
 
 def register_jobs() -> None:
@@ -77,14 +78,15 @@ def _load_active_shop_dashboard_rules() -> list[dict]:
 
 
 async def _load_active_shop_dashboard_rules_async() -> list[dict]:
-    if async_session_factory is None:
+    session_factory = session.async_session_factory
+    if session_factory is None:
         return []
-    async with async_session_factory() as session:
+    async with session_factory() as db_session:
         stmt = select(ScrapingRule).where(
             ScrapingRule.status == ScrapingRuleStatus.ACTIVE,
             ScrapingRule.schedule.is_not(None),
         )
-        rows = list((await session.execute(stmt)).scalars().all())
+        rows = list((await db_session.execute(stmt)).scalars().all())
         return [
             {
                 "rule_id": row.id if row.id is not None else 0,
@@ -96,7 +98,13 @@ async def _load_active_shop_dashboard_rules_async() -> list[dict]:
         ]
 
 
+def _init_scheduler_db() -> None:
+    settings = get_settings()
+    asyncio.run(session.init_db(settings.db.url, settings.db.echo))
+
+
 def main() -> None:
+    _init_scheduler_db()
     register_jobs()
     while True:
         time.sleep(60)

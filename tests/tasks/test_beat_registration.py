@@ -29,3 +29,23 @@ def test_register_jobs_uses_fixed_ids(monkeypatch):
     assert "daily_collection_orders_sync" in add_ids
     assert "daily_collection_products_sync" in add_ids
     assert "scraping_rule_99_collection_shop_dashboard_sync" in add_ids
+
+
+def test_main_initializes_db_before_register_jobs(monkeypatch):
+    from src.tasks import beat as module
+
+    calls = []
+    monkeypatch.setattr(module, "_init_scheduler_db", lambda: calls.append("init_db"))
+    monkeypatch.setattr(module, "register_jobs", lambda: calls.append("register_jobs"))
+
+    def _stop_loop(_seconds):
+        raise RuntimeError("stop-loop")
+
+    monkeypatch.setattr(module.time, "sleep", _stop_loop)
+
+    try:
+        module.main()
+    except RuntimeError as exc:
+        assert str(exc) == "stop-loop"
+
+    assert calls[:2] == ["init_db", "register_jobs"]
