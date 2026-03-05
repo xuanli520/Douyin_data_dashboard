@@ -1,5 +1,6 @@
 import pytest
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from src.domains.data_source.enums import (
@@ -424,10 +425,16 @@ class TestDataSourceServiceUnit:
         )
 
         service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+        service._push_shop_dashboard_task = AsyncMock(
+            return_value=SimpleNamespace(task_id="task-1")
+        )
         result = await service.trigger_collection(1)
 
         assert result["total"] == 1
         assert len(result["triggered_rules"]) == 1
+        assert result["triggered_rules"][0]["task_id"] == "task-1"
+        assert result["triggered_rules"][0]["status"] == "queued"
+        mock_rule_repo.update.assert_awaited()
 
     async def test_trigger_collection_inactive_source(self):
         mock_ds_repo = AsyncMock()
@@ -457,10 +464,14 @@ class TestDataSourceServiceUnit:
         )
 
         service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+        service._push_shop_dashboard_task = AsyncMock(
+            return_value=SimpleNamespace(task_id="task-1")
+        )
         result = await service.trigger_collection(1, rule_id=1)
 
         assert result["total"] == 1
         assert result["triggered_rules"][0]["rule_id"] == 1
+        assert result["triggered_rules"][0]["task_id"] == "task-1"
 
     async def test_trigger_collection_rule_not_found(self):
         mock_ds_repo = AsyncMock()

@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator
+from datetime import datetime, timezone
 from typing import Any, Callable
 from uuid import uuid4
 
@@ -581,20 +582,56 @@ class DataSourceService:
         triggered = []
         for rule in rules:
             execution_id = f"exec_{uuid4().hex}"
+            task_result = await self._push_shop_dashboard_task(
+                data_source_id=ds_id,
+                rule_id=rule.id if rule.id is not None else 0,
+                execution_id=execution_id,
+                triggered_by=None,
+            )
+            await self.rule_repo.update(
+                rule.id if rule.id is not None else 0,
+                {
+                    "last_execution_id": execution_id,
+                    "last_executed_at": datetime.now(timezone.utc),
+                },
+            )
             triggered.append(
                 {
                     "rule_id": rule.id,
                     "rule_name": rule.name,
                     "execution_id": execution_id,
-                    "status": "pending",
+                    "task_id": str(getattr(task_result, "task_id", "")),
+                    "status": "queued",
                 }
             )
+        try:
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
 
         return {
             "data_source_id": ds_id,
             "triggered_rules": triggered,
             "total": len(triggered),
         }
+
+    async def _push_shop_dashboard_task(
+        self,
+        *,
+        data_source_id: int,
+        rule_id: int,
+        execution_id: str,
+        triggered_by: int | None,
+    ) -> Any:
+        from src.tasks.collection.douyin_shop_dashboard import sync_shop_dashboard
+
+        return sync_shop_dashboard.push(
+            data_source_id=data_source_id,
+            rule_id=rule_id,
+            execution_id=execution_id,
+            triggered_by=triggered_by,
+        )
 
     def _map_schema_type_to_model_type(
         self, schema_type: DataSourceType | None

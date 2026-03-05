@@ -13,6 +13,7 @@ from src.scrapers.shop_dashboard.parsers import (
     parse_violation_details,
     parse_violation_summary,
 )
+from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.tasks.exceptions import ScrapingFailedException
 
 
@@ -42,32 +43,108 @@ class HttpScraper:
             self._client.close()
 
     def fetch_dashboard(self, shop_id: str, date: str) -> dict[str, Any]:
-        overview_payload = self._request_json(
-            "GET",
-            "/governance/shop/experiencescore/getOverviewByVersion",
-            shop_id,
-            date,
-            params={
-                "exp_version": "release",
-                "new_shop_version": "release",
-                "source": 1,
-            },
+        all_groups = [
+            "overview",
+            "analysis",
+            "diagnosis",
+            "graphql",
+            "statistics",
+            "comment_list",
+            "unreply",
+            "tags",
+            "products",
+            "cash_info",
+            "score_node",
+            "ticket_count",
+            "enum_config",
+            "waiting_list",
+            "top_rule",
+            "high_frequency",
+        ]
+        return self._fetch_dashboard(
+            shop_id=shop_id,
+            date=date,
+            api_groups=all_groups,
+            common_query={},
+            cookie_mapping=self._cookie_provider(shop_id)
+            if self._cookie_provider
+            else {},
+            graphql_query=self._graphql_query,
+            source="script",
         )
-        analysis_payload = self._request_json(
-            "GET",
-            "/governance/shop/experiencescore/getAnalysisScore",
-            shop_id,
-            date,
+
+    def fetch_dashboard_with_context(
+        self, runtime_config: ShopDashboardRuntimeConfig, date: str
+    ) -> dict[str, Any]:
+        return self._fetch_dashboard(
+            shop_id=runtime_config.shop_id,
+            date=date,
+            api_groups=runtime_config.api_groups,
+            common_query=runtime_config.common_query,
+            cookie_mapping=runtime_config.cookies,
+            graphql_query=runtime_config.graphql_query or self._graphql_query,
+            source="script",
         )
-        diagnosis_payload = self._request_json(
-            "GET",
-            "/governance/ecology/fxg/experience-score/diagnosis-reason-v9",
-            shop_id,
-            date,
-            params={"expVersion": "release", "needDiagnosis": True, "pageSource": 11},
-        )
-        graphql_payload: dict[str, Any] = {"code": 0, "data": {}}
-        if self._graphql_query:
+
+    def _fetch_dashboard(
+        self,
+        *,
+        shop_id: str,
+        date: str,
+        api_groups: list[str],
+        common_query: Mapping[str, Any],
+        cookie_mapping: Mapping[str, str],
+        graphql_query: str | None,
+        source: str,
+    ) -> dict[str, Any]:
+        groups = set(api_groups)
+        default_payload: dict[str, Any] = {"code": 0, "data": {}}
+
+        overview_payload = default_payload
+        if "overview" in groups:
+            overview_payload = self._request_json(
+                "GET",
+                "/governance/shop/experiencescore/getOverviewByVersion",
+                shop_id,
+                date,
+                params={
+                    "exp_version": "release",
+                    "new_shop_version": "release",
+                    "source": 1,
+                },
+                common_query=common_query,
+                cookie_mapping=cookie_mapping,
+            )
+
+        analysis_payload = default_payload
+        if "analysis" in groups:
+            analysis_payload = self._request_json(
+                "GET",
+                "/governance/shop/experiencescore/getAnalysisScore",
+                shop_id,
+                date,
+                common_query=common_query,
+                cookie_mapping=cookie_mapping,
+            )
+
+        diagnosis_payload = default_payload
+        if "diagnosis" in groups:
+            diagnosis_payload = self._request_json(
+                "GET",
+                "/governance/ecology/fxg/experience-score/diagnosis-reason-v9",
+                shop_id,
+                date,
+                params={
+                    "expVersion": "release",
+                    "needDiagnosis": True,
+                    "pageSource": 11,
+                },
+                common_query=common_query,
+                cookie_mapping=cookie_mapping,
+            )
+
+        graphql_payload: dict[str, Any] = default_payload
+        if "graphql" in groups and graphql_query:
             graphql_payload = self._request_json(
                 "POST",
                 "/governance/ecology/fxg/graphql",
@@ -75,97 +152,157 @@ class HttpScraper:
                 date,
                 json_body={
                     "operationName": "ExperienceScoreHome",
-                    "query": self._graphql_query,
+                    "query": graphql_query,
                     "variables": {"shopId": shop_id, "date": date},
                 },
+                common_query=common_query,
+                cookie_mapping=cookie_mapping,
             )
 
-        statistics_payload = self._request_json(
-            "GET",
-            "/product/tcomment/statistics",
-            shop_id,
-            date,
-        )
-        comment_list_payload = self._request_json(
-            "GET",
-            "/product/tcomment/commentList",
-            shop_id,
-            date,
-            params={"page": 0, "pageSize": 20},
-        )
-        unreply_payload = self._request_json(
-            "GET",
-            "/product/tcomment/getUnreplyNegativeCommentList",
-            shop_id,
-            date,
-            params={"page": 1, "page_size": 10, "rank": 1},
-        )
-        tags_payload = self._request_json(
-            "GET",
-            "/product/tcomment/getNegativeCommentTagsCount",
-            shop_id,
-            date,
-        )
-        products_payload = self._request_json(
-            "GET",
-            "/product/tcomment/getNegativeCommentProductList",
-            shop_id,
-            date,
-        )
+        statistics_payload = default_payload
+        if "statistics" in groups:
+            statistics_payload = self._request_json(
+                "GET",
+                "/product/tcomment/statistics",
+                shop_id,
+                date,
+                common_query=common_query,
+                cookie_mapping=cookie_mapping,
+            )
 
-        cash_payload = self._request_json(
-            "GET",
-            "/governance/shop/penalty/get_violation_cash_info",
-            shop_id,
-            date,
-        )
-        score_node_payload = self._request_json(
-            "POST",
-            "/governance/shop/penalty/get_shop_score_node",
-            shop_id,
-            date,
-            json_body={},
-        )
-        ticket_count_payload = self._request_json(
-            "POST",
-            "/governance/shop/penalty/penalty_ticket_count",
-            shop_id,
-            date,
-            json_body={},
-        )
-        enum_payload = self._request_json(
-            "POST",
-            "/governance/shop/penalty/enum_config",
-            shop_id,
-            date,
-            json_body={},
-        )
-        waiting_list_payload = self._request_json(
-            "POST",
-            "/governance/shop/penalty/get_waiting_list",
-            shop_id,
-            date,
-            json_body={},
-        )
-        top_rule_payload = self._request_json(
-            "POST",
-            "/governance/shop/penalty/get_top_rule",
-            shop_id,
-            date,
-            json_body={},
-        )
-        high_frequency_payload = self._request_json(
-            "POST",
-            "/governance/shop/penalty/get_high_frequency_penalty",
-            shop_id,
-            date,
-            json_body={},
-        )
+        comment_list_payload = default_payload
+        if "comment_list" in groups:
+            comment_list_payload = self._request_json(
+                "GET",
+                "/product/tcomment/commentList",
+                shop_id,
+                date,
+                params={"page": 0, "pageSize": 20},
+                common_query=common_query,
+                cookie_mapping=cookie_mapping,
+            )
+
+        unreply_payload = default_payload
+        if "unreply" in groups:
+            unreply_payload = self._request_json(
+                "GET",
+                "/product/tcomment/getUnreplyNegativeCommentList",
+                shop_id,
+                date,
+                params={"page": 1, "page_size": 10, "rank": 1},
+                common_query=common_query,
+                cookie_mapping=cookie_mapping,
+            )
+
+        tags_payload = default_payload
+        if "tags" in groups:
+            tags_payload = self._request_json(
+                "GET",
+                "/product/tcomment/getNegativeCommentTagsCount",
+                shop_id,
+                date,
+                common_query=common_query,
+                cookie_mapping=cookie_mapping,
+            )
+
+        products_payload = default_payload
+        if "products" in groups:
+            products_payload = self._request_json(
+                "GET",
+                "/product/tcomment/getNegativeCommentProductList",
+                shop_id,
+                date,
+                common_query=common_query,
+                cookie_mapping=cookie_mapping,
+            )
+
+        cash_payload = default_payload
+        if "cash_info" in groups:
+            cash_payload = self._request_json(
+                "GET",
+                "/governance/shop/penalty/get_violation_cash_info",
+                shop_id,
+                date,
+                common_query=common_query,
+                cookie_mapping=cookie_mapping,
+            )
+
+        score_node_payload = default_payload
+        if "score_node" in groups:
+            score_node_payload = self._request_json(
+                "POST",
+                "/governance/shop/penalty/get_shop_score_node",
+                shop_id,
+                date,
+                json_body={},
+                common_query=common_query,
+                cookie_mapping=cookie_mapping,
+            )
+
+        ticket_count_payload = default_payload
+        if "ticket_count" in groups:
+            ticket_count_payload = self._request_json(
+                "POST",
+                "/governance/shop/penalty/penalty_ticket_count",
+                shop_id,
+                date,
+                json_body={},
+                common_query=common_query,
+                cookie_mapping=cookie_mapping,
+            )
+
+        enum_payload = default_payload
+        if "enum_config" in groups:
+            enum_payload = self._request_json(
+                "POST",
+                "/governance/shop/penalty/enum_config",
+                shop_id,
+                date,
+                json_body={},
+                common_query=common_query,
+                cookie_mapping=cookie_mapping,
+            )
+
+        waiting_list_payload = default_payload
+        if "waiting_list" in groups:
+            waiting_list_payload = self._request_json(
+                "POST",
+                "/governance/shop/penalty/get_waiting_list",
+                shop_id,
+                date,
+                json_body={},
+                common_query=common_query,
+                cookie_mapping=cookie_mapping,
+            )
+
+        top_rule_payload = default_payload
+        if "top_rule" in groups:
+            top_rule_payload = self._request_json(
+                "POST",
+                "/governance/shop/penalty/get_top_rule",
+                shop_id,
+                date,
+                json_body={},
+                common_query=common_query,
+                cookie_mapping=cookie_mapping,
+            )
+
+        high_frequency_payload = default_payload
+        if "high_frequency" in groups:
+            high_frequency_payload = self._request_json(
+                "POST",
+                "/governance/shop/penalty/get_high_frequency_penalty",
+                shop_id,
+                date,
+                json_body={},
+                common_query=common_query,
+                cookie_mapping=cookie_mapping,
+            )
 
         return {
             "shop_id": shop_id,
             "metric_date": date,
-            "source": "script",
+            "source": source,
             **parse_core_scores(overview_payload),
             "reviews": {
                 "summary": parse_comment_summary(
@@ -218,9 +355,13 @@ class HttpScraper:
         date: str,
         params: Mapping[str, Any] | None = None,
         json_body: Mapping[str, Any] | None = None,
+        common_query: Mapping[str, Any] | None = None,
+        cookie_mapping: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         request_params: dict[str, Any] = {"shop_id": shop_id, "date": date}
-        if self._common_query_provider:
+        if common_query:
+            request_params.update(dict(common_query))
+        elif self._common_query_provider:
             request_params.update(dict(self._common_query_provider(shop_id)))
         if params:
             request_params.update(dict(params))
@@ -231,7 +372,7 @@ class HttpScraper:
                 url=path,
                 params=request_params,
                 json=json_body,
-                headers=self._build_headers(shop_id),
+                headers=self._build_headers(shop_id, cookie_mapping=cookie_mapping),
             )
             response.raise_for_status()
         except httpx.HTTPError as exc:
@@ -254,16 +395,18 @@ class HttpScraper:
         ensure_payload_success(payload)
         return payload
 
-    def _build_headers(self, shop_id: str) -> dict[str, str]:
+    def _build_headers(
+        self, shop_id: str, cookie_mapping: Mapping[str, str] | None = None
+    ) -> dict[str, str]:
         headers = {
             "Accept": "application/json, text/plain, */*",
             "Content-Type": "application/json",
         }
-        if not self._cookie_provider:
-            return headers
-        cookie_mapping = dict(self._cookie_provider(shop_id))
-        if cookie_mapping:
+        resolved_cookie_mapping = dict(cookie_mapping or {})
+        if not resolved_cookie_mapping and self._cookie_provider:
+            resolved_cookie_mapping = dict(self._cookie_provider(shop_id))
+        if resolved_cookie_mapping:
             headers["Cookie"] = "; ".join(
-                f"{key}={value}" for key, value in cookie_mapping.items()
+                f"{key}={value}" for key, value in resolved_cookie_mapping.items()
             )
         return headers
