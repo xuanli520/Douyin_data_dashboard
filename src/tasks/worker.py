@@ -4,7 +4,12 @@ import argparse
 from threading import Thread
 from typing import Callable
 
-from src.tasks.collection import douyin_orders, douyin_products, douyin_shop_dashboard
+from src.tasks.collection import (
+    douyin_orders,
+    douyin_products,
+    douyin_shop_agent,
+    douyin_shop_dashboard,
+)
 from src.tasks.etl import orders as etl_orders
 from src.tasks.etl import products as etl_products
 
@@ -15,6 +20,9 @@ def _queue_runners(etl_processes: int) -> dict[str, Callable[[], None]]:
         "collection_products": lambda: douyin_products.sync_products.consume(),
         "collection_shop_dashboard": lambda: (
             douyin_shop_dashboard.sync_shop_dashboard.consume()
+        ),
+        "collection_shop_dashboard_agent": lambda: (
+            douyin_shop_agent.sync_shop_dashboard_agent.consume()
         ),
         "etl_orders": lambda: etl_orders.process_orders.multi_process_consume(
             etl_processes

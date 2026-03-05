@@ -4,6 +4,7 @@ def test_tasks_package_imports_task_modules():
     assert hasattr(tasks, "douyin_orders")
     assert hasattr(tasks, "douyin_products")
     assert hasattr(tasks, "douyin_shop_dashboard")
+    assert hasattr(tasks, "douyin_shop_agent")
     assert hasattr(tasks, "etl_orders")
     assert hasattr(tasks, "etl_products")
 
@@ -28,6 +29,12 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
         module.douyin_shop_dashboard.sync_shop_dashboard,
         "consume",
         lambda: calls.append("collection_shop_dashboard"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        module.douyin_shop_agent.sync_shop_dashboard_agent,
+        "consume",
+        lambda: calls.append("collection_shop_dashboard_agent"),
         raising=False,
     )
     monkeypatch.setattr(
@@ -87,11 +94,12 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
     monkeypatch.setattr(module, "Thread", _FakeThread)
 
     module.run_all(etl_processes=2)
-    assert len(calls) == 10
+    assert len(calls) == 11
     assert {
         "collection_orders",
         "collection_products",
         "collection_shop_dashboard",
+        "collection_shop_dashboard_agent",
         ("etl_orders", 2),
         ("etl_products", 2),
         "collection_orders_dlx",

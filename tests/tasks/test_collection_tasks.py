@@ -161,3 +161,16 @@ def test_sync_orders_started_status_write_failure_does_not_break_task(monkeypatc
     result = module.sync_orders("shop-1", "2026-03-03", triggered_by=7)
 
     assert result["status"] == "success"
+
+
+def test_sync_shop_dashboard_agent_queue_and_retry_params():
+    from src.tasks.collection.douyin_shop_agent import sync_shop_dashboard_agent
+
+    assert (
+        sync_shop_dashboard_agent.boost_params.queue_name
+        == "collection_shop_dashboard_agent"
+    )
+    assert (
+        sync_shop_dashboard_agent.boost_params.is_push_to_dlx_queue_when_retry_max_times
+        is True
+    )
