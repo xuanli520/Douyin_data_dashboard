@@ -384,6 +384,8 @@ class TestCollectionTriggerIntegration:
             assert result["total"] == 1
             assert result["data_source_id"] == ds.id
             assert len(result["triggered_rules"]) == 1
+            assert result["triggered_rules"][0]["task_id"]
+            assert result["triggered_rules"][0]["status"] == "queued"
 
     async def test_trigger_collection_specific_rule(self, test_db, test_user):
         async with test_db() as session:
@@ -421,6 +423,8 @@ class TestCollectionTriggerIntegration:
             result = await service.trigger_collection(ds.id, rule_id=rule1.id)
             assert result["total"] == 1
             assert result["triggered_rules"][0]["rule_id"] == rule1.id
+            assert result["triggered_rules"][0]["task_id"]
+            assert result["triggered_rules"][0]["status"] == "queued"
 
     async def test_trigger_collection_inactive_source_fails(self, test_db, test_user):
         async with test_db() as session:
