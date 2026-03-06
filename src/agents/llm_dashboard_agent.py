@@ -12,7 +12,18 @@ from src.config import get_settings
 class LLMDashboardAgent:
     def __init__(self, client: httpx.Client | None = None) -> None:
         self._settings = get_settings().shop_dashboard
+        self._owns_client = client is None
         self._client = client or httpx.Client()
+
+    def __enter__(self) -> LLMDashboardAgent:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if self._owns_client:
+            self._client.close()
 
     def supplement_cold_data(
         self,
@@ -165,16 +176,25 @@ class LLMDashboardAgent:
     ) -> dict[str, Any]:
         merged = dict(result)
         normalized = self._normalize_patch(patch)
-        merged.update(normalized)
+        for key, value in normalized.items():
+            existing = merged.get(key)
+            if value:
+                merged[key] = value
+                continue
+            if isinstance(existing, list):
+                merged[key] = existing
+                continue
+            merged[key] = []
 
         raw = merged.get("raw")
         if not isinstance(raw, dict):
             raw = {}
         raw["llm_patch"] = {
+            "status": "success",
             "reason": reason,
-            "violations_detail": normalized["violations_detail"],
-            "arbitration_detail": normalized["arbitration_detail"],
-            "dsr_trend": normalized["dsr_trend"],
+            "violations_detail": merged["violations_detail"],
+            "arbitration_detail": merged["arbitration_detail"],
+            "dsr_trend": merged["dsr_trend"],
         }
         merged["raw"] = raw
         return merged

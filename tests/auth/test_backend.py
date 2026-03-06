@@ -1,6 +1,8 @@
 import asyncio
+import hashlib
 
 from src.auth.backend import RefreshTokenManager
+from src.shared.redis_keys import redis_keys
 
 
 async def test_create_refresh_token(local_cache, settings):
@@ -45,6 +47,26 @@ async def test_revoke_all_user_tokens(local_cache, settings):
 
     assert await manager.verify_refresh_token(token1) is None
     assert await manager.verify_refresh_token(token2) is None
+
+
+async def test_revoke_all_user_tokens_revokes_equal_timestamp_token(
+    local_cache, settings
+):
+    manager = RefreshTokenManager(local_cache, settings)
+    token = await manager.create_refresh_token(1, "Mozilla/5.0")
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    token_key = redis_keys.refresh_token(token_hash=token_hash)
+    token_payload = await local_cache.get(token_key)
+    assert token_payload is not None
+    token_created_time = token_payload.split(":", maxsplit=2)[2]
+
+    await local_cache.set(
+        redis_keys.user_revoked(user_id=1),
+        token_created_time,
+        ttl=settings.auth.refresh_token_lifetime_seconds,
+    )
+
+    assert await manager.verify_refresh_token(token) is None
 
 
 async def test_revoke_all_user_tokens_preserves_new_tokens(local_cache, settings):

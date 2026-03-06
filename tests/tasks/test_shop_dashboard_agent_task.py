@@ -36,9 +36,36 @@ def test_agent_task_pushes_cold_metric_collection(monkeypatch):
         def release_lock(self, _key, _token):
             return None
 
+    async def _fake_load_agent_context(shop_id: str, metric_date: str, reason: str):
+        assert shop_id == "shop-1"
+        assert metric_date == "2026-03-03"
+        assert reason == "cold_metric"
+        return {
+            "raw": {"html": "<div>snapshot</div>"},
+            "violations_detail": [{"id": "existing-v"}],
+        }
+
+    persisted: list[dict] = []
+
+    async def _fake_persist_agent_patch(
+        shop_id: str,
+        metric_date: str,
+        reason: str,
+        patch: dict,
+    ) -> None:
+        persisted.append(
+            {
+                "shop_id": shop_id,
+                "metric_date": metric_date,
+                "reason": reason,
+                "patch": patch,
+            }
+        )
+
     class FakeAgent:
         def supplement_cold_data(self, result, shop_id, date, reason):
-            assert result == {}
+            assert result["raw"]["html"] == "<div>snapshot</div>"
+            assert result["violations_detail"] == [{"id": "existing-v"}]
             assert shop_id == "shop-1"
             assert reason == "cold_metric"
             return {
@@ -49,6 +76,8 @@ def test_agent_task_pushes_cold_metric_collection(monkeypatch):
 
     monkeypatch.setattr(module, "FunboostIdempotencyHelper", _FakeIdempotencyHelper)
     monkeypatch.setattr(module, "LLMDashboardAgent", lambda: FakeAgent())
+    monkeypatch.setattr(module, "_load_agent_context", _fake_load_agent_context)
+    monkeypatch.setattr(module, "_persist_agent_patch", _fake_persist_agent_patch)
 
     result = module.sync_shop_dashboard_agent(
         "shop-1",
@@ -60,3 +89,5 @@ def test_agent_task_pushes_cold_metric_collection(monkeypatch):
     assert result["source"] == "llm"
     assert result["reason"] == "cold_metric"
     assert result["violations_detail"] == [{"id": "v-1"}]
+    assert len(persisted) == 1
+    assert persisted[0]["shop_id"] == "shop-1"

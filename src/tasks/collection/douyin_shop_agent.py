@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
+from datetime import date as date_type
 from typing import Any
 
 from src.agents import LLMDashboardAgent
 from src.config import get_settings
+from src.domains.shop_dashboard.repository import ShopDashboardRepository
+from src.session import async_session_factory
 from src.tasks.base import TaskStatusMixin
 from src.tasks.funboost_compat import boost, fct
 from src.tasks.idempotency import FunboostIdempotencyHelper
@@ -76,9 +80,17 @@ def sync_shop_dashboard_agent(
         }
 
     try:
-        patch = LLMDashboardAgent().supplement_cold_data(
-            {}, shop_id, date, reason=reason
-        )
+        base_result = _run_async(_load_agent_context(shop_id, date, reason))
+        agent = LLMDashboardAgent()
+        try:
+            patch = agent.supplement_cold_data(
+                base_result, shop_id, date, reason=reason
+            )
+        finally:
+            close = getattr(agent, "close", None)
+            if callable(close):
+                close()
+        _run_async(_persist_agent_patch(shop_id, date, reason, patch))
         result: dict[str, Any] = {
             "status": "success",
             "shop_id": shop_id,
@@ -95,3 +107,75 @@ def sync_shop_dashboard_agent(
         return result
     finally:
         helper.release_lock(business_key, token)
+
+
+async def _load_agent_context(
+    shop_id: str,
+    metric_date: str,
+    reason: str,
+) -> dict[str, Any]:
+    fallback: dict[str, Any] = {
+        "shop_id": shop_id,
+        "metric_date": metric_date,
+        "raw": {},
+    }
+    if async_session_factory is None:
+        return fallback
+    try:
+        metric_day = date_type.fromisoformat(metric_date)
+    except ValueError:
+        return fallback
+
+    async with async_session_factory() as session:
+        repo = ShopDashboardRepository(session)
+        return await repo.build_agent_context(
+            shop_id=shop_id,
+            metric_date=metric_day,
+            reason=reason,
+        )
+
+
+async def _persist_agent_patch(
+    shop_id: str,
+    metric_date: str,
+    reason: str,
+    patch: dict[str, Any],
+) -> None:
+    if async_session_factory is None:
+        return
+    try:
+        metric_day = date_type.fromisoformat(metric_date)
+    except ValueError:
+        return
+
+    raw = patch.get("raw")
+    llm_patch = raw.get("llm_patch") if isinstance(raw, dict) else None
+    if isinstance(llm_patch, dict) and llm_patch.get("status") == "failed":
+        return
+
+    async with async_session_factory() as session:
+        repo = ShopDashboardRepository(session)
+        await repo.upsert_cold_metrics(
+            shop_id=shop_id,
+            metric_date=metric_day,
+            reason=reason,
+            violations_detail=_ensure_list_of_dicts(patch.get("violations_detail")),
+            arbitration_detail=_ensure_list_of_dicts(patch.get("arbitration_detail")),
+            dsr_trend=_ensure_list_of_dicts(patch.get("dsr_trend")),
+            source="llm",
+        )
+        await session.commit()
+
+
+def _ensure_list_of_dicts(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, dict):
+            rows.append(item)
+    return rows
+
+
+def _run_async(coro):
+    return asyncio.run(coro)

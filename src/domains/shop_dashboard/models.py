@@ -1,6 +1,7 @@
 from datetime import date
+from typing import Any
 
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import JSON, Column, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 from src.shared.mixins import TimestampMixin
@@ -61,3 +62,33 @@ class ShopDashboardViolation(SQLModel, TimestampMixin, table=True):
     description: str | None = Field(default=None, max_length=1000)
     score: int = 0
     source: str = Field(max_length=20)
+
+
+class ShopDashboardColdMetric(SQLModel, TimestampMixin, table=True):
+    __tablename__ = "shop_dashboard_cold_metrics"
+    __table_args__ = (
+        UniqueConstraint(
+            "shop_id",
+            "metric_date",
+            "reason",
+            name="uq_shop_dashboard_cold_metric_day_reason",
+        ),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    shop_id: str = Field(max_length=50, index=True)
+    metric_date: date = Field(index=True)
+    reason: str = Field(max_length=50)
+    violations_detail: list[dict[str, Any]] = Field(
+        default_factory=list,
+        sa_column=Column(JSON, nullable=False),
+    )
+    arbitration_detail: list[dict[str, Any]] = Field(
+        default_factory=list,
+        sa_column=Column(JSON, nullable=False),
+    )
+    dsr_trend: list[dict[str, Any]] = Field(
+        default_factory=list,
+        sa_column=Column(JSON, nullable=False),
+    )
+    source: str = Field(max_length=20, default="llm")
