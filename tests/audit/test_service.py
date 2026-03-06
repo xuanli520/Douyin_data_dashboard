@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
+from contextlib import asynccontextmanager
 
 from src.audit.service import AuditRepository, AuditService
 from src.audit.schemas import AuditAction, AuditResult
@@ -9,6 +10,15 @@ from src.audit.schemas import AuditAction, AuditResult
 def mock_session():
     session = AsyncMock()
     session.add = MagicMock()
+    session.flush = AsyncMock()
+    session.in_transaction = MagicMock(return_value=False)
+
+    @asynccontextmanager
+    async def _tx_ctx():
+        yield session
+
+    session.begin = MagicMock(return_value=_tx_ctx())
+    session.begin_nested = MagicMock(return_value=_tx_ctx())
     return session
 
 
@@ -34,7 +44,23 @@ async def test_create_audit_log(audit_repository, mock_session):
     )
 
     mock_session.add.assert_called_once()
-    mock_session.commit.assert_called_once()
+    mock_session.begin.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_create_audit_log_in_existing_transaction_uses_nested(
+    audit_repository, mock_session
+):
+    mock_session.in_transaction.return_value = True
+
+    await audit_repository.create_audit_log(
+        action=AuditAction.LOGIN,
+        result=AuditResult.SUCCESS,
+        actor_id=1,
+    )
+
+    mock_session.begin_nested.assert_called_once()
+    mock_session.flush.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -48,12 +74,12 @@ async def test_log_success(audit_service, mock_session):
     )
 
     mock_session.add.assert_called_once()
-    mock_session.commit.assert_called_once()
+    mock_session.begin.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_log_handles_exception(audit_service, mock_session):
-    mock_session.commit.side_effect = Exception("DB error")
+    mock_session.begin.side_effect = Exception("DB error")
 
     await audit_service.log(
         action=AuditAction.LOGIN,

@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 
 from src.auth.backend import RefreshTokenManager
 
@@ -45,6 +46,26 @@ async def test_revoke_all_user_tokens(local_cache, settings):
 
     assert await manager.verify_refresh_token(token1) is None
     assert await manager.verify_refresh_token(token2) is None
+
+
+async def test_revoke_all_user_tokens_revokes_tokens_with_same_timestamp(
+    local_cache, settings, monkeypatch
+):
+    manager = RefreshTokenManager(local_cache, settings)
+
+    fixed_time = datetime(2026, 3, 6, 12, 0, 0, tzinfo=timezone.utc)
+
+    class _FrozenDateTime:
+        @staticmethod
+        def now(tz=None):
+            return fixed_time
+
+    monkeypatch.setattr("src.auth.backend.datetime", _FrozenDateTime)
+
+    token = await manager.create_refresh_token(1, "Mozilla/5.0")
+    await manager.revoke_all_user_tokens(1)
+
+    assert await manager.verify_refresh_token(token) is None
 
 
 async def test_revoke_all_user_tokens_preserves_new_tokens(local_cache, settings):
