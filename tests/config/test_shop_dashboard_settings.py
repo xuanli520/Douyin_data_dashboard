@@ -34,3 +34,19 @@ def test_shop_dashboard_settings_env_override(monkeypatch):
     assert settings.shop_dashboard.lock_ttl_seconds == 120
     assert settings.shop_dashboard.account_rate_limit_per_minute == 8
     assert settings.shop_dashboard.llm_timeout_seconds == 90
+
+
+def test_shop_dashboard_settings_llm_controls(monkeypatch):
+    monkeypatch.setenv("SHOP_DASHBOARD__LLM_TIMEOUT_SECONDS", "90")
+    monkeypatch.setenv("SHOP_DASHBOARD__LLM_RETRY_TIMES", "3")
+    monkeypatch.setenv("SHOP_DASHBOARD__LLM_PROVIDER", "openai")
+    monkeypatch.setenv("SHOP_DASHBOARD__LLM_ENDPOINT", "https://example.test/v1/chat")
+    monkeypatch.setenv("SHOP_DASHBOARD__LLM_MODEL", "gpt-4o-mini")
+
+    settings = get_settings()
+
+    assert settings.shop_dashboard.llm_timeout_seconds == 90
+    assert settings.shop_dashboard.llm_retry_times == 3
+    assert settings.shop_dashboard.llm_provider == "openai"
+    assert settings.shop_dashboard.llm_endpoint == "https://example.test/v1/chat"
+    assert settings.shop_dashboard.llm_model == "gpt-4o-mini"

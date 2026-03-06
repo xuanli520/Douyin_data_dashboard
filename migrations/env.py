@@ -12,6 +12,7 @@ from src.auth.models import User  # noqa: F401
 from src.audit.schemas import AuditLog  # noqa: F401
 from src.domains.data_source.models import DataSource, ScrapingRule  # noqa: F401
 from src.domains.shop_dashboard.models import (  # noqa: F401
+    ShopDashboardColdMetric,
     ShopDashboardReview,
     ShopDashboardScore,
     ShopDashboardViolation,

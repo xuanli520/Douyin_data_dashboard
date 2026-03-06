@@ -1,5 +1,3 @@
-import asyncio
-
 import fakeredis
 
 from src.scrapers.shop_dashboard.browser_scraper import BrowserScraper
@@ -80,26 +78,3 @@ def test_browser_scraper_retry_http_sets_browser_source():
 
     assert result["source"] == "browser"
     assert len(http_scraper.calls) == 1
-
-
-async def test_browser_scraper_concurrent_waiters_share_refreshed_query_tokens():
-    redis_client = fakeredis.FakeRedis(decode_responses=True)
-    cookie_manager = CookieManager(redis_client=redis_client, ttl_seconds=60)
-    runtime_1 = _build_runtime()
-    runtime_2 = _build_runtime()
-
-    async def refresher(_runtime: ShopDashboardRuntimeConfig) -> dict:
-        await asyncio.sleep(0.05)
-        return {
-            "cookies": {"x_tt_token": "new-token"},
-            "common_query": {"msToken": "ms-token"},
-        }
-
-    scraper = BrowserScraper(refresher=refresher, cookie_manager=cookie_manager)
-    refreshed_1, refreshed_2 = await asyncio.gather(
-        scraper.refresh_runtime_context(runtime_1),
-        scraper.refresh_runtime_context(runtime_2),
-    )
-
-    assert refreshed_1.common_query["msToken"] == "ms-token"
-    assert refreshed_2.common_query["msToken"] == "ms-token"

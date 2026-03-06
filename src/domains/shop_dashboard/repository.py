@@ -1,9 +1,11 @@
 from datetime import date
+from typing import Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domains.shop_dashboard.models import (
+    ShopDashboardColdMetric,
     ShopDashboardReview,
     ShopDashboardScore,
     ShopDashboardViolation,
@@ -111,3 +113,120 @@ class ShopDashboardRepository(BaseRepository):
         self.session.add_all(rows)
         await self._flush()
         return rows
+
+    async def upsert_cold_metrics(
+        self,
+        *,
+        shop_id: str,
+        metric_date: date,
+        reason: str,
+        violations_detail: list[dict[str, Any]],
+        arbitration_detail: list[dict[str, Any]],
+        dsr_trend: list[dict[str, Any]],
+        source: str = "llm",
+    ) -> ShopDashboardColdMetric:
+        stmt = select(ShopDashboardColdMetric).where(
+            ShopDashboardColdMetric.shop_id == shop_id,
+            ShopDashboardColdMetric.metric_date == metric_date,
+            ShopDashboardColdMetric.reason == reason,
+        )
+        row = (await self.session.execute(stmt)).scalar_one_or_none()
+        if row is None:
+            row = ShopDashboardColdMetric(
+                shop_id=shop_id,
+                metric_date=metric_date,
+                reason=reason,
+                violations_detail=violations_detail,
+                arbitration_detail=arbitration_detail,
+                dsr_trend=dsr_trend,
+                source=source,
+            )
+            self.session.add(row)
+        else:
+            row.violations_detail = violations_detail
+            row.arbitration_detail = arbitration_detail
+            row.dsr_trend = dsr_trend
+            row.source = source
+        await self._flush()
+        await self.session.refresh(row)
+        return row
+
+    async def build_agent_context(
+        self,
+        *,
+        shop_id: str,
+        metric_date: date,
+        reason: str,
+    ) -> dict[str, Any]:
+        score_stmt = select(ShopDashboardScore).where(
+            ShopDashboardScore.shop_id == shop_id,
+            ShopDashboardScore.metric_date == metric_date,
+        )
+        score = (await self.session.execute(score_stmt)).scalar_one_or_none()
+
+        reviews_stmt = (
+            select(ShopDashboardReview)
+            .where(
+                ShopDashboardReview.shop_id == shop_id,
+                ShopDashboardReview.metric_date == metric_date,
+            )
+            .order_by(ShopDashboardReview.review_id)
+        )
+        reviews = (await self.session.execute(reviews_stmt)).scalars().all()
+
+        violations_stmt = (
+            select(ShopDashboardViolation)
+            .where(
+                ShopDashboardViolation.shop_id == shop_id,
+                ShopDashboardViolation.metric_date == metric_date,
+            )
+            .order_by(ShopDashboardViolation.violation_id)
+        )
+        violations = (await self.session.execute(violations_stmt)).scalars().all()
+
+        cold_stmt = select(ShopDashboardColdMetric).where(
+            ShopDashboardColdMetric.shop_id == shop_id,
+            ShopDashboardColdMetric.metric_date == metric_date,
+            ShopDashboardColdMetric.reason == reason,
+        )
+        cold = (await self.session.execute(cold_stmt)).scalar_one_or_none()
+
+        return {
+            "shop_id": shop_id,
+            "metric_date": metric_date.isoformat(),
+            "total_score": float(score.total_score) if score else 0.0,
+            "product_score": float(score.product_score) if score else 0.0,
+            "logistics_score": float(score.logistics_score) if score else 0.0,
+            "service_score": float(score.service_score) if score else 0.0,
+            "reviews": {
+                "summary": {},
+                "items": [
+                    {
+                        "id": row.review_id,
+                        "content": row.content,
+                        "shop_reply": row.is_replied,
+                    }
+                    for row in reviews
+                ],
+            },
+            "violations": {
+                "summary": {},
+                "waiting_list": [
+                    {
+                        "id": row.violation_id,
+                        "type": row.violation_type,
+                        "description": row.description,
+                        "score": row.score,
+                    }
+                    for row in violations
+                ],
+            },
+            "violations_detail": (
+                list(cold.violations_detail) if cold is not None else []
+            ),
+            "arbitration_detail": (
+                list(cold.arbitration_detail) if cold is not None else []
+            ),
+            "dsr_trend": list(cold.dsr_trend) if cold is not None else [],
+            "raw": {},
+        }
