@@ -7,8 +7,8 @@ from sqlalchemy import select
 
 from src import session
 from src.config import get_settings
-from src.domains.data_source.enums import ScrapingRuleStatus
-from src.domains.data_source.models import ScrapingRule
+from src.domains.data_source.enums import DataSourceStatus, ScrapingRuleStatus
+from src.domains.data_source.models import DataSource, ScrapingRule
 from src.tasks.collection.douyin_orders import sync_orders
 from src.tasks.collection.douyin_products import sync_products
 from src.tasks.collection.douyin_shop_dashboard import sync_shop_dashboard
@@ -85,6 +85,7 @@ async def _load_active_shop_dashboard_rules_async() -> list[dict]:
         stmt = select(ScrapingRule).where(
             ScrapingRule.status == ScrapingRuleStatus.ACTIVE,
             ScrapingRule.schedule.is_not(None),
+            ScrapingRule.data_source.has(DataSource.status == DataSourceStatus.ACTIVE),
         )
         rows = list((await db_session.execute(stmt)).scalars().all())
         return [

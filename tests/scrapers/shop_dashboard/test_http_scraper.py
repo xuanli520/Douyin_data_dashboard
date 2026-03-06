@@ -178,3 +178,47 @@ def test_http_scraper_accepts_runtime_context():
         result = scraper.fetch_dashboard_with_context(runtime, "2026-03-03")
 
     assert result["total_score"] == 4.8
+
+
+def test_http_scraper_rejects_empty_api_groups():
+    from src.scrapers.shop_dashboard.http_scraper import HttpScraper
+    from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"code": 500})
+
+    transport = httpx.MockTransport(handler)
+    with httpx.Client(
+        transport=transport, base_url="https://fxg.jinritemai.com"
+    ) as client:
+        scraper = HttpScraper(client=client)
+        runtime = ShopDashboardRuntimeConfig(
+            shop_id="shop-1",
+            cookies={"a": "b"},
+            proxy=None,
+            timeout=15,
+            retry_count=3,
+            rate_limit=100,
+            granularity="DAY",
+            time_range=None,
+            incremental_mode="BY_DATE",
+            backfill_last_n_days=3,
+            data_latency="T+1",
+            target_type="TRAFFIC",
+            metrics=[],
+            dimensions=[],
+            filters={},
+            top_n=None,
+            include_long_tail=False,
+            session_level=False,
+            dedupe_key=None,
+            rule_id=1,
+            execution_id="exec-1",
+            fallback_chain=("http", "browser", "llm"),
+            graphql_query=None,
+            common_query={},
+            token_keys=[],
+            api_groups=[],
+        )
+        with pytest.raises(ScrapingFailedException):
+            scraper.fetch_dashboard_with_context(runtime, "2026-03-03")
