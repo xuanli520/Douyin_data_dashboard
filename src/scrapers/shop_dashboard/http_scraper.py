@@ -98,6 +98,11 @@ class HttpScraper:
         source: str,
     ) -> dict[str, Any]:
         groups = set(api_groups)
+        if not groups:
+            raise ScrapingFailedException(
+                "No API groups configured",
+                error_data={"target_groups": api_groups, "shop_id": shop_id},
+            )
         default_payload: dict[str, Any] = {"code": 0, "data": {}}
 
         overview_payload = default_payload
