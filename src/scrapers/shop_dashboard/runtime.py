@@ -115,10 +115,12 @@ def build_runtime_config(
     fallback = pick(key="fallback_chain", default="http->browser->llm")
     if isinstance(fallback, str):
         fallback_chain = tuple(
-            part.strip() for part in fallback.split("->") if part.strip()
+            part.strip().lower() for part in fallback.split("->") if part.strip()
         )
     elif isinstance(fallback, (list, tuple)):
-        fallback_chain = tuple(str(part) for part in fallback)
+        fallback_chain = tuple(
+            str(part).strip().lower() for part in fallback if str(part).strip()
+        )
     else:
         fallback_chain = ("http", "browser", "llm")
     if not fallback_chain:

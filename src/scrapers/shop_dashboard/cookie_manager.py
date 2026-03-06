@@ -78,6 +78,13 @@ class CookieManager:
         runtime_config.cookies = merged
         if runtime_config.shop_id and merged:
             self.set(runtime_config.shop_id, merged)
+            query = self._normalize_common_query(
+                refreshed.get("common_query")
+                if isinstance(refreshed, Mapping)
+                else None
+            )
+            if query:
+                self.set_query(runtime_config.shop_id, query)
         return runtime_config
 
     async def get(
@@ -110,9 +117,16 @@ class CookieManager:
                     if asyncio.iscoroutine(refreshed):
                         refreshed = await refreshed
                     refreshed_cookie = self._normalize_cookie_mapping(refreshed)
+                    refreshed_query = self._normalize_common_query(
+                        refreshed.get("common_query")
+                        if isinstance(refreshed, Mapping)
+                        else None
+                    )
                     final_cookie = refreshed_cookie or fallback_cookie
                     if final_cookie:
                         self.set(shop_id, final_cookie)
+                    if refreshed_query:
+                        self.set_query(shop_id, refreshed_query)
                     return final_cookie
                 finally:
                     self._release_refresh_lock(shop_id, lock_token)
@@ -138,6 +152,16 @@ class CookieManager:
             return {}
         return mapping
 
+    def get_cached_query(self, shop_id: str) -> dict[str, str]:
+        key = self._query_key(shop_id)
+        mapping = self._normalize_common_query(self._redis.hgetall(key))
+        if not mapping:
+            return {}
+        ttl = int(self._redis.ttl(key))
+        if ttl <= 0:
+            return {}
+        return mapping
+
     def set(self, shop_id: str, cookies: Mapping[str, Any] | str) -> dict[str, str]:
         key = self._cookie_key(shop_id)
         normalized = self._normalize_cookie_mapping(cookies)
@@ -147,8 +171,20 @@ class CookieManager:
             self._redis.expire(key, self._ttl_seconds)
         return normalized
 
+    def set_query(self, shop_id: str, query: Mapping[str, Any]) -> dict[str, str]:
+        key = self._query_key(shop_id)
+        normalized = self._normalize_common_query(query)
+        self._redis.delete(key)
+        if normalized:
+            self._redis.hset(key, mapping=normalized)
+            self._redis.expire(key, self._ttl_seconds)
+        return normalized
+
     def _cookie_key(self, shop_id: str) -> str:
         return f"{self._key_prefix}:{shop_id}"
+
+    def _query_key(self, shop_id: str) -> str:
+        return f"{self._key_prefix}:query:{shop_id}"
 
     def _lock_key(self, shop_id: str) -> str:
         return f"{self._key_prefix}:lock:{shop_id}"
@@ -185,6 +221,23 @@ class CookieManager:
                     if val is None:
                         continue
                     if key == "_refreshed_at":
+                        continue
+                    normalized[str(key)] = str(val)
+                return normalized
+        return {}
+
+    @classmethod
+    def _normalize_common_query(
+        cls, value: Mapping[str, Any] | Any | None
+    ) -> dict[str, str]:
+        if value is None:
+            return {}
+        if isinstance(value, Mapping):
+            payload: Any = value.get("common_query", value)
+            if isinstance(payload, Mapping):
+                normalized: dict[str, str] = {}
+                for key, val in payload.items():
+                    if val is None:
                         continue
                     normalized[str(key)] = str(val)
                 return normalized

@@ -28,14 +28,15 @@ class BrowserScraper:
     ) -> ShopDashboardRuntimeConfig:
         refreshed_query: dict[str, Any] = {}
 
-        async def _refresh_cookie() -> dict[str, str]:
+        async def _refresh_cookie() -> dict[str, Any]:
             refreshed = await self._refresh_payload(runtime_config)
             query = dict(refreshed.get("common_query") or {})
             if query:
                 refreshed_query.update(query)
-            return {
+            cookies = {
                 str(k): str(v) for k, v in dict(refreshed.get("cookies") or {}).items()
             }
+            return {"cookies": cookies, "common_query": query}
 
         cookies = await self._cookie_manager.get(
             runtime_config.shop_id,
@@ -44,6 +45,9 @@ class BrowserScraper:
         )
         if cookies:
             runtime_config.cookies = dict(cookies)
+        cached_query = self._cookie_manager.get_cached_query(runtime_config.shop_id)
+        if cached_query:
+            runtime_config.common_query.update(cached_query)
         if refreshed_query:
             runtime_config.common_query.update(refreshed_query)
         return runtime_config

@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from src.config import get_settings
+from src.domains.data_source.enums import DataSourceStatus, ScrapingRuleStatus
 from src.domains.data_source.repository import (
     DataSourceRepository,
     ScrapingRuleRepository,
@@ -145,20 +146,33 @@ def _collect_one_day(
         timeout=float(runtime.timeout),
         graphql_query=runtime.graphql_query,
     )
+    last_error: ScrapingFailedException | None = None
     try:
-        payload = scraper.fetch_dashboard_with_context(runtime, metric_date)
-        payload["source"] = "script"
-        return _normalize_task_result(runtime, metric_date, payload)
-    except ScrapingFailedException:
-        if "browser" in runtime.fallback_chain:
-            try:
-                payload = browser.retry_http(scraper, runtime, metric_date)
-                return _normalize_task_result(runtime, metric_date, payload)
-            except ScrapingFailedException:
-                pass
-        if "llm" in runtime.fallback_chain:
-            return _build_llm_fallback_result(runtime, metric_date)
-        raise
+        for stage in runtime.fallback_chain:
+            stage_name = str(stage).strip().lower()
+            if stage_name == "http":
+                try:
+                    payload = scraper.fetch_dashboard_with_context(runtime, metric_date)
+                    payload["source"] = "script"
+                    return _normalize_task_result(runtime, metric_date, payload)
+                except ScrapingFailedException as exc:
+                    last_error = exc
+                    continue
+            if stage_name == "browser":
+                try:
+                    payload = browser.retry_http(scraper, runtime, metric_date)
+                    return _normalize_task_result(runtime, metric_date, payload)
+                except ScrapingFailedException as exc:
+                    last_error = exc
+                    continue
+            if stage_name == "llm":
+                return _build_llm_fallback_result(runtime, metric_date)
+        if last_error is not None:
+            raise last_error
+        raise ScrapingFailedException(
+            "Unsupported fallback chain",
+            error_data={"fallback_chain": list(runtime.fallback_chain)},
+        )
     finally:
         scraper.close()
 
@@ -268,9 +282,29 @@ async def _load_runtime_config(
                 "Data source or scraping rule not found",
                 error_data={"data_source_id": data_source_id, "rule_id": rule_id},
             )
-        return build_runtime_config(
+        if data_source.status != DataSourceStatus.ACTIVE:
+            raise ScrapingFailedException(
+                "Data source is inactive",
+                error_data={"data_source_id": data_source_id},
+            )
+        if rule.status != ScrapingRuleStatus.ACTIVE:
+            raise ScrapingFailedException(
+                "Scraping rule is inactive",
+                error_data={"rule_id": rule_id},
+            )
+        runtime = build_runtime_config(
             data_source=data_source, rule=rule, execution_id=execution_id
         )
+        if not runtime.api_groups:
+            raise ScrapingFailedException(
+                "No API groups resolved for runtime",
+                error_data={
+                    "rule_id": rule_id,
+                    "target_type": runtime.target_type,
+                    "metrics": runtime.metrics,
+                },
+            )
+        return runtime
 
 
 async def _persist_result(
