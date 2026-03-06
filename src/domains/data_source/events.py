@@ -6,12 +6,12 @@ from src.domains.data_source.enums import DataSourceStatus, DataSourceType
 from src.shared.mixins import now
 
 
-@dataclass(frozen=True, kw_only=True, slots=True)
+@dataclass(frozen=True, kw_only=True, slots=True, eq=False)
 class DomainEvent:
     occurred_at: datetime = field(default_factory=now)
 
 
-@dataclass(frozen=True, kw_only=True, slots=True)
+@dataclass(frozen=True, kw_only=True, slots=True, eq=False)
 class DataSourceCreatedEvent(DomainEvent):
     data_source_id: int
     name: str
@@ -20,7 +20,7 @@ class DataSourceCreatedEvent(DomainEvent):
     created_by_id: int | None = None
 
 
-@dataclass(frozen=True, kw_only=True, slots=True)
+@dataclass(frozen=True, kw_only=True, slots=True, eq=False)
 class DataSourceStatusChangedEvent(DomainEvent):
     data_source_id: int
     name: str
@@ -29,7 +29,7 @@ class DataSourceStatusChangedEvent(DomainEvent):
     changed_by_id: int | None = None
 
 
-@dataclass(frozen=True, kw_only=True, slots=True)
+@dataclass(frozen=True, kw_only=True, slots=True, eq=False)
 class ScrapingRuleUpdatedEvent(DomainEvent):
     rule_id: int
     data_source_id: int

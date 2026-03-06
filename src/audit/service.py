@@ -37,12 +37,14 @@ class AuditRepository:
             ip=ip,
             extra=extra,
         )
-        self.session.add(audit_log)
-        try:
-            await self.session.commit()
-        except Exception:
-            await self.session.rollback()
-            raise
+        if self.session.in_transaction():
+            async with self.session.begin_nested():
+                self.session.add(audit_log)
+                await self.session.flush()
+            return
+
+        async with self.session.begin():
+            self.session.add(audit_log)
 
     async def list_audit_logs(
         self, filters: AuditLogFilters
