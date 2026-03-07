@@ -86,7 +86,8 @@ def sync_shop_dashboard(
     items: list[dict[str, Any]] = []
     for metric_date in metric_dates:
         business_key = _build_business_key(runtime, metric_date)
-        cached = helper.get_cached_result(business_key)
+        cache_enabled = _is_result_cache_enabled(runtime.execution_id)
+        cached = helper.get_cached_result(business_key) if cache_enabled else None
         if cached:
             items.append(cached)
             observe_shop_dashboard_collection(
@@ -124,7 +125,8 @@ def sync_shop_dashboard(
         try:
             collected = _collect_one_day(runtime, metric_date, browser)
             _run_async(_persist_result(runtime, metric_date, collected))
-            helper.cache_result(business_key, collected)
+            if cache_enabled:
+                helper.cache_result(business_key, collected)
             items.append(collected)
             source = str(collected.get("source", "unknown"))
             status = str(collected.get("status", "success"))
@@ -394,6 +396,10 @@ def _parse_data_latency(data_latency: str) -> int:
     return 0
 
 
+def _is_result_cache_enabled(execution_id: str) -> bool:
+    return not execution_id.startswith("cron_cookie_health_check_")
+
+
 def _build_business_key(runtime: ShopDashboardRuntimeConfig, metric_date: str) -> str:
     if runtime.dedupe_key:
         return runtime.dedupe_key.format(
@@ -402,7 +408,7 @@ def _build_business_key(runtime: ShopDashboardRuntimeConfig, metric_date: str) -
             rule_id=runtime.rule_id,
             execution_id=runtime.execution_id,
         )
-    return f"{runtime.shop_id}:{metric_date}:{runtime.rule_id}"
+    return f"{runtime.shop_id}:{metric_date}:{runtime.rule_id}:{runtime.execution_id}"
 
 
 async def _load_runtime_config(

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -70,18 +69,19 @@ def register_jobs() -> None:
             id="shop_dashboard_cookie_health_check",
         )
 
-        agent_job = ApsJobAdder(sync_shop_dashboard_agent, job_store_kind="redis")
-        agent_job.add_push_job(
-            trigger="cron",
-            minute="*/10",
-            kwargs={
-                "shop_id": fixed_rule.get("shop_id") or "all",
-                "date": datetime.now(UTC).date().isoformat(),
-                "reason": "agent_backfill",
-                "triggered_by": None,
-            },
-            id="shop_dashboard_agent_backfill",
-        )
+        shop_id = str(fixed_rule.get("shop_id") or "").strip()
+        if shop_id:
+            agent_job = ApsJobAdder(sync_shop_dashboard_agent, job_store_kind="redis")
+            agent_job.add_push_job(
+                trigger="cron",
+                minute="*/10",
+                kwargs={
+                    "shop_id": shop_id,
+                    "reason": "agent_backfill",
+                    "triggered_by": None,
+                },
+                id="shop_dashboard_agent_backfill",
+            )
 
 
 def _build_dashboard_job_kwargs(
@@ -119,21 +119,25 @@ async def _load_active_shop_dashboard_rules_async() -> list[dict]:
     if session_factory is None:
         return []
     async with session_factory() as db_session:
-        stmt = select(ScrapingRule).where(
-            ScrapingRule.status == ScrapingRuleStatus.ACTIVE,
-            ScrapingRule.schedule.is_not(None),
-            ScrapingRule.data_source.has(DataSource.status == DataSourceStatus.ACTIVE),
+        stmt = (
+            select(ScrapingRule, DataSource.shop_id)
+            .join(DataSource, ScrapingRule.data_source_id == DataSource.id)
+            .where(
+                ScrapingRule.status == ScrapingRuleStatus.ACTIVE,
+                ScrapingRule.schedule.is_not(None),
+                DataSource.status == DataSourceStatus.ACTIVE,
+            )
         )
-        rows = list((await db_session.execute(stmt)).scalars().all())
+        rows = list((await db_session.execute(stmt)).all())
         return [
             {
-                "rule_id": row.id if row.id is not None else 0,
-                "data_source_id": row.data_source_id,
-                "shop_id": None,
-                "schedule": row.schedule or {},
+                "rule_id": rule.id if rule.id is not None else 0,
+                "data_source_id": rule.data_source_id,
+                "shop_id": shop_id,
+                "schedule": rule.schedule or {},
             }
-            for row in rows
-            if row.id is not None
+            for rule, shop_id in rows
+            if rule.id is not None
         ]
 
 

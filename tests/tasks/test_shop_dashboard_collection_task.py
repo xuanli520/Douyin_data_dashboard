@@ -124,3 +124,61 @@ def test_sync_shop_dashboard_http_browser_fail_then_llm_patch(monkeypatch):
     assert result["items"][0]["source"] == "llm"
     assert result["items"][0]["retry_count"] == 2
     assert result["items"][0]["raw"]["llm_patch"]["reason"] == "http_browser_failed"
+
+
+async def _fake_cookie_health_runtime_loader(**_kwargs):
+    runtime = _build_runtime()
+    runtime.execution_id = "cron_cookie_health_check_2"
+    return runtime
+
+
+def test_sync_shop_dashboard_cookie_health_check_bypasses_result_cache(monkeypatch):
+    monkeypatch.setattr(
+        module.sync_shop_dashboard,
+        "publisher",
+        SimpleNamespace(redis_db_frame=_FakeRedis()),
+        raising=False,
+    )
+
+    calls = {"get_cached_result": 0, "cache_result": 0}
+
+    class _FakeIdempotencyHelper:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def get_cached_result(self, _key):
+            calls["get_cached_result"] += 1
+            return {"status": "cached", "source": "cache"}
+
+        def acquire_lock(self, _key, ttl):
+            _ = ttl
+            return "token-1"
+
+        def cache_result(self, _key, _result, ttl=86400):
+            _ = ttl
+            calls["cache_result"] += 1
+            return None
+
+        def release_lock(self, _key, _token):
+            return None
+
+    def _fake_collect_one_day(_runtime, _metric_date, _browser):
+        return {"status": "success", "source": "script"}
+
+    monkeypatch.setattr(module, "FunboostIdempotencyHelper", _FakeIdempotencyHelper)
+    monkeypatch.setattr(module, "BrowserScraper", lambda: object())
+    monkeypatch.setattr(
+        module, "_load_runtime_config", _fake_cookie_health_runtime_loader
+    )
+    monkeypatch.setattr(module, "_collect_one_day", _fake_collect_one_day)
+    monkeypatch.setattr(module, "_persist_result", _fake_persist)
+
+    result = module.sync_shop_dashboard(
+        data_source_id=1,
+        rule_id=2,
+        execution_id="cron_cookie_health_check_2",
+    )
+
+    assert result["items"][0]["status"] == "success"
+    assert calls["get_cached_result"] == 0
+    assert calls["cache_result"] == 0

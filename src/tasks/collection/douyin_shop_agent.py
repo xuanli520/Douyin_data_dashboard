@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import date as date_type
+from datetime import UTC, date as date_type, datetime
 from typing import Any
 
 from src.agents import LLMDashboardAgent
@@ -46,8 +46,8 @@ def _write_started_status(task_func, task_name: str, triggered_by: int | None) -
 )
 def sync_shop_dashboard_agent(
     shop_id: str,
-    date: str,
-    reason: str,
+    date: str | None = None,
+    reason: str = "agent_backfill",
     triggered_by: int | None = None,
 ) -> dict[str, Any]:
     _write_started_status(
@@ -60,7 +60,8 @@ def sync_shop_dashboard_agent(
         redis_client=redis_client,
         task_name="sync_shop_dashboard_agent",
     )
-    business_key = f"{shop_id}:{date}:{reason}"
+    metric_date = date or datetime.now(UTC).date().isoformat()
+    business_key = f"{shop_id}:{metric_date}:{reason}"
 
     cached = helper.get_cached_result(business_key)
     if cached:
@@ -75,29 +76,29 @@ def sync_shop_dashboard_agent(
             "status": "skipped",
             "reason": "running",
             "shop_id": shop_id,
-            "metric_date": date,
+            "metric_date": metric_date,
             "source": "llm",
         }
 
     try:
-        base_result = _run_async(_load_agent_context(shop_id, date, reason))
+        base_result = _run_async(_load_agent_context(shop_id, metric_date, reason))
         agent = LLMDashboardAgent()
         try:
             patch = agent.supplement_cold_data(
                 base_result,
                 shop_id,
-                date,
+                metric_date,
                 reason=reason,
             )
         finally:
             close = getattr(agent, "close", None)
             if callable(close):
                 close()
-        _run_async(_persist_agent_patch(shop_id, date, reason, patch))
+        _run_async(_persist_agent_patch(shop_id, metric_date, reason, patch))
         result: dict[str, Any] = {
             "status": "success",
             "shop_id": shop_id,
-            "metric_date": date,
+            "metric_date": metric_date,
             "reason": reason,
             "source": "llm",
         }
