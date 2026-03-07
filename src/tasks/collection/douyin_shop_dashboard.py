@@ -85,6 +85,12 @@ def sync_shop_dashboard(
 
     metric_dates = _resolve_metric_dates(runtime)
     browser = BrowserScraper()
+    state_store = SessionStateStore(base_dir=Path(".runtime") / "shop_dashboard_state")
+    lock_manager = LockManager(redis_client=redis_client)
+    login_state_manager = LoginStateManager(
+        state_store=state_store,
+        redis_client=redis_client,
+    )
     items: list[dict[str, Any]] = []
     for metric_date in metric_dates:
         business_key = _build_business_key(runtime, metric_date)
@@ -110,7 +116,14 @@ def sync_shop_dashboard(
             continue
 
         try:
-            collected = _collect_one_day(runtime, metric_date, browser)
+            collected = _collect_one_day(
+                runtime,
+                metric_date,
+                browser,
+                lock_manager=lock_manager,
+                state_store=state_store,
+                login_state_manager=login_state_manager,
+            )
             _run_async(_persist_result(runtime, metric_date, collected))
             helper.cache_result(business_key, collected)
             items.append(collected)
@@ -144,11 +157,19 @@ def _collect_one_day(
     runtime: ShopDashboardRuntimeConfig,
     metric_date: str,
     browser: BrowserScraper,
+    *,
+    lock_manager: LockManager | None = None,
+    state_store: SessionStateStore | None = None,
+    login_state_manager: LoginStateManager | None = None,
 ) -> dict[str, Any]:
     settings = get_settings().shop_dashboard
-    lock_manager = LockManager()
-    state_store = SessionStateStore(base_dir=Path(".runtime") / "shop_dashboard_state")
-    login_state_manager = LoginStateManager(state_store=state_store)
+    lock_manager = lock_manager or LockManager()
+    state_store = state_store or SessionStateStore(
+        base_dir=Path(".runtime") / "shop_dashboard_state"
+    )
+    login_state_manager = login_state_manager or LoginStateManager(
+        state_store=state_store
+    )
     account_id = str(getattr(runtime, "account_id", "") or f"shop_{runtime.shop_id}")
     shop_lock_token = lock_manager.acquire_shop_lock(
         runtime.shop_id, ttl_seconds=settings.lock_ttl_seconds
@@ -206,6 +227,18 @@ def _collect_one_day(
                     return _normalize_task_result(runtime, metric_date, payload)
                 except ScrapingFailedException as exc:
                     last_error = exc
+                    if _is_login_expired_exception(exc):
+                        _run_async(
+                            login_state_manager.mark_expired(
+                                account_id,
+                                reason="refresh_failed",
+                            )
+                        )
+                        return _build_expired_account_result(
+                            runtime,
+                            metric_date,
+                            reason="login_expired",
+                        )
                     continue
                 finally:
                     if account_lock_token:
@@ -223,6 +256,19 @@ def _collect_one_day(
     finally:
         scraper.close()
         lock_manager.release_shop_lock(runtime.shop_id, shop_lock_token)
+
+
+def _is_login_expired_exception(exc: ScrapingFailedException) -> bool:
+    error_data = getattr(exc, "error_data", {})
+    if isinstance(error_data, dict):
+        reason = str(error_data.get("reason", "")).strip().lower()
+        if "expired" in reason:
+            return True
+
+    message = str(exc).strip().lower()
+    return "expired" in message and any(
+        token in message for token in ("login", "session", "cookie")
+    )
 
 
 def _build_expired_account_result(

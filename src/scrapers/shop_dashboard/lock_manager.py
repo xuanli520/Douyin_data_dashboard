@@ -4,11 +4,20 @@ import os
 from typing import Any
 
 from redis import Redis
+from redis.exceptions import ResponseError
 
 from src.config import get_settings
 
 
 class LockManager:
+    _RELEASE_SCRIPT = """
+    if redis.call('get', KEYS[1]) == ARGV[1] then
+        return redis.call('del', KEYS[1])
+    else
+        return 0
+    end
+    """
+
     def __init__(
         self,
         redis_client: Redis | Any | None = None,
@@ -60,6 +69,16 @@ class LockManager:
         return None
 
     def _release(self, key: str, token: str) -> None:
+        eval_func = getattr(self._redis, "eval", None)
+        if callable(eval_func):
+            try:
+                eval_func(self._RELEASE_SCRIPT, 1, key, token)
+                return
+            except ResponseError as exc:
+                message = str(exc).lower()
+                if "unknown command" not in message or "eval" not in message:
+                    raise
+
         current = self._redis.get(key)
         if current == token:
             self._redis.delete(key)

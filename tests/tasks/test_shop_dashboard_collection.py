@@ -270,3 +270,103 @@ def test_collection_uses_shop_lock_refresh_uses_account_lock(monkeypatch):
     assert calls["shop"] == 1
     assert calls["account"] == 1
     assert runtime.cookies["sid"] == "from_state"
+
+
+def test_sync_shop_dashboard_reuses_shared_helpers_across_metric_dates(monkeypatch):
+    runtime = ShopDashboardRuntimeConfig(
+        shop_id="shop-1",
+        cookies={"sid": "v"},
+        proxy=None,
+        timeout=15,
+        retry_count=3,
+        rate_limit=100,
+        granularity="DAY",
+        time_range=None,
+        incremental_mode="BY_DATE",
+        backfill_last_n_days=2,
+        data_latency="T+1",
+        target_type="SHOP_OVERVIEW",
+        metrics=[],
+        dimensions=[],
+        filters={},
+        top_n=None,
+        include_long_tail=False,
+        session_level=False,
+        dedupe_key=None,
+        rule_id=1,
+        execution_id="exec-shared-helpers",
+        fallback_chain=("http",),
+        graphql_query=None,
+        common_query={},
+        token_keys=[],
+        api_groups=["overview"],
+        account_id="acct-1",
+    )
+    helper_ids: list[tuple[int, int, int]] = []
+
+    class _FakeLockManager:
+        def __init__(self, redis_client=None):  # noqa: ARG002
+            self.redis_client = redis_client
+
+    class _FakeStateStore:
+        def __init__(self, base_dir=None):  # noqa: ARG002
+            self.base_dir = base_dir
+
+    class _FakeLoginStateManager:
+        def __init__(self, state_store, redis_client=None):  # noqa: ARG002
+            self.state_store = state_store
+            self.redis_client = redis_client
+
+    async def _fake_load_runtime_config(**_kwargs):
+        return runtime
+
+    async def _fake_persist_result(_runtime, _metric_date, _payload):
+        return None
+
+    def _fake_collect_one_day(
+        _runtime,
+        metric_date,
+        _browser,
+        *,
+        lock_manager,
+        state_store,
+        login_state_manager,
+    ):
+        helper_ids.append((id(lock_manager), id(state_store), id(login_state_manager)))
+        return {
+            "status": "success",
+            "shop_id": runtime.shop_id,
+            "metric_date": metric_date,
+            "rule_id": runtime.rule_id,
+            "execution_id": runtime.execution_id,
+            "source": "script",
+            "total_score": 0.0,
+            "product_score": 0.0,
+            "logistics_score": 0.0,
+            "service_score": 0.0,
+            "reviews": {"summary": {}, "items": []},
+            "violations": {"summary": {}, "waiting_list": []},
+            "raw": {},
+        }
+
+    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
+    monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
+    monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
+    monkeypatch.setattr(module, "_load_runtime_config", _fake_load_runtime_config)
+    monkeypatch.setattr(
+        module,
+        "_resolve_metric_dates",
+        lambda _runtime: ["2026-03-03", "2026-03-04"],
+    )
+    monkeypatch.setattr(module, "_collect_one_day", _fake_collect_one_day)
+    monkeypatch.setattr(module, "_persist_result", _fake_persist_result)
+
+    result = module.sync_shop_dashboard(
+        data_source_id=1,
+        rule_id=1,
+        execution_id="exec-shared-helpers",
+    )
+
+    assert result["status"] == "success"
+    assert len(helper_ids) == 2
+    assert helper_ids[0] == helper_ids[1]

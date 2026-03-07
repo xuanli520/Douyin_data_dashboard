@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from redis import Redis
+from redis.exceptions import ResponseError
 
 from src.config import get_settings
 from src.domains.data_source.models import DataSource
@@ -14,6 +15,14 @@ from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 
 
 class CookieManager:
+    _RELEASE_SCRIPT = """
+    if redis.call('get', KEYS[1]) == ARGV[1] then
+        return redis.call('del', KEYS[1])
+    else
+        return 0
+    end
+    """
+
     def __init__(
         self,
         redis_client: Redis | Any | None = None,
@@ -124,6 +133,16 @@ class CookieManager:
 
     def _release_refresh_lock(self, shop_id: str, token: str) -> None:
         key = self._lock_key(shop_id)
+        eval_func = getattr(self._redis, "eval", None)
+        if callable(eval_func):
+            try:
+                eval_func(self._RELEASE_SCRIPT, 1, key, token)
+                return
+            except ResponseError as exc:
+                message = str(exc).lower()
+                if "unknown command" not in message or "eval" not in message:
+                    raise
+
         current = self._redis.get(key)
         if current == token:
             self._redis.delete(key)

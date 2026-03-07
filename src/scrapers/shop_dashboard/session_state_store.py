@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -16,18 +18,32 @@ class SessionStateStore:
     def save(self, account_id: str, state: dict[str, Any]) -> Path:
         target = self._path(account_id)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            json.dumps(state, ensure_ascii=False, separators=(",", ":")),
-            encoding="utf-8",
+        fd, temp_file = tempfile.mkstemp(
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            dir=target.parent,
         )
+        temp_path = Path(temp_file)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(state, handle, ensure_ascii=False, separators=(",", ":"))
+                handle.flush()
+                os.fsync(handle.fileno())
+            temp_path.replace(target)
+        finally:
+            if temp_path.exists():
+                temp_path.unlink()
         return target
 
     def load(self, account_id: str) -> dict[str, Any] | None:
         target = self._path(account_id)
         if not target.exists():
             return None
-        content = target.read_text(encoding="utf-8")
-        payload = json.loads(content)
+        try:
+            content = target.read_text(encoding="utf-8")
+            payload = json.loads(content)
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            return None
         if isinstance(payload, dict):
             return payload
         return None

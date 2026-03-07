@@ -13,10 +13,10 @@ def bootstrap_login(
     account_id: str,
     state_store: SessionStateStore,
     login_url: str = "https://fxg.jinritemai.com/login/common",
-) -> None:
+) -> Path:
     page.goto(login_url, wait_until="domcontentloaded")
     page.wait_for_url("**/fxg.jinritemai.com/compass/**", timeout=300000)
-    state_store.save(account_id, page.context.storage_state())
+    return state_store.save(account_id, page.context.storage_state())
 
 
 def run_bootstrap(
@@ -33,7 +33,7 @@ def run_bootstrap(
         browser = playwright.chromium.launch(headless=headless)
         context = browser.new_context()
         page = context.new_page()
-        bootstrap_login(
+        saved_path = bootstrap_login(
             page=page,
             account_id=account_id,
             state_store=store,
@@ -41,7 +41,7 @@ def run_bootstrap(
         )
         context.close()
         browser.close()
-    return Path(state_dir) / f"{account_id}.json"
+    return saved_path
 
 
 def main() -> None:

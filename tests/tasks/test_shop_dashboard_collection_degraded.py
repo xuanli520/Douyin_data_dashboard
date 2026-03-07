@@ -1,5 +1,6 @@
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.tasks.collection import douyin_shop_dashboard as module
+from src.tasks.exceptions import ScrapingFailedException
 
 
 def _runtime() -> ShopDashboardRuntimeConfig:
@@ -104,6 +105,64 @@ def test_collect_one_day_returns_degraded_when_login_expired(monkeypatch):
 
         async def check_and_refresh(self, _account_id):
             return False
+
+    monkeypatch.setattr(module, "HttpScraper", _FakeHttpScraper)
+    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
+    monkeypatch.setattr(module, "SessionStateStore", _FakeStore)
+    monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
+
+    payload = module._collect_one_day(runtime, "2026-03-03", _FakeBrowser())
+
+    assert payload["status"] == "degraded"
+    assert payload["reason"] == "login_expired"
+
+
+def test_collect_one_day_returns_degraded_when_browser_reports_login_expired(
+    monkeypatch,
+):
+    runtime = _runtime()
+    runtime.fallback_chain = ("browser", "llm")
+
+    class _FakeHttpScraper:
+        def __init__(self, **_kwargs):
+            pass
+
+        def close(self):
+            return None
+
+    class _FakeBrowser:
+        def retry_http(self, _http_scraper, _runtime, _metric_date):
+            raise ScrapingFailedException("Browser login session expired")
+
+    class _FakeLockManager:
+        def acquire_shop_lock(self, _shop_id, ttl_seconds=None):  # noqa: ARG002
+            return "shop-token"
+
+        def release_shop_lock(self, _shop_id, _token):
+            return None
+
+        def acquire_account_lock(self, _account_id, ttl_seconds=None):  # noqa: ARG002
+            return "account-token"
+
+        def release_account_lock(self, _account_id, _token):
+            return None
+
+    class _FakeStore:
+        def __init__(self, base_dir=None):  # noqa: ARG002
+            pass
+
+        def load_cookie_mapping(self, _account_id):
+            return {}
+
+    class _FakeLoginStateManager:
+        def __init__(self, state_store):  # noqa: ARG002
+            pass
+
+        async def check_and_refresh(self, _account_id):
+            return True
+
+        async def mark_expired(self, _account_id, reason):  # noqa: ARG002
+            return None
 
     monkeypatch.setattr(module, "HttpScraper", _FakeHttpScraper)
     monkeypatch.setattr(module, "LockManager", _FakeLockManager)
