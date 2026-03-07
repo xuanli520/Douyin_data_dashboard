@@ -403,13 +403,12 @@ class HttpScraper:
     def _build_headers(
         self, shop_id: str, cookie_mapping: Mapping[str, str] | None = None
     ) -> dict[str, str]:
+        _ = shop_id
         headers = {
             "Accept": "application/json, text/plain, */*",
             "Content-Type": "application/json",
         }
         resolved_cookie_mapping = dict(cookie_mapping or {})
-        if not resolved_cookie_mapping and self._cookie_provider:
-            resolved_cookie_mapping = dict(self._cookie_provider(shop_id))
         if resolved_cookie_mapping:
             headers["Cookie"] = "; ".join(
                 f"{key}={value}" for key, value in resolved_cookie_mapping.items()

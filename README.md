@@ -536,6 +536,13 @@ async def old_endpoint():
 | `deprecated(soft)` | 200 | No | Graceful migration period |
 | `deprecated(strict)` | 410 | Yes | Force migration |
 
+## Douyin Shop Dashboard Login Ops
+
+- Login session persistence uses Playwright `storage_state` files only, no Redis cookie storage.
+- Bootstrap command: `python scripts/douyin_bootstrap_login.py --account-id <account_id> --state-dir .runtime/shop_dashboard_state`.
+- Collection flow lock strategy: shop-scope lock for collect, account-scope lock for browser refresh.
+- Expired account behavior: when state is missing/invalid, collection returns deterministic degraded payload and skips browser refresh.
+
 
 ## Development Setup
 

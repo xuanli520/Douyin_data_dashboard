@@ -71,6 +71,7 @@ class ShopDashboardRuntimeConfig:
     common_query: dict[str, Any]
     token_keys: list[str]
     api_groups: list[str]
+    account_id: str = ""
 
 
 def build_runtime_config(
@@ -109,6 +110,12 @@ def build_runtime_config(
         metrics=metrics,
         explicit_groups=rule_extra.get("api_groups"),
     )
+    shop_id = str(pick("shop_id", ds_value=data_source.shop_id, default=""))
+    account_id = (
+        str(pick("account_id", default="")).strip()
+        or str(pick("user_phone", default="")).strip()
+        or f"shop_{shop_id}"
+    )
     common_query = dict(ds_extra.get("common_query") or {})
     common_query.update(dict(rule_extra.get("common_query") or {}))
 
@@ -127,7 +134,7 @@ def build_runtime_config(
         fallback_chain = ("http", "browser", "llm")
 
     return ShopDashboardRuntimeConfig(
-        shop_id=str(pick("shop_id", ds_value=data_source.shop_id, default="")),
+        shop_id=shop_id,
         cookies=_parse_cookie_mapping(
             pick("cookies", ds_value=data_source.cookies, default={})
         ),
@@ -196,6 +203,7 @@ def build_runtime_config(
         common_query=common_query,
         token_keys=list(pick("token_keys", default=[])),
         api_groups=api_groups,
+        account_id=account_id,
     )
 
 
