@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import date
 from typing import Any
 
@@ -230,3 +231,97 @@ class ShopDashboardRepository(BaseRepository):
             "dsr_trend": list(cold.dsr_trend) if cold is not None else [],
             "raw": {},
         }
+
+    async def query_dashboard_results(
+        self,
+        *,
+        shop_id: str,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict[str, Any]]:
+        score_stmt = (
+            select(ShopDashboardScore)
+            .where(
+                ShopDashboardScore.shop_id == shop_id,
+                ShopDashboardScore.metric_date >= start_date,
+                ShopDashboardScore.metric_date <= end_date,
+            )
+            .order_by(ShopDashboardScore.metric_date.asc())
+        )
+        scores = (await self.session.execute(score_stmt)).scalars().all()
+        if not scores:
+            return []
+
+        review_stmt = select(ShopDashboardReview).where(
+            ShopDashboardReview.shop_id == shop_id,
+            ShopDashboardReview.metric_date >= start_date,
+            ShopDashboardReview.metric_date <= end_date,
+        )
+        violation_stmt = select(ShopDashboardViolation).where(
+            ShopDashboardViolation.shop_id == shop_id,
+            ShopDashboardViolation.metric_date >= start_date,
+            ShopDashboardViolation.metric_date <= end_date,
+        )
+        cold_stmt = select(ShopDashboardColdMetric).where(
+            ShopDashboardColdMetric.shop_id == shop_id,
+            ShopDashboardColdMetric.metric_date >= start_date,
+            ShopDashboardColdMetric.metric_date <= end_date,
+        )
+
+        review_rows = (await self.session.execute(review_stmt)).scalars().all()
+        violation_rows = (await self.session.execute(violation_stmt)).scalars().all()
+        cold_rows = (await self.session.execute(cold_stmt)).scalars().all()
+
+        reviews_by_day: dict[date, list[dict[str, Any]]] = defaultdict(list)
+        for row in review_rows:
+            reviews_by_day[row.metric_date].append(
+                {
+                    "id": row.review_id,
+                    "content": row.content,
+                    "is_replied": row.is_replied,
+                    "source": row.source,
+                }
+            )
+
+        violations_by_day: dict[date, list[dict[str, Any]]] = defaultdict(list)
+        for row in violation_rows:
+            violations_by_day[row.metric_date].append(
+                {
+                    "id": row.violation_id,
+                    "type": row.violation_type,
+                    "description": row.description,
+                    "score": row.score,
+                    "source": row.source,
+                }
+            )
+
+        cold_by_day: dict[date, list[dict[str, Any]]] = defaultdict(list)
+        for row in cold_rows:
+            cold_by_day[row.metric_date].append(
+                {
+                    "reason": row.reason,
+                    "source": row.source,
+                    "violations_detail": list(row.violations_detail),
+                    "arbitration_detail": list(row.arbitration_detail),
+                    "dsr_trend": list(row.dsr_trend),
+                }
+            )
+
+        items: list[dict[str, Any]] = []
+        for row in scores:
+            metric_date = row.metric_date
+            items.append(
+                {
+                    "shop_id": row.shop_id,
+                    "metric_date": metric_date.isoformat(),
+                    "source": row.source,
+                    "total_score": float(row.total_score),
+                    "product_score": float(row.product_score),
+                    "logistics_score": float(row.logistics_score),
+                    "service_score": float(row.service_score),
+                    "reviews": reviews_by_day.get(metric_date, []),
+                    "violations": violations_by_day.get(metric_date, []),
+                    "cold_metrics": cold_by_day.get(metric_date, []),
+                }
+            )
+        return items

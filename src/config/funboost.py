@@ -10,3 +10,6 @@ class FunboostSettings(BaseSettings):
     default_max_retry_times: int = 3
     default_retry_interval: int = 60
     pull_msg_batch_size: int = 1
+    shop_dashboard_collection_qps: float = 0.5
+    shop_dashboard_collection_concurrent_num: int = 150
+    shop_dashboard_collection_max_retry_times: int = 3

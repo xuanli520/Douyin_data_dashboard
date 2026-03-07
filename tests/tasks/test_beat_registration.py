@@ -26,8 +26,6 @@ def test_register_jobs_uses_fixed_ids(monkeypatch):
     module.register_jobs()
 
     add_ids = [item[1] for item in calls if item[0] == "add"]
-    assert "daily_collection_orders_sync" in add_ids
-    assert "daily_collection_products_sync" in add_ids
     assert "scraping_rule_99_collection_shop_dashboard_sync" in add_ids
 
 

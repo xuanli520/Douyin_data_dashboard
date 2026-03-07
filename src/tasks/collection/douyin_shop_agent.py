@@ -84,7 +84,10 @@ def sync_shop_dashboard_agent(
         agent = LLMDashboardAgent()
         try:
             patch = agent.supplement_cold_data(
-                base_result, shop_id, date, reason=reason
+                base_result,
+                shop_id,
+                date,
+                reason=reason,
             )
         finally:
             close = getattr(agent, "close", None)
@@ -107,6 +110,20 @@ def sync_shop_dashboard_agent(
         return result
     finally:
         helper.release_lock(business_key, token)
+
+
+@boost(
+    CollectionTaskParams(
+        queue_name="collection_shop_dashboard_agent_dlx",
+        consumer_override_cls=TaskStatusMixin,
+    )
+)
+def handle_collection_shop_dashboard_agent_dead_letter(**payload) -> dict[str, Any]:
+    return {
+        "status": "recorded",
+        "queue": "collection_shop_dashboard_agent_dlx",
+        "payload": payload,
+    }
 
 
 async def _load_agent_context(

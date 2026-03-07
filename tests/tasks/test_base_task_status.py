@@ -26,7 +26,7 @@ def test_task_status_hook_writes_fields_and_ttl():
         task_id="task-status-1",
         success=True,
         time_end=1730000000.0,
-        function="sync_orders",
+        function="sync_shop_dashboard",
     )
 
     mixin._sync_and_aio_frame_custom_record_process_info_func(
@@ -37,7 +37,7 @@ def test_task_status_hook_writes_fields_and_ttl():
     key, mapping = fake_redis.hset_calls[0]
     assert key == "douyin:task:status:task-status-1"
     assert mapping["status"] == "SUCCESS"
-    assert mapping["task_name"] == "sync_orders"
+    assert mapping["task_name"] == "sync_shop_dashboard"
     assert str(mapping["triggered_by"]) == "42"
     assert "completed_at" in mapping
 

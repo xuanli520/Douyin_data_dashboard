@@ -4,20 +4,13 @@ import argparse
 from threading import Thread
 from typing import Callable
 
-from src.tasks.collection import (
-    douyin_orders,
-    douyin_products,
-    douyin_shop_agent,
-    douyin_shop_dashboard,
-)
+from src.tasks.collection import douyin_shop_agent, douyin_shop_dashboard
 from src.tasks.etl import orders as etl_orders
 from src.tasks.etl import products as etl_products
 
 
 def _queue_runners(etl_processes: int) -> dict[str, Callable[[], None]]:
     return {
-        "collection_orders": lambda: douyin_orders.sync_orders.consume(),
-        "collection_products": lambda: douyin_products.sync_products.consume(),
         "collection_shop_dashboard": lambda: (
             douyin_shop_dashboard.sync_shop_dashboard.consume()
         ),
@@ -30,14 +23,11 @@ def _queue_runners(etl_processes: int) -> dict[str, Callable[[], None]]:
         "etl_products": lambda: etl_products.process_products.multi_process_consume(
             etl_processes
         ),
-        "collection_orders_dlx": lambda: (
-            douyin_orders.handle_collection_orders_dead_letter.consume()
-        ),
-        "collection_products_dlx": lambda: (
-            douyin_products.handle_collection_products_dead_letter.consume()
-        ),
         "collection_shop_dashboard_dlx": lambda: (
             douyin_shop_dashboard.handle_collection_shop_dashboard_dead_letter.consume()
+        ),
+        "collection_shop_dashboard_agent_dlx": lambda: (
+            douyin_shop_agent.handle_collection_shop_dashboard_agent_dead_letter.consume()
         ),
         "etl_orders_dlx": lambda: etl_orders.handle_etl_orders_dead_letter.consume(),
         "etl_products_dlx": lambda: (

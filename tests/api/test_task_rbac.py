@@ -1,12 +1,13 @@
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
-from src.cache import LocalCache, get_cache
-from src.session import get_session
+
 from src.auth.captcha import get_captcha_service
+from src.cache import LocalCache, get_cache
 from src.main import app
+from src.session import get_session
 
 
 class MockCaptchaService:
@@ -69,16 +70,16 @@ def rbac_client(db_session):
 
 def test_list_tasks_requires_permission(rbac_client):
     response = rbac_client.post(
-        "/api/v1/tasks/collection/orders/trigger",
-        json={"shop_id": "shop-1", "date": "2026-03-03"},
+        "/api/v1/tasks/etl/orders/trigger",
+        json={"batch_date": "2026-03-03"},
     )
     assert response.status_code == 401
 
 
 def test_create_task_requires_permission(rbac_client):
     response = rbac_client.post(
-        "/api/v1/tasks/collection/products/trigger",
-        json={"shop_id": "shop-1", "date": "2026-03-03"},
+        "/api/v1/tasks/etl/products/trigger",
+        json={"batch_date": "2026-03-03"},
     )
     assert response.status_code == 401
 

@@ -6,6 +6,7 @@ import time
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
+from src.agents import LLMDashboardAgent
 from src.config import get_settings
 from src.domains.data_source.enums import DataSourceStatus, ScrapingRuleStatus
 from src.domains.data_source.repository import (
@@ -13,6 +14,7 @@ from src.domains.data_source.repository import (
     ScrapingRuleRepository,
 )
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
+from src.middleware.monitor import observe_shop_dashboard_collection
 from src.scrapers.shop_dashboard.browser_scraper import BrowserScraper
 from src.scrapers.shop_dashboard.http_scraper import HttpScraper
 from src.scrapers.shop_dashboard.runtime import (
@@ -87,29 +89,58 @@ def sync_shop_dashboard(
         cached = helper.get_cached_result(business_key)
         if cached:
             items.append(cached)
+            observe_shop_dashboard_collection(
+                source=str(cached.get("source", "cache")),
+                status=str(cached.get("status", "success")),
+                duration_seconds=0.0,
+            )
             continue
 
         token = helper.acquire_lock(
             business_key, ttl=get_settings().shop_dashboard.lock_ttl_seconds
         )
         if not token:
-            items.append(
-                {
-                    "status": "skipped",
-                    "reason": "running",
-                    "metric_date": metric_date,
-                    "shop_id": runtime.shop_id,
-                    "rule_id": runtime.rule_id,
-                    "execution_id": runtime.execution_id,
-                }
+            skipped_result = {
+                "status": "skipped",
+                "reason": "running",
+                "metric_date": metric_date,
+                "shop_id": runtime.shop_id,
+                "rule_id": runtime.rule_id,
+                "execution_id": runtime.execution_id,
+                "retry_count": 0,
+                "fallback_trace": [],
+            }
+            items.append(skipped_result)
+            observe_shop_dashboard_collection(
+                source="lock",
+                status="skipped",
+                duration_seconds=0.0,
             )
             continue
 
+        started_at = time.perf_counter()
+        source = "unknown"
+        status = "failed"
         try:
             collected = _collect_one_day(runtime, metric_date, browser)
             _run_async(_persist_result(runtime, metric_date, collected))
             helper.cache_result(business_key, collected)
             items.append(collected)
+            source = str(collected.get("source", "unknown"))
+            status = str(collected.get("status", "success"))
+        except Exception:
+            observe_shop_dashboard_collection(
+                source=source,
+                status=status,
+                duration_seconds=time.perf_counter() - started_at,
+            )
+            raise
+        else:
+            observe_shop_dashboard_collection(
+                source=source,
+                status=status,
+                duration_seconds=time.perf_counter() - started_at,
+            )
         finally:
             helper.release_lock(business_key, token)
 
@@ -147,6 +178,10 @@ def _collect_one_day(
         graphql_query=runtime.graphql_query,
     )
     last_error: ScrapingFailedException | None = None
+    http_error: ScrapingFailedException | None = None
+    browser_error: ScrapingFailedException | None = None
+    retry_count = 0
+    fallback_trace: list[dict[str, Any]] = []
     try:
         for stage in runtime.fallback_chain:
             stage_name = str(stage).strip().lower()
@@ -154,19 +189,60 @@ def _collect_one_day(
                 try:
                     payload = scraper.fetch_dashboard_with_context(runtime, metric_date)
                     payload["source"] = "script"
-                    return _normalize_task_result(runtime, metric_date, payload)
+                    fallback_trace.append({"stage": "http", "status": "success"})
+                    return _normalize_task_result(
+                        runtime,
+                        metric_date,
+                        payload,
+                        retry_count=retry_count,
+                        fallback_trace=fallback_trace,
+                    )
                 except ScrapingFailedException as exc:
+                    retry_count += 1
                     last_error = exc
+                    http_error = exc
+                    fallback_trace.append(
+                        {
+                            "stage": "http",
+                            "status": "failed",
+                            "error": str(exc),
+                        }
+                    )
                     continue
             if stage_name == "browser":
                 try:
                     payload = browser.retry_http(scraper, runtime, metric_date)
-                    return _normalize_task_result(runtime, metric_date, payload)
+                    fallback_trace.append({"stage": "browser", "status": "success"})
+                    return _normalize_task_result(
+                        runtime,
+                        metric_date,
+                        payload,
+                        retry_count=retry_count,
+                        fallback_trace=fallback_trace,
+                    )
                 except ScrapingFailedException as exc:
+                    retry_count += 1
                     last_error = exc
+                    browser_error = exc
+                    fallback_trace.append(
+                        {
+                            "stage": "browser",
+                            "status": "failed",
+                            "error": str(exc),
+                        }
+                    )
                     continue
             if stage_name == "llm":
-                return _build_llm_fallback_result(runtime, metric_date)
+                fallback_trace.append({"stage": "llm", "status": "success"})
+                return _build_llm_fallback_result(
+                    runtime,
+                    metric_date,
+                    http_error=http_error,
+                    browser_error=browser_error,
+                    retry_count=retry_count,
+                    fallback_trace=fallback_trace,
+                )
+
         if last_error is not None:
             raise last_error
         raise ScrapingFailedException(
@@ -178,9 +254,13 @@ def _collect_one_day(
 
 
 def _normalize_task_result(
-    runtime: ShopDashboardRuntimeConfig, metric_date: str, payload: dict[str, Any]
+    runtime: ShopDashboardRuntimeConfig,
+    metric_date: str,
+    payload: dict[str, Any],
+    retry_count: int = 0,
+    fallback_trace: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    return {
+    result = {
         "status": "success",
         "shop_id": runtime.shop_id,
         "metric_date": metric_date,
@@ -194,18 +274,41 @@ def _normalize_task_result(
         "reviews": payload.get("reviews", {"summary": {}, "items": []}),
         "violations": payload.get("violations", {"summary": {}, "waiting_list": []}),
         "raw": payload.get("raw", {}),
+        "retry_count": retry_count,
+        "fallback_trace": list(fallback_trace or []),
     }
+    for key in ("violations_detail", "arbitration_detail", "dsr_trend"):
+        if key in payload:
+            result[key] = payload.get(key)
+    if not isinstance(result["raw"], dict):
+        result["raw"] = {}
+    return result
+
+
+def _resolve_llm_reason(
+    http_error: ScrapingFailedException | None,
+    browser_error: ScrapingFailedException | None,
+) -> str:
+    if http_error is not None and browser_error is not None:
+        return "http_browser_failed"
+    if http_error is not None:
+        return "http_failed"
+    if browser_error is not None:
+        return "browser_failed"
+    return "fallback"
 
 
 def _build_llm_fallback_result(
-    runtime: ShopDashboardRuntimeConfig, metric_date: str
+    runtime: ShopDashboardRuntimeConfig,
+    metric_date: str,
+    *,
+    http_error: ScrapingFailedException | None = None,
+    browser_error: ScrapingFailedException | None = None,
+    retry_count: int = 0,
+    fallback_trace: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    return {
-        "status": "success",
-        "shop_id": runtime.shop_id,
-        "metric_date": metric_date,
-        "rule_id": runtime.rule_id,
-        "execution_id": runtime.execution_id,
+    reason = _resolve_llm_reason(http_error, browser_error)
+    payload: dict[str, Any] = {
         "source": "llm",
         "total_score": 0.0,
         "product_score": 0.0,
@@ -215,6 +318,44 @@ def _build_llm_fallback_result(
         "violations": {"summary": {}, "waiting_list": []},
         "raw": {},
     }
+
+    agent = LLMDashboardAgent()
+    try:
+        patched = agent.supplement_cold_data(
+            payload,
+            runtime.shop_id,
+            metric_date,
+            reason=reason,
+        )
+    except Exception as exc:
+        raw = dict(payload.get("raw") or {})
+        raw["llm_patch"] = {
+            "status": "failed",
+            "reason": reason,
+            "error": str(exc),
+        }
+        payload["raw"] = raw
+        patched = payload
+    finally:
+        close = getattr(agent, "close", None)
+        if callable(close):
+            close()
+
+    if not isinstance(patched, dict):
+        patched = payload
+    patched["source"] = "llm"
+    raw = patched.get("raw")
+    if not isinstance(raw, dict):
+        raw = {}
+    raw.setdefault("llm_patch", {"status": "success", "reason": reason})
+    patched["raw"] = raw
+    return _normalize_task_result(
+        runtime,
+        metric_date,
+        patched,
+        retry_count=retry_count,
+        fallback_trace=fallback_trace,
+    )
 
 
 def _resolve_metric_dates(runtime: ShopDashboardRuntimeConfig) -> list[str]:

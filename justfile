@@ -15,6 +15,10 @@ default:
 @check:
     uvx pre-commit run --all-files
 
+@ci-gate:
+    uv run --frozen pytest -q
+    just check
+
 # Start development server with auto-reload
 run port=PORT:
     uv run --frozen uvicorn src.main:app --reload --host 0.0.0.0 --port {{port}}

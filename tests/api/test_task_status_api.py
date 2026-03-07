@@ -128,7 +128,7 @@ async def test_get_task_status_success_and_audit(
             assert key == "douyin:task:status:task-id-2"
             return {
                 "status": "SUCCESS",
-                "task_name": "sync_orders",
+                "task_name": "sync_shop_dashboard",
                 "triggered_by": str(permission_data.id),
             }
 

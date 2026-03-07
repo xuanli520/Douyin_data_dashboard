@@ -1,4 +1,4 @@
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from src.config import get_settings
 from src.tasks.funboost_compat import BoosterParams, ConcurrentModeEnum
@@ -33,6 +33,21 @@ class CollectionTaskParams(DouyinTaskParams):
     qps: float = 0.5
     concurrent_num: int = 200
     concurrent_mode: str = ConcurrentModeEnum.THREADING
+
+    @model_validator(mode="after")
+    def _apply_shop_dashboard_overrides(self) -> "CollectionTaskParams":
+        if self.queue_name != "collection_shop_dashboard":
+            return self
+        funboost_settings = _get_funboost_settings()
+        self.qps = float(funboost_settings.shop_dashboard_collection_qps)
+        self.concurrent_num = int(
+            funboost_settings.shop_dashboard_collection_concurrent_num
+        )
+        self.max_retry_times = max(
+            int(self.max_retry_times),
+            int(funboost_settings.shop_dashboard_collection_max_retry_times),
+        )
+        return self
 
 
 class EtlTaskParams(DouyinTaskParams):

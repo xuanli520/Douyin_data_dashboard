@@ -452,7 +452,7 @@ class TestTaskAPI:
             "/api/v1/tasks",
             json={
                 "name": "Test Task",
-                "task_type": "ORDER_COLLECTION",
+                "task_type": "ETL_ORDERS",
                 "data_source_id": 1,
                 "schedule": "0 */6 * * *",
             },

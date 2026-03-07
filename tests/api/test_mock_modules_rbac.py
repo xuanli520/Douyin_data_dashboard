@@ -387,22 +387,6 @@ class TestAnalysisRBAC:
 
 class TestTaskRBAC:
     @pytest.mark.asyncio
-    async def test_collection_orders_trigger_requires_permission(self, api_client):
-        response = await api_client.post(
-            "/api/v1/tasks/collection/orders/trigger",
-            json={"shop_id": "shop-1", "date": "2026-03-03"},
-        )
-        assert response.status_code == 401
-
-    @pytest.mark.asyncio
-    async def test_collection_products_trigger_requires_permission(self, api_client):
-        response = await api_client.post(
-            "/api/v1/tasks/collection/products/trigger",
-            json={"shop_id": "shop-1", "date": "2026-03-03"},
-        )
-        assert response.status_code == 401
-
-    @pytest.mark.asyncio
     async def test_etl_orders_trigger_requires_permission(self, api_client):
         response = await api_client.post(
             "/api/v1/tasks/etl/orders/trigger",
@@ -424,38 +408,6 @@ class TestTaskRBAC:
         assert response.status_code == 401
 
     @pytest.mark.asyncio
-    async def test_collection_orders_trigger_with_permission(
-        self, api_client, permission_data
-    ):
-        headers = await get_auth_headers(
-            api_client, "shopuser@example.com", "shopuser123"
-        )
-        response = await api_client.post(
-            "/api/v1/tasks/collection/orders/trigger",
-            json={"shop_id": "shop-1", "date": "2026-03-03"},
-            headers=headers,
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert "data" in data
-
-    @pytest.mark.asyncio
-    async def test_collection_products_trigger_with_permission(
-        self, api_client, permission_data
-    ):
-        headers = await get_auth_headers(
-            api_client, "shopuser@example.com", "shopuser123"
-        )
-        response = await api_client.post(
-            "/api/v1/tasks/collection/products/trigger",
-            json={"shop_id": "shop-1", "date": "2026-03-03"},
-            headers=headers,
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert "data" in data
-
-    @pytest.mark.asyncio
     async def test_etl_orders_trigger_with_permission(
         self, api_client, permission_data
     ):
@@ -472,15 +424,31 @@ class TestTaskRBAC:
         assert "data" in data
 
     @pytest.mark.asyncio
-    async def test_collection_orders_trigger_superuser_bypass(
+    async def test_etl_products_trigger_with_permission(
+        self, api_client, permission_data
+    ):
+        headers = await get_auth_headers(
+            api_client, "shopuser@example.com", "shopuser123"
+        )
+        response = await api_client.post(
+            "/api/v1/tasks/etl/products/trigger",
+            json={"batch_date": "2026-03-03"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "data" in data
+
+    @pytest.mark.asyncio
+    async def test_etl_orders_trigger_superuser_bypass(
         self, api_client, superuser_data
     ):
         headers = await get_auth_headers(
             api_client, "superuser@example.com", "superuser123"
         )
         response = await api_client.post(
-            "/api/v1/tasks/collection/orders/trigger",
-            json={"shop_id": "shop-1", "date": "2026-03-03"},
+            "/api/v1/tasks/etl/orders/trigger",
+            json={"batch_date": "2026-03-03"},
             headers=headers,
         )
         assert response.status_code == 200
