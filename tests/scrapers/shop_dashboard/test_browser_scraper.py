@@ -1,14 +1,16 @@
-import fakeredis
-
 from src.scrapers.shop_dashboard.browser_scraper import BrowserScraper
-from src.scrapers.shop_dashboard.cookie_manager import CookieManager
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
+from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
 
 
-def _build_runtime() -> ShopDashboardRuntimeConfig:
+def _runtime(
+    *,
+    account_id: str = "acct-1",
+    cookies: dict[str, str] | None = None,
+) -> ShopDashboardRuntimeConfig:
     return ShopDashboardRuntimeConfig(
         shop_id="shop-1",
-        cookies={"sessionid": "old"},
+        cookies=cookies or {},
         proxy=None,
         timeout=15,
         retry_count=3,
@@ -31,38 +33,42 @@ def _build_runtime() -> ShopDashboardRuntimeConfig:
         fallback_chain=("http", "browser", "llm"),
         graphql_query=None,
         common_query={"_bid": "old-bid"},
-        token_keys=["x_tt_token"],
+        token_keys=["sid"],
         api_groups=["overview"],
+        account_id=account_id,
     )
 
 
-async def test_browser_scraper_refreshes_cookie_and_query_via_cookie_manager():
-    redis_client = fakeredis.FakeRedis(decode_responses=True)
-    cookie_manager = CookieManager(redis_client=redis_client, ttl_seconds=60)
-    runtime = _build_runtime()
+async def test_browser_scraper_loads_and_saves_state_without_redis(
+    tmp_path, monkeypatch
+):
+    store = SessionStateStore(base_dir=tmp_path)
+    runtime = _runtime(account_id="acct-1", cookies={})
+    scraper = BrowserScraper(state_store=store)
 
-    async def refresher(_runtime: ShopDashboardRuntimeConfig) -> dict:
+    async def fake_refresh(_runtime, date=None):  # noqa: ARG001
         return {
-            "cookies": {"x_tt_token": "new-token"},
+            "cookies": {"sid": "new-token"},
             "common_query": {"msToken": "ms-token"},
+            "storage_state": {
+                "cookies": [{"name": "sid", "value": "new-token"}],
+                "origins": [],
+            },
         }
 
-    scraper = BrowserScraper(refresher=refresher, cookie_manager=cookie_manager)
-    result = await scraper.refresh_runtime_context(runtime)
+    monkeypatch.setattr(scraper, "_refresh_with_playwright", fake_refresh)
 
-    assert result.cookies["x_tt_token"] == "new-token"
-    assert result.common_query["msToken"] == "ms-token"
-    cached = await cookie_manager.get("shop-1")
-    assert cached["x_tt_token"] == "new-token"
+    await scraper.refresh_runtime_context(runtime)
+
+    assert store.exists("acct-1") is True
+    assert runtime.cookies["sid"] == "new-token"
 
 
 def test_browser_scraper_retry_http_sets_browser_source():
-    redis_client = fakeredis.FakeRedis(decode_responses=True)
-    cookie_manager = CookieManager(redis_client=redis_client, ttl_seconds=60)
-    runtime = _build_runtime()
+    runtime = _runtime(account_id="acct-2", cookies={"sid": "old"})
 
     async def refresher(_runtime: ShopDashboardRuntimeConfig) -> dict:
-        return {"cookies": {"x_tt_token": "new-token"}}
+        return {"cookies": {"sid": "new-token"}}
 
     class _FakeHttpScraper:
         def __init__(self):
@@ -73,7 +79,7 @@ def test_browser_scraper_retry_http_sets_browser_source():
             return {"shop_id": runtime_config.shop_id, "metric_date": metric_date}
 
     http_scraper = _FakeHttpScraper()
-    scraper = BrowserScraper(refresher=refresher, cookie_manager=cookie_manager)
+    scraper = BrowserScraper(refresher=refresher)
     result = scraper.retry_http(http_scraper, runtime, "2026-03-03")
 
     assert result["source"] == "browser"

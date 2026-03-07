@@ -43,7 +43,9 @@ class BaseRepository:
         operation: Callable[[], Any],
     ) -> Any:
         if self.session.in_transaction():
-            return await operation()
+            result = await operation()
+            await self.session.flush()
+            return result
 
         try:
             async with self.session.begin():

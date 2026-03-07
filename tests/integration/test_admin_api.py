@@ -3,6 +3,7 @@ from fastapi_pagination import add_pagination
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
+from unittest.mock import AsyncMock, patch
 
 from src.session import get_session
 from src.auth.models import User, Role, Permission, UserRole, RolePermission
@@ -206,7 +207,14 @@ async def test_client(async_engine, test_session, admin_token):
 
     async def override_get_session():
         async with async_session_factory() as session:
-            yield session
+            try:
+                yield session
+                if session.in_transaction():
+                    await session.commit()
+            except Exception:
+                if session.in_transaction():
+                    await session.rollback()
+                raise
 
     app.dependency_overrides[get_session] = override_get_session
 
@@ -324,6 +332,66 @@ class TestAdminRolesAPI:
         assert response.status_code == 200
         data = response.json()
         assert data["data"]["name"] == "test_role"
+
+    async def test_update_role_description_persists(self, test_client):
+        create_resp = await test_client.post(
+            "/api/admin/roles",
+            json={
+                "name": "updatable_role",
+                "description": "before",
+            },
+        )
+        role_id = create_resp.json()["data"]["id"]
+
+        update_resp = await test_client.patch(
+            f"/api/admin/roles/{role_id}",
+            json={"description": "after"},
+        )
+        assert update_resp.status_code == 200
+
+        detail_resp = await test_client.get(f"/api/admin/roles/{role_id}")
+        assert detail_resp.status_code == 200
+        assert detail_resp.json()["data"]["description"] == "after"
+
+    async def test_update_role_persists_when_audit_commit_fails(
+        self, test_client, monkeypatch
+    ):
+        from src.audit.service import AuditRepository
+
+        create_resp = await test_client.post(
+            "/api/admin/roles",
+            json={
+                "name": "updatable_role_when_audit_fails",
+                "description": "before",
+            },
+        )
+        role_id = create_resp.json()["data"]["id"]
+
+        original_create_audit_log = AuditRepository.create_audit_log
+
+        async def create_audit_log_with_broken_commit(self, *args, **kwargs):
+            with patch.object(
+                type(self.session),
+                "commit",
+                new=AsyncMock(side_effect=RuntimeError("forced audit commit failure")),
+            ):
+                return await original_create_audit_log(self, *args, **kwargs)
+
+        monkeypatch.setattr(
+            AuditRepository,
+            "create_audit_log",
+            create_audit_log_with_broken_commit,
+        )
+
+        update_resp = await test_client.patch(
+            f"/api/admin/roles/{role_id}",
+            json={"description": "after"},
+        )
+        assert update_resp.status_code == 200
+
+        detail_resp = await test_client.get(f"/api/admin/roles/{role_id}")
+        assert detail_resp.status_code == 200
+        assert detail_resp.json()["data"]["description"] == "after"
 
 
 class TestAdminPermissionsAPI:

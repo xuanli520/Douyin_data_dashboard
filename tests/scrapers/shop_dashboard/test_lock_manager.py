@@ -1,16 +1,14 @@
 import fakeredis
 from redis.exceptions import ResponseError
 
-from src.scrapers.shop_dashboard.cookie_manager import CookieManager
+from src.scrapers.shop_dashboard.lock_manager import LockManager
 
 
-def test_cookie_manager_no_longer_writes_cookie_to_redis():
+def test_lock_manager_keys():
     fake_redis = fakeredis.FakeRedis(decode_responses=True)
-    manager = CookieManager(redis_client=fake_redis)
-
-    manager.set("acct-1", {"x_tt_token": "abc"})
-
-    assert fake_redis.hgetall("douyin:shop_dashboard:cookie:acct-1") == {}
+    lock = LockManager(redis_client=fake_redis)
+    assert lock.account_lock_key("acct-1") == "douyin:account:lock:acct-1"
+    assert lock.shop_lock_key("shop-1") == "douyin:shop:lock:shop-1"
 
 
 class _EvalOnlyRedis:
@@ -39,16 +37,16 @@ class _EvalOnlyRedis:
         return 0
 
 
-def test_cookie_refresh_lock_release_is_atomic():
+def test_release_account_lock_is_atomic_and_does_not_delete_new_owner_lock():
     fake_redis = _EvalOnlyRedis()
-    manager = CookieManager(redis_client=fake_redis)
-    lock_key = manager._lock_key("shop-1")
-    fake_redis._store[lock_key] = "old-owner-token"
+    lock = LockManager(redis_client=fake_redis)
+    key = lock.account_lock_key("acct-1")
+    fake_redis._store[key] = "token-a"
 
-    manager._release_refresh_lock("shop-1", "old-owner-token")
+    lock.release_account_lock("acct-1", "token-a")
 
     assert fake_redis.eval_calls == 1
-    assert lock_key not in fake_redis._store
+    assert key not in fake_redis._store
 
 
 class _EvalUnsupportedRedis:
@@ -79,14 +77,14 @@ class _EvalUnsupportedRedis:
         return 0
 
 
-def test_cookie_refresh_lock_release_falls_back_when_eval_not_supported():
+def test_release_account_lock_falls_back_when_eval_not_supported():
     fake_redis = _EvalUnsupportedRedis()
-    manager = CookieManager(redis_client=fake_redis)
-    lock_key = manager._lock_key("shop-1")
-    fake_redis._store[lock_key] = "token-a"
+    lock = LockManager(redis_client=fake_redis)
+    key = lock.account_lock_key("acct-1")
+    fake_redis._store[key] = "token-a"
 
-    manager._release_refresh_lock("shop-1", "token-a")
+    lock.release_account_lock("acct-1", "token-a")
 
-    assert lock_key not in fake_redis._store
+    assert key not in fake_redis._store
     assert fake_redis.get_calls == 1
     assert fake_redis.delete_calls == 1

@@ -17,3 +17,6 @@ class ShopDashboardSettings(BaseSettings):
     browser_lock_wait_seconds: int = 10
     browser_lock_retry_interval_seconds: float = 0.2
     browser_user_agent: str | None = None
+    browser_locale: str | None = None
+    browser_timezone: str | None = None
+    browser_viewport: dict[str, int] | None = None
