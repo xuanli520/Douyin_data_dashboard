@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from datetime import UTC, date, datetime, timedelta
@@ -93,6 +94,7 @@ def sync_shop_dashboard(
         state_store=state_store,
         redis_client=redis_client,
     )
+    collector_supports_shared_helpers = _supports_shared_helpers(_collect_one_day)
     items: list[dict[str, Any]] = []
     for metric_date in metric_dates:
         business_key = _build_business_key(runtime, metric_date)
@@ -133,14 +135,17 @@ def sync_shop_dashboard(
         source = "unknown"
         status = "failed"
         try:
-            collected = _collect_one_day(
-                runtime,
-                metric_date,
-                browser,
-                lock_manager=lock_manager,
-                state_store=state_store,
-                login_state_manager=login_state_manager,
-            )
+            if collector_supports_shared_helpers:
+                collected = _collect_one_day(
+                    runtime,
+                    metric_date,
+                    browser,
+                    lock_manager=lock_manager,
+                    state_store=state_store,
+                    login_state_manager=login_state_manager,
+                )
+            else:
+                collected = _collect_one_day(runtime, metric_date, browser)
             _run_async(_persist_result(runtime, metric_date, collected))
             if cache_enabled:
                 helper.cache_result(business_key, collected)
@@ -203,7 +208,8 @@ def _collect_one_day(
     login_state_manager = login_state_manager or LoginStateManager(
         state_store=state_store
     )
-    account_id = str(getattr(runtime, "account_id", "") or f"shop_{runtime.shop_id}")
+    explicit_account_id = str(getattr(runtime, "account_id", "") or "").strip()
+    account_id = explicit_account_id or f"shop_{runtime.shop_id}"
     shop_lock_token = lock_manager.acquire_shop_lock(
         runtime.shop_id, ttl_seconds=settings.lock_ttl_seconds
     )
@@ -254,15 +260,6 @@ def _collect_one_day(
             if stage_name == "browser":
                 account_lock_token: str | None = None
                 try:
-                    can_refresh = _run_async(
-                        login_state_manager.check_and_refresh(account_id)
-                    )
-                    if not can_refresh:
-                        return _build_expired_account_result(
-                            runtime,
-                            metric_date,
-                            reason="login_expired",
-                        )
                     account_lock_token = lock_manager.acquire_account_lock(
                         account_id,
                         ttl_seconds=settings.lock_ttl_seconds,
@@ -273,6 +270,19 @@ def _collect_one_day(
                             metric_date,
                             reason="account_locked",
                         )
+                    if explicit_account_id:
+                        can_refresh = _run_async(
+                            login_state_manager.check_and_refresh(account_id)
+                        )
+                        if not can_refresh:
+                            return _build_expired_account_result(
+                                runtime,
+                                metric_date,
+                                reason="login_expired",
+                            )
+                        state_cookies = state_store.load_cookie_mapping(account_id)
+                        if state_cookies:
+                            runtime.cookies = state_cookies
                     payload = browser.retry_http(scraper, runtime, metric_date)
                     fallback_trace.append({"stage": "browser", "status": "success"})
                     return _normalize_task_result(
@@ -285,6 +295,14 @@ def _collect_one_day(
                 except ScrapingFailedException as exc:
                     retry_count += 1
                     last_error = exc
+                    browser_error = exc
+                    fallback_trace.append(
+                        {
+                            "stage": "browser",
+                            "status": "failed",
+                            "error": str(exc),
+                        }
+                    )
                     if _is_login_expired_exception(exc):
                         _run_async(
                             login_state_manager.mark_expired(
@@ -624,3 +642,19 @@ async def _persist_result(
 
 def _run_async(coro):
     return asyncio.run(coro)
+
+
+def _supports_shared_helpers(collector: Any) -> bool:
+    try:
+        signature = inspect.signature(collector)
+    except (TypeError, ValueError):
+        return True
+
+    parameters = signature.parameters
+    if any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    ):
+        return True
+    required = {"lock_manager", "state_store", "login_state_manager"}
+    return required.issubset(parameters.keys())
