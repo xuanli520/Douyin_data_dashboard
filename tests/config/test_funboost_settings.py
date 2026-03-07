@@ -19,6 +19,9 @@ def test_funboost_settings_defaults():
     assert settings.funboost.default_max_retry_times == 3
     assert settings.funboost.default_retry_interval == 60
     assert settings.funboost.pull_msg_batch_size == 1
+    assert settings.funboost.shop_dashboard_collection_qps == 0.5
+    assert settings.funboost.shop_dashboard_collection_concurrent_num == 150
+    assert settings.funboost.shop_dashboard_collection_max_retry_times == 3
 
 
 def test_funboost_settings_env_override(monkeypatch):
@@ -28,6 +31,9 @@ def test_funboost_settings_env_override(monkeypatch):
     monkeypatch.setenv("FUNBOOST__DEFAULT_MAX_RETRY_TIMES", "5")
     monkeypatch.setenv("FUNBOOST__DEFAULT_RETRY_INTERVAL", "30")
     monkeypatch.setenv("FUNBOOST__PULL_MSG_BATCH_SIZE", "2")
+    monkeypatch.setenv("FUNBOOST__SHOP_DASHBOARD_COLLECTION_QPS", "0.8")
+    monkeypatch.setenv("FUNBOOST__SHOP_DASHBOARD_COLLECTION_CONCURRENT_NUM", "180")
+    monkeypatch.setenv("FUNBOOST__SHOP_DASHBOARD_COLLECTION_MAX_RETRY_TIMES", "6")
 
     settings = get_settings()
 
@@ -37,3 +43,6 @@ def test_funboost_settings_env_override(monkeypatch):
     assert settings.funboost.default_max_retry_times == 5
     assert settings.funboost.default_retry_interval == 30
     assert settings.funboost.pull_msg_batch_size == 2
+    assert settings.funboost.shop_dashboard_collection_qps == 0.8
+    assert settings.funboost.shop_dashboard_collection_concurrent_num == 180
+    assert settings.funboost.shop_dashboard_collection_max_retry_times == 6

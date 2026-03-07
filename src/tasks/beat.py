@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from typing import Any
 
 from sqlalchemy import select
 
@@ -9,33 +10,15 @@ from src import session
 from src.config import get_settings
 from src.domains.data_source.enums import DataSourceStatus, ScrapingRuleStatus
 from src.domains.data_source.models import DataSource, ScrapingRule
-from src.tasks.collection.douyin_orders import sync_orders
-from src.tasks.collection.douyin_products import sync_products
+from src.tasks.collection.douyin_shop_agent import sync_shop_dashboard_agent
 from src.tasks.collection.douyin_shop_dashboard import sync_shop_dashboard
 from src.tasks.funboost_compat import ApsJobAdder
 
 
 def register_jobs() -> None:
-    orders_job = ApsJobAdder(sync_orders, job_store_kind="redis")
-    orders_job.add_push_job(
-        trigger="cron",
-        hour=2,
-        minute=0,
-        kwargs={"shop_id": "all", "date": "yesterday"},
-        id="daily_collection_orders_sync",
-    )
-
-    products_job = ApsJobAdder(sync_products, job_store_kind="redis")
-    products_job.add_push_job(
-        trigger="cron",
-        hour=2,
-        minute=30,
-        kwargs={"shop_id": "all", "date": "yesterday"},
-        id="daily_collection_products_sync",
-    )
-
+    dashboard_rules = _load_active_shop_dashboard_rules()
     dashboard_job = ApsJobAdder(sync_shop_dashboard, job_store_kind="redis")
-    for rule in _load_active_shop_dashboard_rules():
+    for rule in dashboard_rules:
         schedule = dict(rule.get("schedule") or {})
         cron_expression = schedule.get("cron")
         cron_parts = _parse_cron(cron_expression)
@@ -56,6 +39,60 @@ def register_jobs() -> None:
             },
             id=f"scraping_rule_{rule['rule_id']}_collection_shop_dashboard_sync",
         )
+
+    fixed_rule = dashboard_rules[0] if dashboard_rules else None
+    if fixed_rule is not None:
+        dashboard_job.add_push_job(
+            trigger="cron",
+            minute=0,
+            hour=2,
+            kwargs=_build_dashboard_job_kwargs(fixed_rule, execution_tag="full_sync"),
+            id="shop_dashboard_full_sync",
+        )
+        dashboard_job.add_push_job(
+            trigger="cron",
+            minute=0,
+            hour="6,10,14,18",
+            kwargs=_build_dashboard_job_kwargs(
+                fixed_rule,
+                execution_tag="incremental_sync",
+            ),
+            id="shop_dashboard_incremental_sync",
+        )
+        dashboard_job.add_push_job(
+            trigger="cron",
+            minute="*/30",
+            kwargs=_build_dashboard_job_kwargs(
+                fixed_rule,
+                execution_tag="cookie_health_check",
+            ),
+            id="shop_dashboard_cookie_health_check",
+        )
+
+        shop_id = str(fixed_rule.get("shop_id") or "").strip()
+        if shop_id:
+            agent_job = ApsJobAdder(sync_shop_dashboard_agent, job_store_kind="redis")
+            agent_job.add_push_job(
+                trigger="cron",
+                minute="*/10",
+                kwargs={
+                    "shop_id": shop_id,
+                    "reason": "agent_backfill",
+                    "triggered_by": None,
+                },
+                id="shop_dashboard_agent_backfill",
+            )
+
+
+def _build_dashboard_job_kwargs(
+    rule: dict[str, Any], execution_tag: str
+) -> dict[str, Any]:
+    return {
+        "data_source_id": int(rule["data_source_id"]),
+        "rule_id": int(rule["rule_id"]),
+        "execution_id": f"cron_{execution_tag}_{rule['rule_id']}",
+        "triggered_by": None,
+    }
 
 
 def _parse_cron(cron_expression: str | None) -> dict[str, str] | None:
@@ -82,20 +119,25 @@ async def _load_active_shop_dashboard_rules_async() -> list[dict]:
     if session_factory is None:
         return []
     async with session_factory() as db_session:
-        stmt = select(ScrapingRule).where(
-            ScrapingRule.status == ScrapingRuleStatus.ACTIVE,
-            ScrapingRule.schedule.is_not(None),
-            ScrapingRule.data_source.has(DataSource.status == DataSourceStatus.ACTIVE),
+        stmt = (
+            select(ScrapingRule, DataSource.shop_id)
+            .join(DataSource, ScrapingRule.data_source_id == DataSource.id)
+            .where(
+                ScrapingRule.status == ScrapingRuleStatus.ACTIVE,
+                ScrapingRule.schedule.is_not(None),
+                DataSource.status == DataSourceStatus.ACTIVE,
+            )
         )
-        rows = list((await db_session.execute(stmt)).scalars().all())
+        rows = list((await db_session.execute(stmt)).all())
         return [
             {
-                "rule_id": row.id if row.id is not None else 0,
-                "data_source_id": row.data_source_id,
-                "schedule": row.schedule or {},
+                "rule_id": rule.id if rule.id is not None else 0,
+                "data_source_id": rule.data_source_id,
+                "shop_id": shop_id,
+                "schedule": rule.schedule or {},
             }
-            for row in rows
-            if row.id is not None
+            for rule, shop_id in rows
+            if rule.id is not None
         ]
 
 

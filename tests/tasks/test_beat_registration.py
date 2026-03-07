@@ -26,8 +26,6 @@ def test_register_jobs_uses_fixed_ids(monkeypatch):
     module.register_jobs()
 
     add_ids = [item[1] for item in calls if item[0] == "add"]
-    assert "daily_collection_orders_sync" in add_ids
-    assert "daily_collection_products_sync" in add_ids
     assert "scraping_rule_99_collection_shop_dashboard_sync" in add_ids
 
 
@@ -67,6 +65,7 @@ async def test_load_active_shop_dashboard_rules_excludes_inactive_data_source(
             name="active-shop-dashboard-source",
             source_type=DataSourceType.DOUYIN_SHOP,
             status=DataSourceStatus.ACTIVE,
+            shop_id="shop-1",
         )
         inactive_source = DataSource(
             name="inactive-shop-dashboard-source",
@@ -99,3 +98,5 @@ async def test_load_active_shop_dashboard_rules_excludes_inactive_data_source(
     rule_ids = {item["rule_id"] for item in rules}
     assert active_rule.id in rule_ids
     assert inactive_source_rule.id not in rule_ids
+    active_rule_row = next(item for item in rules if item["rule_id"] == active_rule.id)
+    assert active_rule_row["shop_id"] == "shop-1"

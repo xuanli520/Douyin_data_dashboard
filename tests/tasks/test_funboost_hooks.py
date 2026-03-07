@@ -31,7 +31,7 @@ def test_task_status_hook_redis_failure_degrades_gracefully(monkeypatch):
         task_id="task-hook-1",
         success=True,
         time_end=123.0,
-        function="sync_orders",
+        function="sync_shop_dashboard",
     )
 
     mixin._sync_and_aio_frame_custom_record_process_info_func(

@@ -4,7 +4,7 @@ from datetime import date as date_type
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from src.audit import AuditService, get_audit_service
 from src.audit.dependencies import generate_request_id
@@ -14,17 +14,10 @@ from src.auth import User, current_user
 from src.auth.permissions import TaskPermission
 from src.auth.rbac import require_permissions
 from src.exceptions import TaskPushFailedException, TaskTypeUnsupportedException
-from src.tasks.collection.douyin_orders import sync_orders
-from src.tasks.collection.douyin_products import sync_products
 from src.tasks.etl.orders import process_orders
 from src.tasks.etl.products import process_products
 
 router = APIRouter(prefix="/tasks", tags=["task"])
-
-
-class CollectionTriggerPayload(BaseModel):
-    shop_id: str = Field(min_length=1)
-    date: date_type
 
 
 class EtlTriggerPayload(BaseModel):
@@ -65,60 +58,6 @@ def _trigger_result(async_result: Any, queue_name: str, user_id: int) -> dict[st
     if not task_id:
         raise TaskPushFailedException()
     return {"task_id": str(task_id), "queue_name": queue_name, "triggered_by": user_id}
-
-
-@router.post("/collection/orders/trigger")
-async def trigger_collection_orders(
-    request: Request,
-    payload: CollectionTriggerPayload,
-    user: User = Depends(current_user),
-    audit_service: AuditService = Depends(get_audit_service),
-    request_id: str = Depends(generate_request_id),
-    _=Depends(require_permissions(TaskPermission.EXECUTE, bypass_superuser=True)),
-) -> dict[str, Any]:
-    push_result = sync_orders.push(
-        shop_id=payload.shop_id,
-        date=payload.date.isoformat(),
-        triggered_by=user.id,
-    )
-    response_data = _trigger_result(push_result, "collection_orders", user.id)
-    await _log_task_trigger(
-        request=request,
-        audit_service=audit_service,
-        request_id=request_id,
-        user=user,
-        queue_name="collection_orders",
-        payload=payload.model_dump(mode="json"),
-        task_id=response_data["task_id"],
-    )
-    return response_data
-
-
-@router.post("/collection/products/trigger")
-async def trigger_collection_products(
-    request: Request,
-    payload: CollectionTriggerPayload,
-    user: User = Depends(current_user),
-    audit_service: AuditService = Depends(get_audit_service),
-    request_id: str = Depends(generate_request_id),
-    _=Depends(require_permissions(TaskPermission.EXECUTE, bypass_superuser=True)),
-) -> dict[str, Any]:
-    push_result = sync_products.push(
-        shop_id=payload.shop_id,
-        date=payload.date.isoformat(),
-        triggered_by=user.id,
-    )
-    response_data = _trigger_result(push_result, "collection_products", user.id)
-    await _log_task_trigger(
-        request=request,
-        audit_service=audit_service,
-        request_id=request_id,
-        user=user,
-        queue_name="collection_products",
-        payload=payload.model_dump(mode="json"),
-        task_id=response_data["task_id"],
-    )
-    return response_data
 
 
 @router.post("/etl/orders/trigger")
@@ -173,7 +112,6 @@ async def trigger_etl_products(
     return response_data
 
 
-# Backward compatible endpoints kept during migration window.
 @router.get("")
 async def list_tasks(
     page: int = Query(default=1, ge=1),
@@ -209,31 +147,6 @@ def _push_legacy_task(
 ) -> tuple[Any, str]:
     normalized = _normalize_legacy_task_type(task_type)
     today = date_type.today().isoformat()
-
-    if normalized in {"ORDER_COLLECTION", "COLLECTION_ORDERS", "SYNC_ORDERS"}:
-        return (
-            sync_orders.push(
-                shop_id=task_name,
-                date=today,
-                triggered_by=triggered_by,
-            ),
-            "collection_orders",
-        )
-
-    if normalized in {
-        "PRODUCT_SYNC",
-        "PRODUCT_COLLECTION",
-        "COLLECTION_PRODUCTS",
-        "SYNC_PRODUCTS",
-    }:
-        return (
-            sync_products.push(
-                shop_id=task_name,
-                date=today,
-                triggered_by=triggered_by,
-            ),
-            "collection_products",
-        )
 
     if normalized in {"ETL_ORDERS", "ORDER_ETL"}:
         return (
@@ -281,7 +194,7 @@ async def create_task(
 async def run_task(
     request: Request,
     task_id: int,
-    task_type: str = Query(default="ORDER_COLLECTION"),
+    task_type: str = Query(default="ETL_ORDERS"),
     user: User = Depends(current_user),
     audit_service: AuditService = Depends(get_audit_service),
     request_id: str = Depends(generate_request_id),

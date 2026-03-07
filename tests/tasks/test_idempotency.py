@@ -7,9 +7,9 @@ from src.tasks.idempotency import FunboostIdempotencyHelper
 
 def test_idempotency_refresh_lock_in_concurrent_context():
     redis_client = fakeredis.FakeRedis(decode_responses=True)
-    helper = FunboostIdempotencyHelper(redis_client, "sync_orders")
+    helper = FunboostIdempotencyHelper(redis_client, "sync_shop_dashboard")
     business_key = "shop-1:2026-03-03"
-    lock_key = f"douyin:lock:sync_orders:{business_key}"
+    lock_key = f"douyin:lock:sync_shop_dashboard:{business_key}"
 
     def _fake_eval(_script, _numkeys, key, token, ttl):
         current = redis_client.get(key)

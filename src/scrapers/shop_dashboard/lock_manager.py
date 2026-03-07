@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import Any
 
 from redis import Redis
@@ -38,6 +39,7 @@ class LockManager:
             socket_connect_timeout=settings.cache.socket_connect_timeout,
             retry_on_timeout=settings.cache.retry_on_timeout,
         )
+        self._memory_locks: dict[str, tuple[str, float]] = {}
 
     def account_lock_key(self, account_id: str) -> str:
         return f"douyin:account:lock:{account_id}"
@@ -64,7 +66,10 @@ class LockManager:
     def _acquire(self, key: str, ttl_seconds: int | None = None) -> str | None:
         token = os.urandom(16).hex()
         ttl = int(ttl_seconds or self._lock_ttl_seconds)
-        if self._redis.set(key, token, nx=True, ex=ttl):
+        set_func = getattr(self._redis, "set", None)
+        if not callable(set_func):
+            return self._acquire_from_memory(key, token, ttl)
+        if set_func(key, token, nx=True, ex=ttl):
             return token
         return None
 
@@ -79,6 +84,26 @@ class LockManager:
                 if "unknown command" not in message or "eval" not in message:
                     raise
 
-        current = self._redis.get(key)
-        if current == token:
-            self._redis.delete(key)
+        get_func = getattr(self._redis, "get", None)
+        delete_func = getattr(self._redis, "delete", None)
+        if callable(get_func) and callable(delete_func):
+            current = get_func(key)
+            if current == token:
+                delete_func(key)
+            return
+        self._release_from_memory(key, token)
+
+    def _acquire_from_memory(
+        self, key: str, token: str, ttl_seconds: int
+    ) -> str | None:
+        now = time.time()
+        cached = self._memory_locks.get(key)
+        if cached is not None and cached[1] > now:
+            return None
+        self._memory_locks[key] = (token, now + max(ttl_seconds, 1))
+        return token
+
+    def _release_from_memory(self, key: str, token: str) -> None:
+        cached = self._memory_locks.get(key)
+        if cached is not None and cached[0] == token:
+            self._memory_locks.pop(key, None)
