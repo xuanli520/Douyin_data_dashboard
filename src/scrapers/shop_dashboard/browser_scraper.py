@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Callable
-from urllib.parse import parse_qsl, urlencode, urlparse
+from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlparse
 
 from src.config import get_settings
-from src.scrapers.shop_dashboard.cookie_manager import CookieManager
+from src.scrapers.shop_dashboard.login_state import check_login_status
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
+from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
 from src.tasks.exceptions import ScrapingFailedException
 
 
@@ -16,34 +18,43 @@ class BrowserScraper:
     def __init__(
         self,
         refresher: Callable[[ShopDashboardRuntimeConfig], Any] | None = None,
-        cookie_manager: CookieManager | None = None,
+        state_store: SessionStateStore | None = None,
+        state_dir: str | Path | None = None,
     ) -> None:
         self._refresher = refresher
-        self._cookie_manager = cookie_manager or CookieManager()
         self._settings = get_settings().shop_dashboard
+        if state_store is not None:
+            self._state_store = state_store
+        else:
+            target_dir = (
+                Path(state_dir)
+                if state_dir is not None
+                else Path(".runtime") / "shop_dashboard_state"
+            )
+            self._state_store = SessionStateStore(base_dir=target_dir)
 
     async def refresh_runtime_context(
         self,
         runtime_config: ShopDashboardRuntimeConfig,
     ) -> ShopDashboardRuntimeConfig:
-        refreshed_query: dict[str, Any] = {}
+        refreshed = await self._refresh_payload(runtime_config)
+        refreshed_query = dict(refreshed.get("common_query") or {})
+        refreshed_cookies = {
+            str(k): str(v) for k, v in dict(refreshed.get("cookies") or {}).items()
+        }
 
-        async def _refresh_cookie() -> dict[str, str]:
-            refreshed = await self._refresh_payload(runtime_config)
-            query = dict(refreshed.get("common_query") or {})
-            if query:
-                refreshed_query.update(query)
-            return {
-                str(k): str(v) for k, v in dict(refreshed.get("cookies") or {}).items()
-            }
+        account_id = self._resolve_account_id(runtime_config)
+        storage_state = refreshed.get("storage_state")
+        if isinstance(storage_state, dict):
+            self._state_store.save(account_id, storage_state)
 
-        cookies = await self._cookie_manager.get(
-            runtime_config.shop_id,
-            fallback=runtime_config.cookies,
-            refresher=_refresh_cookie,
-        )
-        if cookies:
-            runtime_config.cookies = dict(cookies)
+        if refreshed_cookies:
+            runtime_config.cookies = refreshed_cookies
+        else:
+            state_cookies = self._state_store.load_cookie_mapping(account_id)
+            if state_cookies:
+                runtime_config.cookies = state_cookies
+
         if refreshed_query:
             runtime_config.common_query.update(refreshed_query)
         return runtime_config
@@ -91,6 +102,8 @@ class BrowserScraper:
 
         browser = None
         context = None
+        account_id = self._resolve_account_id(runtime_config)
+        storage_state = self._state_store.load(account_id)
         try:
             async with async_playwright() as playwright:
                 launch_kwargs: dict[str, Any] = {
@@ -103,11 +116,25 @@ class BrowserScraper:
                 context_kwargs: dict[str, Any] = {}
                 if self._settings.browser_user_agent:
                     context_kwargs["user_agent"] = self._settings.browser_user_agent
+                browser_locale = getattr(self._settings, "browser_locale", None)
+                browser_timezone = getattr(self._settings, "browser_timezone", None)
+                browser_viewport = getattr(self._settings, "browser_viewport", None)
+                if browser_locale:
+                    context_kwargs["locale"] = browser_locale
+                if browser_timezone:
+                    context_kwargs["timezone_id"] = browser_timezone
+                if isinstance(browser_viewport, dict):
+                    context_kwargs["viewport"] = browser_viewport
+                if storage_state:
+                    context_kwargs["storage_state"] = storage_state
                 context = await browser.new_context(**context_kwargs)
 
-                runtime_cookie_records = self._runtime_cookie_records(runtime_config)
-                if runtime_cookie_records:
-                    await context.add_cookies(runtime_cookie_records)
+                if not storage_state:
+                    runtime_cookie_records = self._runtime_cookie_records(
+                        runtime_config
+                    )
+                    if runtime_cookie_records:
+                        await context.add_cookies(runtime_cookie_records)
 
                 page = await context.new_page()
                 target_url = self._build_target_url(runtime_config, date)
@@ -120,16 +147,28 @@ class BrowserScraper:
                     "networkidle",
                     timeout=self._settings.browser_timeout_seconds * 1000,
                 )
+                if not await check_login_status(page):
+                    raise ScrapingFailedException(
+                        "Browser login session expired",
+                        error_data={"account_id": account_id},
+                    )
                 page_html = await page.content()
+                storage_state = await context.storage_state()
+                self._state_store.save(account_id, storage_state)
                 cookie_list = await context.cookies()
                 cookie_mapping = self._extract_cookie_mapping(
                     cookie_list, runtime_config.token_keys
                 )
+                if not cookie_mapping:
+                    cookie_mapping = self._state_store.load_cookie_mapping(account_id)
                 return {
                     "cookies": cookie_mapping,
                     "common_query": dict(runtime_config.common_query),
                     "raw": {"html": page_html},
+                    "storage_state": storage_state,
                 }
+        except ScrapingFailedException:
+            raise
         except Exception as exc:
             raise ScrapingFailedException("Browser scraping failed") from exc
         finally:
@@ -182,3 +221,10 @@ class BrowserScraper:
                 continue
             mapping[key] = str(value)
         return mapping
+
+    @staticmethod
+    def _resolve_account_id(runtime_config: ShopDashboardRuntimeConfig) -> str:
+        account_id = str(getattr(runtime_config, "account_id", "") or "").strip()
+        if account_id:
+            return account_id
+        return f"shop_{runtime_config.shop_id}"

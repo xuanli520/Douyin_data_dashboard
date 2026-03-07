@@ -50,3 +50,9 @@ def test_shop_dashboard_settings_llm_controls(monkeypatch):
     assert settings.shop_dashboard.llm_provider == "openai"
     assert settings.shop_dashboard.llm_endpoint == "https://example.test/v1/chat"
     assert settings.shop_dashboard.llm_model == "gpt-4o-mini"
+
+
+def test_browser_anti_risk_settings_exposed(monkeypatch):
+    monkeypatch.setenv("SHOP_DASHBOARD__BROWSER_LOCALE", "zh-CN")
+    settings = get_settings()
+    assert settings.shop_dashboard.browser_locale == "zh-CN"

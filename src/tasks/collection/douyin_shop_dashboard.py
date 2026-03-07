@@ -4,6 +4,7 @@ import asyncio
 import logging
 import time
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from src.config import get_settings
@@ -15,10 +16,13 @@ from src.domains.data_source.repository import (
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
 from src.scrapers.shop_dashboard.browser_scraper import BrowserScraper
 from src.scrapers.shop_dashboard.http_scraper import HttpScraper
+from src.scrapers.shop_dashboard.lock_manager import LockManager
+from src.scrapers.shop_dashboard.login_state_manager import LoginStateManager
 from src.scrapers.shop_dashboard.runtime import (
     ShopDashboardRuntimeConfig,
     build_runtime_config,
 )
+from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
 from src.session import async_session_factory
 from src.tasks.base import TaskStatusMixin
 from src.tasks.exceptions import ScrapingFailedException
@@ -141,8 +145,23 @@ def _collect_one_day(
     metric_date: str,
     browser: BrowserScraper,
 ) -> dict[str, Any]:
+    settings = get_settings().shop_dashboard
+    lock_manager = LockManager()
+    state_store = SessionStateStore(base_dir=Path(".runtime") / "shop_dashboard_state")
+    login_state_manager = LoginStateManager(state_store=state_store)
+    account_id = str(getattr(runtime, "account_id", "") or f"shop_{runtime.shop_id}")
+    shop_lock_token = lock_manager.acquire_shop_lock(
+        runtime.shop_id, ttl_seconds=settings.lock_ttl_seconds
+    )
+    if not shop_lock_token:
+        return _build_expired_account_result(
+            runtime,
+            metric_date,
+            reason="shop_locked",
+        )
+
     scraper = HttpScraper(
-        base_url=get_settings().shop_dashboard.base_url,
+        base_url=settings.base_url,
         timeout=float(runtime.timeout),
         graphql_query=runtime.graphql_query,
     )
@@ -159,12 +178,40 @@ def _collect_one_day(
                     last_error = exc
                     continue
             if stage_name == "browser":
+                account_lock_token: str | None = None
                 try:
+                    can_refresh = _run_async(
+                        login_state_manager.check_and_refresh(account_id)
+                    )
+                    if not can_refresh:
+                        return _build_expired_account_result(
+                            runtime,
+                            metric_date,
+                            reason="login_expired",
+                        )
+                    account_lock_token = lock_manager.acquire_account_lock(
+                        account_id,
+                        ttl_seconds=settings.lock_ttl_seconds,
+                    )
+                    if not account_lock_token:
+                        return _build_expired_account_result(
+                            runtime,
+                            metric_date,
+                            reason="account_locked",
+                        )
                     payload = browser.retry_http(scraper, runtime, metric_date)
+                    state_cookies = state_store.load_cookie_mapping(account_id)
+                    if state_cookies:
+                        runtime.cookies = state_cookies
                     return _normalize_task_result(runtime, metric_date, payload)
                 except ScrapingFailedException as exc:
                     last_error = exc
                     continue
+                finally:
+                    if account_lock_token:
+                        lock_manager.release_account_lock(
+                            account_id, account_lock_token
+                        )
             if stage_name == "llm":
                 return _build_llm_fallback_result(runtime, metric_date)
         if last_error is not None:
@@ -175,6 +222,30 @@ def _collect_one_day(
         )
     finally:
         scraper.close()
+        lock_manager.release_shop_lock(runtime.shop_id, shop_lock_token)
+
+
+def _build_expired_account_result(
+    runtime: ShopDashboardRuntimeConfig,
+    metric_date: str,
+    reason: str,
+) -> dict[str, Any]:
+    return {
+        "status": "degraded",
+        "shop_id": runtime.shop_id,
+        "metric_date": metric_date,
+        "rule_id": runtime.rule_id,
+        "execution_id": runtime.execution_id,
+        "source": "degraded",
+        "reason": reason,
+        "total_score": 0.0,
+        "product_score": 0.0,
+        "logistics_score": 0.0,
+        "service_score": 0.0,
+        "reviews": {"summary": {}, "items": []},
+        "violations": {"summary": {}, "waiting_list": []},
+        "raw": {},
+    }
 
 
 def _normalize_task_result(
