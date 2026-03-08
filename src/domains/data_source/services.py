@@ -411,17 +411,25 @@ class DataSourceService:
                 ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
             )
 
+        raw_state_version = storage_state.get("state_version")
         normalized_storage_state = normalize_login_state(storage_state)
         extra_config = dict(ds.extra_config or {})
         current_login_state = _extract_shop_dashboard_login_state(extra_config)
         credentials = current_login_state.get("credentials")
+        next_login_state: dict[str, Any] = {}
         if isinstance(credentials, dict) and credentials:
-            normalized_storage_state["credentials"] = dict(credentials)
-        state_version = current_login_state.get("state_version")
-        if state_version and "state_version" not in normalized_storage_state:
-            normalized_storage_state["state_version"] = str(state_version)
+            next_login_state["credentials"] = dict(credentials)
 
-        extra_config["shop_dashboard_login_state"] = normalized_storage_state
+        state_version = (
+            str(raw_state_version).strip()
+            if raw_state_version is not None and str(raw_state_version).strip()
+            else str(current_login_state.get("state_version") or "").strip()
+        ) or str(normalized_storage_state.get("state_version") or "v1").strip()
+        normalized_storage_state["state_version"] = state_version
+        next_login_state["state_version"] = state_version
+        next_login_state["storage_state"] = normalized_storage_state
+
+        extra_config["shop_dashboard_login_state"] = next_login_state
         extra_config["shop_dashboard_login_state_meta"] = build_login_state_meta(
             normalized_storage_state,
             account_id=account_id,
@@ -760,14 +768,22 @@ class DataSourceService:
         execution_id: str,
         triggered_by: int | None,
     ) -> Any:
-        from src.tasks.collection.douyin_shop_dashboard import sync_shop_dashboard
+        from types import SimpleNamespace
 
-        return sync_shop_dashboard.push(
-            data_source_id=data_source_id,
-            rule_id=rule_id,
-            execution_id=execution_id,
+        from src.domains.task.enums import TaskType
+        from src.domains.task.services import TaskService
+
+        execution = await TaskService(session=self.session).run_task_by_type(
+            task_type=TaskType.SHOP_DASHBOARD_COLLECTION,
+            payload={
+                "data_source_id": data_source_id,
+                "rule_id": rule_id,
+                "execution_id": execution_id,
+            },
             triggered_by=triggered_by,
+            task_name="shop-dashboard-collection",
         )
+        return SimpleNamespace(task_id=execution.queue_task_id or "")
 
     def _map_schema_type_to_model_type(
         self, schema_type: DataSourceType | None

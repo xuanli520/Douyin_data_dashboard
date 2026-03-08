@@ -102,6 +102,13 @@ class TestDataSourceServiceIntegration:
             )
             assert "shop_dashboard_login_state" not in updated.config
 
+            model = await ds_repo.get_by_id(created.id)
+            assert model is not None
+            login_state = model.extra_config["shop_dashboard_login_state"]
+            assert isinstance(login_state.get("storage_state"), dict)
+            assert login_state["storage_state"]["cookies"][0]["name"] == "sid"
+            assert "cookies" not in login_state
+
             cleared = await service.clear_shop_dashboard_login_state(
                 created.id,
                 user_id=test_user.id,

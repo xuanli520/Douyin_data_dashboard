@@ -11,6 +11,12 @@ class TaskStatusMixin(AbstractConsumer):
             task_id = str(current_function_result_status.task_id)
             body = kw.get("body", {})
             triggered_by = body.get("triggered_by") if isinstance(body, dict) else None
+            processed_rows = (
+                body.get("processed_rows", 0) if isinstance(body, dict) else 0
+            )
+            error_message = (
+                body.get("error_message") if isinstance(body, dict) else None
+            )
             write_finished_task_status(
                 owner=self,
                 task_id=task_id,
@@ -18,6 +24,8 @@ class TaskStatusMixin(AbstractConsumer):
                 success=bool(current_function_result_status.success),
                 completed_at=current_function_result_status.time_end,
                 triggered_by=triggered_by,
+                processed_rows=processed_rows if isinstance(processed_rows, int) else 0,
+                error_message=error_message if isinstance(error_message, str) else None,
             )
         except Exception:
             self.logger.exception("failed to write task status: %s", task_id)

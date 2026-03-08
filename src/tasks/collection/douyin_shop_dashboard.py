@@ -37,7 +37,12 @@ from src.tasks.status_store import write_started_task_status
 logger = logging.getLogger(__name__)
 
 
-def _write_started_status(task_func, task_name: str, triggered_by: int | None) -> None:
+def _write_started_status(
+    task_func,
+    task_name: str,
+    triggered_by: int | None,
+    execution_id: int | None = None,
+) -> None:
     try:
         task_id = str(getattr(fct, "task_id", "unknown"))
         write_started_task_status(
@@ -45,6 +50,7 @@ def _write_started_status(task_func, task_name: str, triggered_by: int | None) -
             task_id=task_id,
             task_name=task_name,
             triggered_by=triggered_by,
+            execution_id=execution_id,
         )
     except Exception:
         logger.exception("failed to write started task status: %s", task_name)

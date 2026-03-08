@@ -263,6 +263,12 @@ class TestDataSourceServiceUnit:
         assert result.config["shop_dashboard_login_state_meta"]["cookie_count"] == 1
         assert "shop_dashboard_login_state" not in result.config
 
+        update_payload = mock_ds_repo.update.await_args.args[1]
+        saved_login_state = update_payload["extra_config"]["shop_dashboard_login_state"]
+        assert isinstance(saved_login_state["storage_state"], dict)
+        assert saved_login_state["storage_state"]["cookies"][0]["name"] == "sid"
+        assert "cookies" not in saved_login_state
+
     async def test_clear_shop_dashboard_login_state_removes_raw_and_meta(self):
         mock_ds_repo = AsyncMock()
         mock_rule_repo = AsyncMock()
