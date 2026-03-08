@@ -27,7 +27,7 @@ services:
     image: fastapi-boilerplate:latest
     env_file:
       - ../.env
-    command: ["sh", "-c", "${WORKER_COMMAND:-sleep infinity}"]
+    command: ["sh", "-c", "${WORKER_COMMAND:-python -m src.tasks.worker}"]
     profiles:
       - app
 
@@ -38,7 +38,7 @@ services:
     image: fastapi-boilerplate:latest
     env_file:
       - ../.env
-    command: ["sh", "-c", "${SCHEDULER_COMMAND:-sleep infinity}"]
+    command: ["sh", "-c", "${SCHEDULER_COMMAND:-python -m src.tasks.beat}"]
     profiles:
       - app
 

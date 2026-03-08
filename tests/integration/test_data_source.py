@@ -188,6 +188,32 @@ class TestDataSourceAPI:
         assert data["name"] == "Test Douyin Shop"
         assert data["type"] == "DOUYIN_API"
 
+    async def test_create_data_source_masks_shop_dashboard_login_state(
+        self, test_client
+    ):
+        response = await test_client.post(
+            "/api/v1/data-sources",
+            json={
+                "name": "Masked Shop DS",
+                "type": "DOUYIN_SHOP",
+                "config": {
+                    "shop_dashboard_login_state": {
+                        "credentials": {
+                            "api_key": "test_key",
+                            "api_key_password": "test_password",
+                        },
+                        "storage_state": {
+                            "cookies": [{"name": "sid", "value": "token"}],
+                            "origins": [],
+                        },
+                    }
+                },
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert "shop_dashboard_login_state" not in data["config"]
+
     async def test_list_data_sources(self, test_client):
         response = await test_client.get("/api/v1/data-sources")
         assert response.status_code == 200

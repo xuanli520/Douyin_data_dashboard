@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 import inspect
 import logging
 import time
+from collections.abc import Mapping
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -26,31 +26,26 @@ from src.scrapers.shop_dashboard.runtime import (
     build_runtime_config,
 )
 from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
-from src.session import async_session_factory
+from src import session
 from src.tasks.base import TaskStatusMixin
 from src.tasks.exceptions import ScrapingFailedException
 from src.tasks.funboost_compat import boost, fct
 from src.tasks.idempotency import FunboostIdempotencyHelper
 from src.tasks.params import CollectionTaskParams
+from src.tasks.status_store import write_started_task_status
 
 logger = logging.getLogger(__name__)
 
 
 def _write_started_status(task_func, task_name: str, triggered_by: int | None) -> None:
     try:
-        redis_client = task_func.publisher.redis_db_frame
         task_id = str(getattr(fct, "task_id", "unknown"))
-        key = f"douyin:task:status:{task_id}"
-        redis_client.hset(
-            key,
-            mapping={
-                "status": "STARTED",
-                "started_at": time.time(),
-                "task_name": task_name,
-                "triggered_by": triggered_by if triggered_by is not None else "",
-            },
+        write_started_task_status(
+            owner=task_func,
+            task_id=task_id,
+            task_name=task_name,
+            triggered_by=triggered_by,
         )
-        redis_client.expire(key, get_settings().funboost.status_ttl_seconds)
     except Exception:
         logger.exception("failed to write started task status: %s", task_name)
 
@@ -89,6 +84,7 @@ def sync_shop_dashboard(
     metric_dates = _resolve_metric_dates(runtime)
     browser = BrowserScraper()
     state_store = SessionStateStore(base_dir=Path(".runtime") / "shop_dashboard_state")
+    _materialize_runtime_storage_state(runtime, state_store)
     lock_manager = LockManager(redis_client=redis_client)
     login_state_manager = LoginStateManager(
         state_store=state_store,
@@ -189,6 +185,24 @@ def handle_collection_shop_dashboard_dead_letter(**payload) -> dict[str, Any]:
         "queue": "collection_shop_dashboard_dlx",
         "payload": payload,
     }
+
+
+def _materialize_runtime_storage_state(
+    runtime: ShopDashboardRuntimeConfig,
+    state_store: SessionStateStore,
+) -> None:
+    storage_state = getattr(runtime, "storage_state", None)
+    if not isinstance(storage_state, dict):
+        return
+
+    account_id = str(getattr(runtime, "account_id", "") or "").strip()
+    if not account_id:
+        account_id = f"shop_{runtime.shop_id}"
+
+    state_store.save(account_id, storage_state)
+    cookies = state_store.load_cookie_mapping(account_id)
+    if cookies:
+        runtime.cookies = cookies
 
 
 def _collect_one_day(
@@ -541,11 +555,12 @@ async def _load_runtime_config(
     rule_id: int,
     execution_id: str,
 ) -> ShopDashboardRuntimeConfig:
-    if async_session_factory is None:
+    session_factory = session.async_session_factory
+    if session_factory is None:
         raise ScrapingFailedException("Database is not initialized")
-    async with async_session_factory() as session:
-        ds_repo = DataSourceRepository(session)
-        rule_repo = ScrapingRuleRepository(session)
+    async with session_factory() as db_session:
+        ds_repo = DataSourceRepository(db_session)
+        rule_repo = ScrapingRuleRepository(db_session)
         data_source = await ds_repo.get_by_id(data_source_id)
         rule = await rule_repo.get_by_id(rule_id)
         if data_source is None or rule is None:
@@ -583,10 +598,11 @@ async def _persist_result(
     metric_date: str,
     payload: dict[str, Any],
 ) -> None:
-    if async_session_factory is None:
+    session_factory = session.async_session_factory
+    if session_factory is None:
         return
-    async with async_session_factory() as session:
-        repo = ShopDashboardRepository(session)
+    async with session_factory() as db_session:
+        repo = ShopDashboardRepository(db_session)
         metric_day = date.fromisoformat(metric_date)
         await repo.upsert_score(
             shop_id=runtime.shop_id,
@@ -615,20 +631,34 @@ async def _persist_result(
             reviews=review_rows,
         )
 
-        violations = payload.get("violations", {}).get("waiting_list", [])
+        violations = _extract_violation_items(payload)
         violation_rows = []
         for item in violations:
             violation_rows.append(
                 {
                     "violation_id": item.get("ticket_id")
+                    or item.get("ticketId")
                     or item.get("id")
+                    or item.get("rule_id")
+                    or item.get("penalty_id")
                     or item.get("rule")
                     or "",
                     "violation_type": item.get("type")
                     or item.get("rule_type")
+                    or item.get("violation_type")
+                    or item.get("penalty_type")
                     or "unknown",
-                    "description": item.get("description") or item.get("rule"),
-                    "score": int(item.get("score") or 0),
+                    "description": item.get("description")
+                    or item.get("reason")
+                    or item.get("rule"),
+                    "score": _to_int(
+                        item.get("score")
+                        or item.get("deduct_score")
+                        or item.get("deductScore")
+                        or item.get("point")
+                        or item.get("points")
+                        or 0
+                    ),
                     "source": str(payload.get("source", "script")),
                 }
             )
@@ -637,11 +667,68 @@ async def _persist_result(
             metric_date=metric_day,
             violations=violation_rows,
         )
-        await session.commit()
+        await db_session.commit()
 
 
 def _run_async(coro):
-    return asyncio.run(coro)
+    return session.run_coro(coro)
+
+
+def _extract_violation_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    violations = payload.get("violations")
+    if isinstance(violations, dict):
+        direct = _normalize_violation_items(violations.get("waiting_list"))
+        if direct:
+            return direct
+
+    raw = payload.get("raw")
+    if isinstance(raw, dict):
+        raw_violations = raw.get("violations")
+        if isinstance(raw_violations, dict):
+            extracted = _extract_list(raw_violations.get("waiting_list"))
+            fallback = _normalize_violation_items(extracted)
+            if fallback:
+                return fallback
+
+    return []
+
+
+def _normalize_violation_items(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, Mapping):
+            rows.append(dict(item))
+    return rows
+
+
+def _extract_list(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    if not isinstance(value, Mapping):
+        return []
+
+    for key in ("list", "items", "records", "waiting_list", "rows", "result", "data"):
+        nested = value.get(key)
+        if isinstance(nested, list):
+            return nested
+
+    for key in ("data", "result", "records"):
+        nested = value.get(key)
+        if isinstance(nested, Mapping):
+            extracted = _extract_list(nested)
+            if extracted:
+                return extracted
+
+    return []
+
+
+def _to_int(value: Any) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _supports_shared_helpers(collector: Any) -> bool:

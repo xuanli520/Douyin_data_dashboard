@@ -42,3 +42,46 @@ def test_runtime_account_key_fallback_to_phone_then_shop():
 
     assert runtime_with_phone.account_id == "13800000000"
     assert runtime_with_shop.account_id == "shop_shop-3"
+
+
+def test_runtime_reads_storage_state_from_extra_config():
+    storage_state = {
+        "cookies": [{"name": "sid", "value": "token"}],
+        "origins": [],
+    }
+    runtime = build_runtime_config(
+        data_source=_ds(
+            extra_config={
+                "shop_dashboard_login_state": {
+                    "storage_state": storage_state,
+                }
+            },
+            shop_id="shop-4",
+        ),
+        rule=_rule(),
+        execution_id="exec-4",
+    )
+    assert runtime.storage_state == storage_state
+    assert runtime.cookies["sid"] == "token"
+
+
+def test_runtime_shop_overview_includes_violation_groups_even_with_explicit_groups():
+    runtime = build_runtime_config(
+        data_source=_ds(extra_config={}, shop_id="shop-5"),
+        rule=ScrapingRule(
+            name="runtime-rule-explicit",
+            data_source_id=1,
+            extra_config={"api_groups": ["overview"]},
+        ),
+        execution_id="exec-5",
+    )
+    expected = {
+        "cash_info",
+        "score_node",
+        "ticket_count",
+        "enum_config",
+        "waiting_list",
+        "top_rule",
+        "high_frequency",
+    }
+    assert expected.issubset(set(runtime.api_groups))

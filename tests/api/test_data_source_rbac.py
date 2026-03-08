@@ -90,3 +90,23 @@ def test_update_data_source_requires_permission(rbac_client):
 def test_delete_data_source_requires_permission(rbac_client):
     response = rbac_client.delete("/api/v1/data-sources/1")
     assert response.status_code == 401
+
+
+def test_upload_shop_dashboard_login_state_requires_permission(rbac_client):
+    response = rbac_client.post(
+        "/api/v1/data-sources/1/shop-dashboard/login-state",
+        data={"account_id": "acct-1"},
+        files={
+            "file": (
+                "storage_state.json",
+                '{"cookies": [], "origins": []}',
+                "application/json",
+            )
+        },
+    )
+    assert response.status_code == 401
+
+
+def test_clear_shop_dashboard_login_state_requires_permission(rbac_client):
+    response = rbac_client.delete("/api/v1/data-sources/1/shop-dashboard/login-state")
+    assert response.status_code == 401

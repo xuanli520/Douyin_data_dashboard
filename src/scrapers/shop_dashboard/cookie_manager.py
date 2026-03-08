@@ -65,12 +65,26 @@ class CookieManager:
         return dict(runtime_config.cookies)
 
     def get_for_data_source(self, data_source: DataSource) -> dict[str, str]:
-        cookies = data_source.cookies
-        if isinstance(cookies, str):
-            return self._parse_cookie_string(cookies)
-        if isinstance(cookies, dict):
-            return {str(k): str(v) for k, v in cookies.items() if v is not None}
-        return {}
+        extra_config = dict(data_source.extra_config or {})
+        login_state = extra_config.get("shop_dashboard_login_state")
+        if not isinstance(login_state, dict):
+            return {}
+        storage_state = login_state.get("storage_state")
+        if not isinstance(storage_state, dict):
+            return {}
+        cookies = storage_state.get("cookies")
+        if not isinstance(cookies, list):
+            return {}
+        normalized: dict[str, str] = {}
+        for cookie in cookies:
+            if not isinstance(cookie, Mapping):
+                continue
+            name = cookie.get("name")
+            value = cookie.get("value")
+            if name is None or value is None:
+                continue
+            normalized[str(name)] = str(value)
+        return normalized
 
     def apply_refresh(
         self, runtime_config: ShopDashboardRuntimeConfig, refreshed: dict[str, Any]

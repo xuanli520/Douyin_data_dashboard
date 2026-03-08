@@ -13,6 +13,18 @@ from src.domains.data_source.enums import (
 
 
 class TestDataSourceModel:
+    def test_datasource_model_fields_exclude_legacy_login_columns(self):
+        legacy_fields = {
+            "cookies",
+            "proxy",
+            "api_key",
+            "api_secret",
+            "access_token",
+            "refresh_token",
+            "token_expires_at",
+        }
+        assert legacy_fields.isdisjoint(DataSource.model_fields)
+
     async def test_create_data_source(self, test_db):
         async with test_db() as session:
             ds = DataSource(
@@ -22,12 +34,6 @@ class TestDataSourceModel:
                 status=DataSourceStatus.ACTIVE,
                 shop_id="1234567890",
                 account_name="Test Account",
-                cookies="test_cookie_data",
-                proxy="http://proxy.example.com:8080",
-                api_key="test_api_key",
-                api_secret="test_api_secret",
-                access_token="test_access_token",
-                refresh_token="test_refresh_token",
                 rate_limit=100,
                 retry_count=3,
                 timeout=30,

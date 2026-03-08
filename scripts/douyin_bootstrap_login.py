@@ -15,7 +15,13 @@ def bootstrap_login(
     login_url: str = "https://fxg.jinritemai.com/login/common",
 ) -> Path:
     page.goto(login_url, wait_until="domcontentloaded")
-    page.wait_for_url("**/fxg.jinritemai.com/compass/**", timeout=300000)
+    page.wait_for_function(
+        """() => {
+            const href = window.location.href || "";
+            return href.includes("fxg.jinritemai.com") && !href.includes("/login/");
+        }""",
+        timeout=300000,
+    )
     return state_store.save(account_id, page.context.storage_state())
 
 

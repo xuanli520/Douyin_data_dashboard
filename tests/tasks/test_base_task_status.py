@@ -34,12 +34,15 @@ def test_task_status_hook_writes_fields_and_ttl():
     )
 
     assert fake_redis.hset_calls
-    key, mapping = fake_redis.hset_calls[0]
+    key = fake_redis.hset_calls[0][0]
     assert key == "douyin:task:status:task-status-1"
-    assert mapping["status"] == "SUCCESS"
-    assert mapping["task_name"] == "sync_shop_dashboard"
-    assert str(mapping["triggered_by"]) == "42"
-    assert "completed_at" in mapping
+    merged_mapping = {}
+    for _, mapping in fake_redis.hset_calls:
+        merged_mapping.update(mapping)
+    assert merged_mapping["status"] == "SUCCESS"
+    assert merged_mapping["task_name"] == "sync_shop_dashboard"
+    assert str(merged_mapping["triggered_by"]) == "42"
+    assert "completed_at" in merged_mapping
 
     assert fake_redis.expire_calls
     expire_key, expire_ttl = fake_redis.expire_calls[0]

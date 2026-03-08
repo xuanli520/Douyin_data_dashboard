@@ -172,6 +172,29 @@ class TestDataSourceCreateSchema:
         assert data["name"] == "Test Douyin Shop"
         assert data["type"] == "DOUYIN_SHOP"
 
+    async def test_create_endpoint_strips_request_method_and_masks_login_state(
+        self, test_client
+    ):
+        payload = DataSourceCreate(
+            name="Masked Login State DS",
+            type=DataSourceType.DOUYIN_SHOP,
+            config={
+                "api_key": "test_key",
+                "api_key_password": "test_password",
+                "api_base_url": "https://fxg.jinritemai.com",
+                "request_method": "POST",
+            },
+        )
+        response = await test_client.post(
+            "/api/v1/data-sources",
+            json=payload.model_dump(),
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["config"]["api_base_url"] == "https://fxg.jinritemai.com"
+        assert "request_method" not in data["config"]
+        assert "shop_dashboard_login_state" not in data["config"]
+
     async def test_create_endpoint_rejects_invalid_type(self, test_client):
         response = await test_client.post(
             "/api/v1/data-sources",
@@ -257,6 +280,40 @@ class TestDataSourceUpdateSchema:
         )
         assert response.status_code == 200
         assert response.json()["data"]["config"]["host"] == "new_host"
+
+    async def test_update_endpoint_strips_request_method(self, test_client):
+        create_payload = DataSourceCreate(
+            name="Update Request Method DS",
+            type=DataSourceType.DOUYIN_SHOP,
+            config={
+                "api_key": "test_key",
+                "api_key_password": "test_password",
+                "api_base_url": "https://old.example.com",
+            },
+        )
+        create_response = await test_client.post(
+            "/api/v1/data-sources",
+            json=create_payload.model_dump(),
+        )
+        ds_id = create_response.json()["data"]["id"]
+
+        update_payload = DataSourceUpdate(
+            config={
+                "api_key": "test_key",
+                "api_key_password": "test_password",
+                "api_base_url": "https://new.example.com",
+                "request_method": "GET",
+            }
+        )
+        response = await test_client.put(
+            f"/api/v1/data-sources/{ds_id}",
+            json=update_payload.model_dump(exclude_none=True),
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["config"]["api_base_url"] == "https://new.example.com"
+        assert "request_method" not in data["config"]
+        assert "shop_dashboard_login_state" not in data["config"]
 
 
 class TestScrapingRuleCreateSchema:

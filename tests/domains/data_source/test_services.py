@@ -34,14 +34,7 @@ class MockDataSource:
         # Response schema fields
         self.type = kwargs.get("type", DataSourceType.DOUYIN_SHOP)
         self.config = kwargs.get("config", {})
-        self.api_key = kwargs.get("api_key", None)
-        self.api_secret = kwargs.get("api_secret", None)
         self.shop_id = kwargs.get("shop_id", None)
-        self.cookies = kwargs.get("cookies", None)
-        self.proxy = kwargs.get("proxy", None)
-        self.access_token = kwargs.get("access_token", None)
-        self.refresh_token = kwargs.get("refresh_token", None)
-        self.token_expires_at = kwargs.get("token_expires_at", None)
         self.rate_limit = kwargs.get("rate_limit", 100)
         self.retry_count = kwargs.get("retry_count", 3)
         self.timeout = kwargs.get("timeout", 30)
@@ -107,7 +100,7 @@ class TestDataSourceServiceUnit:
         data = DataSourceCreate(
             name="Test DS",
             type=DataSourceType.DOUYIN_SHOP,
-            config={"api_key": "test_key", "api_secret": "test_secret"},
+            config={"api_key": "test_key", "api_key_password": "test_secret"},
             description="Test description",
         )
 
@@ -116,7 +109,7 @@ class TestDataSourceServiceUnit:
         assert result.name == "Test DS"
         mock_ds_repo.create.assert_called_once()
 
-    async def test_create_data_source_missing_api_credentials(self):
+    async def test_create_data_source_without_api_credentials(self):
         mock_ds_repo = AsyncMock()
         mock_rule_repo = AsyncMock()
         service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
@@ -127,9 +120,19 @@ class TestDataSourceServiceUnit:
             config={},
         )
 
-        with pytest.raises(BusinessException) as exc_info:
-            await service.create(data, user_id=1)
-        assert exc_info.value.code == ErrorCode.DATA_VALIDATION_FAILED
+        mock_ds_repo.create.return_value = MockDataSource(
+            id=1,
+            name="Test DS",
+            source_type=ModelDataSourceType.DOUYIN_SHOP,
+            status=DataSourceStatus.ACTIVE,
+            description=None,
+            extra_config={},
+        )
+
+        result = await service.create(data, user_id=1)
+
+        assert result.name == "Test DS"
+        mock_ds_repo.create.assert_called_once()
 
     async def test_get_by_id_success(self):
         mock_ds_repo = AsyncMock()
@@ -206,6 +209,87 @@ class TestDataSourceServiceUnit:
         with pytest.raises(BusinessException) as exc_info:
             await service.update(999, DataSourceUpdate(name="New Name"), user_id=1)
         assert exc_info.value.code == ErrorCode.DATASOURCE_NOT_FOUND
+
+    async def test_update_shop_dashboard_login_state_returns_masked_response(self):
+        mock_ds_repo = AsyncMock()
+        mock_rule_repo = AsyncMock()
+
+        mock_ds_repo.get_by_id.return_value = MockDataSource(
+            id=1,
+            source_type=ModelDataSourceType.DOUYIN_SHOP,
+            extra_config={
+                "shop_dashboard_login_state": {
+                    "credentials": {
+                        "api_key": "key",
+                        "api_key_password": "password",
+                    }
+                }
+            },
+        )
+        mock_ds_repo.update.return_value = MockDataSource(
+            id=1,
+            source_type=ModelDataSourceType.DOUYIN_SHOP,
+            extra_config={
+                "shop_dashboard_login_state": {
+                    "credentials": {
+                        "api_key": "key",
+                        "api_key_password": "password",
+                    },
+                    "storage_state": {
+                        "cookies": [{"name": "sid", "value": "token"}],
+                        "origins": [],
+                    },
+                    "state_version": "v1",
+                },
+                "shop_dashboard_login_state_meta": {
+                    "account_id": "acct-1",
+                    "cookie_count": 1,
+                    "state_version": "v1",
+                },
+            },
+        )
+
+        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+        result = await service.update_shop_dashboard_login_state(
+            1,
+            account_id="acct-1",
+            storage_state={
+                "cookies": [{"name": "sid", "value": "token"}],
+                "origins": [],
+            },
+            user_id=1,
+        )
+
+        assert result.config["shop_dashboard_login_state_meta"]["cookie_count"] == 1
+        assert "shop_dashboard_login_state" not in result.config
+
+    async def test_clear_shop_dashboard_login_state_removes_raw_and_meta(self):
+        mock_ds_repo = AsyncMock()
+        mock_rule_repo = AsyncMock()
+
+        mock_ds_repo.get_by_id.return_value = MockDataSource(
+            id=1,
+            source_type=ModelDataSourceType.DOUYIN_SHOP,
+            extra_config={
+                "shop_dashboard_login_state": {"cookies": [], "origins": []},
+                "shop_dashboard_login_state_meta": {
+                    "account_id": "acct-1",
+                    "cookie_count": 0,
+                    "state_version": "v1",
+                },
+            },
+        )
+        mock_ds_repo.update.return_value = MockDataSource(
+            id=1,
+            source_type=ModelDataSourceType.DOUYIN_SHOP,
+            extra_config={},
+        )
+
+        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+        result = await service.clear_shop_dashboard_login_state(1, user_id=1)
+
+        assert "shop_dashboard_login_state" not in result.config
+        assert "shop_dashboard_login_state_meta" not in result.config
 
     async def test_delete_success(self):
         mock_ds_repo = AsyncMock()
@@ -289,8 +373,14 @@ class TestDataSourceServiceUnit:
         mock_ds_repo.get_by_id.return_value = MockDataSource(
             id=1,
             source_type=ModelDataSourceType.DOUYIN_SHOP,
-            api_key="test_key",
-            api_secret="test_secret",
+            extra_config={
+                "shop_dashboard_login_state": {
+                    "credentials": {
+                        "api_key": "test_key",
+                        "api_key_password": "test_secret",
+                    }
+                }
+            },
         )
 
         service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
@@ -306,8 +396,7 @@ class TestDataSourceServiceUnit:
         mock_ds_repo.get_by_id.return_value = MockDataSource(
             id=1,
             source_type=ModelDataSourceType.DOUYIN_SHOP,
-            api_key=None,
-            api_secret=None,
+            extra_config={},
         )
 
         service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)

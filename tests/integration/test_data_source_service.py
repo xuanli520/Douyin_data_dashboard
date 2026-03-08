@@ -40,6 +40,75 @@ class TestDataSourceServiceIntegration:
             assert fetched.id == created.id
             assert fetched.name == "Integration Test DS"
 
+    async def test_create_shop_dashboard_config_merges_credentials_into_login_state(
+        self, test_db, test_user
+    ):
+        async with test_db() as session:
+            ds_repo = DataSourceRepository(session)
+            rule_repo = ScrapingRuleRepository(session)
+            service = DataSourceService(ds_repo, rule_repo, session)
+
+            created = await service.create(
+                DataSourceCreate(
+                    name="Shop DS Credential Merge",
+                    type=SchemaDataSourceType.DOUYIN_SHOP,
+                    config={
+                        "api_key": "test_key",
+                        "api_key_password": "test_password",
+                        "shop_id": "shop-1",
+                    },
+                ),
+                user_id=test_user.id,
+            )
+
+            model = await ds_repo.get_by_id(created.id)
+            assert model is not None
+            login_state = model.extra_config.get("shop_dashboard_login_state")
+            assert login_state["credentials"]["api_key"] == "test_key"
+            assert login_state["credentials"]["api_key_password"] == "test_password"
+            assert "shop_dashboard_login_state" not in created.config
+
+    async def test_update_and_clear_shop_dashboard_login_state(
+        self, test_db, test_user
+    ):
+        async with test_db() as session:
+            ds_repo = DataSourceRepository(session)
+            rule_repo = ScrapingRuleRepository(session)
+            service = DataSourceService(ds_repo, rule_repo, session)
+
+            created = await service.create(
+                DataSourceCreate(
+                    name="Shop DS Login State",
+                    type=SchemaDataSourceType.DOUYIN_SHOP,
+                    config={
+                        "api_key": "test_key",
+                        "api_key_password": "test_password",
+                    },
+                ),
+                user_id=test_user.id,
+            )
+
+            updated = await service.update_shop_dashboard_login_state(
+                created.id,
+                account_id="acct-1",
+                storage_state={
+                    "cookies": [{"name": "sid", "value": "token"}],
+                    "origins": [],
+                },
+                user_id=test_user.id,
+            )
+            assert (
+                updated.config["shop_dashboard_login_state_meta"]["cookie_count"] == 1
+            )
+            assert "shop_dashboard_login_state" not in updated.config
+
+            cleared = await service.clear_shop_dashboard_login_state(
+                created.id,
+                user_id=test_user.id,
+            )
+            assert "shop_dashboard_login_state" not in cleared.config
+            assert "shop_dashboard_login_state_meta" not in cleared.config
+
     @pytest.mark.skip(reason="Requires PostgreSQL for unique constraint error handling")
     async def test_create_duplicate_name_raises_error(self, test_db, test_user):
         async with test_db() as session:
@@ -197,11 +266,7 @@ class TestDataSourceServiceIntegration:
                 ),
                 user_id=test_user.id,
             )
-            # Manually clear credentials to simulate invalid connection
-            created_model = await ds_repo.get_by_id(created.id)
-            created_model.api_key = None
-            created_model.api_secret = None
-            await ds_repo.update(created.id, {"api_key": None, "api_secret": None})
+            await ds_repo.update(created.id, {"extra_config": {}})
 
             result = await service.validate_connection(created.id)
             assert result["valid"] is False

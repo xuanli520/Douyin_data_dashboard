@@ -6,7 +6,19 @@ from typing import Any
 from src.domains.data_source.models import DataSource, ScrapingRule
 
 DEFAULT_GROUPS_BY_TARGET: dict[str, list[str]] = {
-    "SHOP_OVERVIEW": ["overview", "analysis", "diagnosis", "graphql"],
+    "SHOP_OVERVIEW": [
+        "overview",
+        "analysis",
+        "diagnosis",
+        "graphql",
+        "cash_info",
+        "score_node",
+        "ticket_count",
+        "enum_config",
+        "waiting_list",
+        "top_rule",
+        "high_frequency",
+    ],
     "CUSTOMER": ["statistics", "comment_list", "unreply", "tags", "products"],
     "AFTERSALE_REFUND": [
         "cash_info",
@@ -18,6 +30,16 @@ DEFAULT_GROUPS_BY_TARGET: dict[str, list[str]] = {
         "high_frequency",
     ],
 }
+
+SHOP_OVERVIEW_REQUIRED_VIOLATION_GROUPS = [
+    "cash_info",
+    "score_node",
+    "ticket_count",
+    "enum_config",
+    "waiting_list",
+    "top_rule",
+    "high_frequency",
+]
 
 METRIC_TO_GROUP: dict[str, str] = {
     "overview": "overview",
@@ -72,6 +94,7 @@ class ShopDashboardRuntimeConfig:
     token_keys: list[str]
     api_groups: list[str]
     account_id: str = ""
+    storage_state: dict[str, Any] | None = None
 
 
 def build_runtime_config(
@@ -110,9 +133,20 @@ def build_runtime_config(
         metrics=metrics,
         explicit_groups=rule_extra.get("api_groups"),
     )
+    api_groups = _ensure_required_api_groups(target_type=target_type, groups=api_groups)
     shop_id = str(pick("shop_id", ds_value=data_source.shop_id, default=""))
+    raw_login_state = ds_extra.get("shop_dashboard_login_state")
+    login_state = raw_login_state if isinstance(raw_login_state, dict) else {}
+    raw_login_state_meta = ds_extra.get("shop_dashboard_login_state_meta")
+    login_state_meta = (
+        raw_login_state_meta if isinstance(raw_login_state_meta, dict) else {}
+    )
+    storage_state = _parse_storage_state(login_state.get("storage_state"))
+    storage_state_cookies = _parse_storage_state_cookie_mapping(storage_state)
+
     account_id = (
         str(pick("account_id", default="")).strip()
+        or str(login_state_meta.get("account_id") or "").strip()
         or str(pick("user_phone", default="")).strip()
         or f"shop_{shop_id}"
     )
@@ -135,10 +169,9 @@ def build_runtime_config(
 
     return ShopDashboardRuntimeConfig(
         shop_id=shop_id,
-        cookies=_parse_cookie_mapping(
-            pick("cookies", ds_value=data_source.cookies, default={})
-        ),
-        proxy=pick("proxy", ds_value=data_source.proxy),
+        cookies=storage_state_cookies
+        or _parse_cookie_mapping(pick("cookies", default={})),
+        proxy=pick("proxy", default=None),
         timeout=int(pick("timeout", ds_value=data_source.timeout, default=30)),
         retry_count=int(
             pick("retry_count", ds_value=data_source.retry_count, default=3)
@@ -204,6 +237,7 @@ def build_runtime_config(
         token_keys=list(pick("token_keys", default=[])),
         api_groups=api_groups,
         account_id=account_id,
+        storage_state=storage_state,
     )
 
 
@@ -230,6 +264,46 @@ def _resolve_api_groups(
     if not defaults:
         return list(dict.fromkeys(metric_groups))
     return [group for group in defaults if group in set(metric_groups)]
+
+
+def _ensure_required_api_groups(*, target_type: str, groups: list[str]) -> list[str]:
+    normalized = [str(group).strip() for group in groups if str(group).strip()]
+    if target_type != "SHOP_OVERVIEW":
+        return normalized
+    return list(dict.fromkeys([*normalized, *SHOP_OVERVIEW_REQUIRED_VIOLATION_GROUPS]))
+
+
+def _parse_storage_state(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        cookies = value.get("cookies")
+        origins = value.get("origins")
+        if isinstance(cookies, list) and (origins is None or isinstance(origins, list)):
+            return {
+                "cookies": cookies,
+                "origins": origins if isinstance(origins, list) else [],
+            }
+        return None
+    return None
+
+
+def _parse_storage_state_cookie_mapping(
+    storage_state: dict[str, Any] | None,
+) -> dict[str, str]:
+    if not storage_state:
+        return {}
+    cookies = storage_state.get("cookies")
+    if not isinstance(cookies, list):
+        return {}
+    mapping: dict[str, str] = {}
+    for cookie in cookies:
+        if not isinstance(cookie, dict):
+            continue
+        name = cookie.get("name")
+        value = cookie.get("value")
+        if name is None or value is None:
+            continue
+        mapping[str(name)] = str(value)
+    return mapping
 
 
 def _parse_cookie_mapping(value: Any) -> dict[str, str]:

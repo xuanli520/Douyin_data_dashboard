@@ -1,38 +1,31 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-import time
 from datetime import UTC, date as date_type, datetime
 from typing import Any
 
 from src.agents import LLMDashboardAgent
 from src.config import get_settings
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
-from src.session import async_session_factory
+from src import session
 from src.tasks.base import TaskStatusMixin
 from src.tasks.funboost_compat import boost, fct
 from src.tasks.idempotency import FunboostIdempotencyHelper
 from src.tasks.params import CollectionTaskParams
+from src.tasks.status_store import write_started_task_status
 
 logger = logging.getLogger(__name__)
 
 
 def _write_started_status(task_func, task_name: str, triggered_by: int | None) -> None:
     try:
-        redis_client = task_func.publisher.redis_db_frame
         task_id = str(getattr(fct, "task_id", "unknown"))
-        key = f"douyin:task:status:{task_id}"
-        redis_client.hset(
-            key,
-            mapping={
-                "status": "STARTED",
-                "started_at": time.time(),
-                "task_name": task_name,
-                "triggered_by": triggered_by if triggered_by is not None else "",
-            },
+        write_started_task_status(
+            owner=task_func,
+            task_id=task_id,
+            task_name=task_name,
+            triggered_by=triggered_by,
         )
-        redis_client.expire(key, get_settings().funboost.status_ttl_seconds)
     except Exception:
         logger.exception("failed to write started task status: %s", task_name)
 
@@ -137,15 +130,16 @@ async def _load_agent_context(
         "metric_date": metric_date,
         "raw": {},
     }
-    if async_session_factory is None:
+    session_factory = session.async_session_factory
+    if session_factory is None:
         return fallback
     try:
         metric_day = date_type.fromisoformat(metric_date)
     except ValueError:
         return fallback
 
-    async with async_session_factory() as session:
-        repo = ShopDashboardRepository(session)
+    async with session_factory() as db_session:
+        repo = ShopDashboardRepository(db_session)
         return await repo.build_agent_context(
             shop_id=shop_id,
             metric_date=metric_day,
@@ -159,7 +153,8 @@ async def _persist_agent_patch(
     reason: str,
     patch: dict[str, Any],
 ) -> None:
-    if async_session_factory is None:
+    session_factory = session.async_session_factory
+    if session_factory is None:
         return
     try:
         metric_day = date_type.fromisoformat(metric_date)
@@ -171,8 +166,8 @@ async def _persist_agent_patch(
     if isinstance(llm_patch, dict) and llm_patch.get("status") == "failed":
         return
 
-    async with async_session_factory() as session:
-        repo = ShopDashboardRepository(session)
+    async with session_factory() as db_session:
+        repo = ShopDashboardRepository(db_session)
         await repo.upsert_cold_metrics(
             shop_id=shop_id,
             metric_date=metric_day,
@@ -182,7 +177,7 @@ async def _persist_agent_patch(
             dsr_trend=_ensure_list_of_dicts(patch.get("dsr_trend")),
             source="llm",
         )
-        await session.commit()
+        await db_session.commit()
 
 
 def _ensure_list_of_dicts(value: Any) -> list[dict[str, Any]]:
@@ -196,4 +191,4 @@ def _ensure_list_of_dicts(value: Any) -> list[dict[str, Any]]:
 
 
 def _run_async(coro):
-    return asyncio.run(coro)
+    return session.run_coro(coro)
