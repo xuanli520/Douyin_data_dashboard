@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import inspect
 import logging
+import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -43,9 +45,9 @@ class _RateLimiter:
     def __init__(self, policy: int | dict[str, Any] | None):
         self._qps = 0.0
         self._burst = 1.0
-        self._concurrency = 1
         self._tokens = 1.0
         self._last_refill = time.perf_counter()
+        self._lock = threading.Lock()
         self._configure(policy)
 
     def _configure(self, policy: int | dict[str, Any] | None) -> None:
@@ -55,30 +57,26 @@ class _RateLimiter:
         elif isinstance(policy, dict):
             raw_qps = policy.get("qps", 0)
             raw_burst = policy.get("burst", 1)
-            raw_concurrency = policy.get("concurrency", 1)
             self._qps = max(float(raw_qps or 0), 0.0)
             self._burst = max(float(raw_burst or 1), 1.0)
-            try:
-                self._concurrency = max(int(raw_concurrency or 1), 1)
-            except (TypeError, ValueError):
-                self._concurrency = 1
         self._tokens = self._burst
 
     def wait(self) -> None:
         if self._qps <= 0:
             return
-        now = time.perf_counter()
-        elapsed = max(now - self._last_refill, 0.0)
-        self._tokens = min(self._burst, self._tokens + elapsed * self._qps)
-        self._last_refill = now
-        if self._tokens >= 1:
-            self._tokens -= 1
-            return
-        sleep_seconds = (1 - self._tokens) / self._qps
-        if sleep_seconds > 0:
-            time.sleep(sleep_seconds)
-        self._last_refill = time.perf_counter()
-        self._tokens = max(self._tokens - 1, 0.0)
+        while True:
+            sleep_seconds = 0.0
+            with self._lock:
+                now = time.perf_counter()
+                elapsed = max(now - self._last_refill, 0.0)
+                self._tokens = min(self._burst, self._tokens + elapsed * self._qps)
+                self._last_refill = now
+                if self._tokens >= 1.0:
+                    self._tokens -= 1.0
+                    return
+                sleep_seconds = (1.0 - self._tokens) / self._qps
+            if sleep_seconds > 0:
+                time.sleep(sleep_seconds)
 
 
 def _write_started_status(
@@ -182,6 +180,8 @@ def sync_shop_dashboard(
             "items": [],
         }
 
+    state_store = SessionStateStore(base_dir=Path(".runtime") / "shop_dashboard_state")
+    runtime = _materialize_runtime_storage_state(runtime, state_store)
     runtimes_by_shop: dict[str, ShopDashboardRuntimeConfig] = {
         runtime.shop_id: runtime,
     }
@@ -193,8 +193,6 @@ def sync_shop_dashboard(
         )
 
     browser = BrowserScraper()
-    state_store = SessionStateStore(base_dir=Path(".runtime") / "shop_dashboard_state")
-    _materialize_runtime_storage_state(runtime, state_store)
     lock_manager = LockManager(redis_client=redis_client)
     login_state_manager = LoginStateManager(
         state_store=state_store,
@@ -325,10 +323,10 @@ def handle_collection_shop_dashboard_dead_letter(**payload) -> dict[str, Any]:
 def _materialize_runtime_storage_state(
     runtime: ShopDashboardRuntimeConfig,
     state_store: SessionStateStore,
-) -> None:
+) -> ShopDashboardRuntimeConfig:
     storage_state = getattr(runtime, "storage_state", None)
     if not isinstance(storage_state, dict):
-        return
+        return runtime
 
     account_id = str(getattr(runtime, "account_id", "") or "").strip()
     if not account_id:
@@ -337,7 +335,36 @@ def _materialize_runtime_storage_state(
     state_store.save(account_id, storage_state)
     cookies = state_store.load_cookie_mapping(account_id)
     if cookies:
-        runtime.cookies = cookies
+        return replace(runtime, cookies=dict(cookies))
+    return runtime
+
+
+@contextmanager
+def _acquire_shop_lock(
+    lock_manager: LockManager,
+    shop_lock_id: str,
+    ttl_seconds: int,
+) -> Generator[str | None, None, None]:
+    token = lock_manager.acquire_shop_lock(shop_lock_id, ttl_seconds=ttl_seconds)
+    try:
+        yield token
+    finally:
+        if token:
+            lock_manager.release_shop_lock(shop_lock_id, token)
+
+
+@contextmanager
+def _acquire_account_lock(
+    lock_manager: LockManager,
+    account_id: str,
+    ttl_seconds: int,
+) -> Generator[str | None, None, None]:
+    token = lock_manager.acquire_account_lock(account_id, ttl_seconds=ttl_seconds)
+    try:
+        yield token
+    finally:
+        if token:
+            lock_manager.release_account_lock(account_id, token)
 
 
 def _normalize_fallback_stage(stage: Any) -> str:
@@ -380,22 +407,22 @@ def _collect_one_day(
     explicit_account_id = str(getattr(runtime, "account_id", "") or "").strip()
     account_id = explicit_account_id or f"shop_{runtime.shop_id}"
     shop_lock_id = _resolve_shop_lock_id(runtime.shop_id, account_id)
-    shop_lock_token = lock_manager.acquire_shop_lock(
-        shop_lock_id, ttl_seconds=settings.lock_ttl_seconds
-    )
-    if not shop_lock_token:
-        return _build_expired_account_result(
-            runtime,
-            metric_date,
-            reason="shop_locked",
-        )
-
     last_error: ScrapingFailedException | None = None
     http_error: ScrapingFailedException | None = None
     browser_error: ScrapingFailedException | None = None
     retry_count = 0
     fallback_trace: list[dict[str, Any]] = []
-    try:
+    with _acquire_shop_lock(
+        lock_manager,
+        shop_lock_id,
+        settings.lock_ttl_seconds,
+    ) as shop_lock_token:
+        if not shop_lock_token:
+            return _build_expired_account_result(
+                runtime,
+                metric_date,
+                reason="shop_locked",
+            )
         with HttpScraper(
             base_url=settings.base_url,
             timeout=float(runtime.timeout),
@@ -433,44 +460,46 @@ def _collect_one_day(
                         )
                         continue
                 if stage_name == "browser":
-                    account_lock_token: str | None = None
                     try:
-                        account_lock_token = lock_manager.acquire_account_lock(
+                        with _acquire_account_lock(
+                            lock_manager,
                             account_id,
-                            ttl_seconds=settings.lock_ttl_seconds,
-                        )
-                        if not account_lock_token:
-                            return _build_expired_account_result(
-                                runtime,
-                                metric_date,
-                                reason="account_locked",
-                            )
-                        if explicit_account_id:
-                            can_refresh = _run_async(
-                                login_state_manager.check_and_refresh(account_id)
-                            )
-                            if not can_refresh:
+                            settings.lock_ttl_seconds,
+                        ) as account_lock_token:
+                            if not account_lock_token:
                                 return _build_expired_account_result(
                                     runtime,
                                     metric_date,
-                                    reason="login_expired",
+                                    reason="account_locked",
                                 )
-                            state_cookies = state_store.load_cookie_mapping(account_id)
-                            if state_cookies:
-                                runtime.cookies = state_cookies
-                        payload = browser.retry_http(scraper, runtime, metric_date)
-                        _append_fallback_trace(
-                            fallback_trace,
-                            stage="browser",
-                            status="success",
-                        )
-                        return _normalize_task_result(
-                            runtime,
-                            metric_date,
-                            payload,
-                            retry_count=retry_count,
-                            fallback_trace=fallback_trace,
-                        )
+                            if explicit_account_id:
+                                can_refresh = _run_async(
+                                    login_state_manager.check_and_refresh(account_id)
+                                )
+                                if not can_refresh:
+                                    return _build_expired_account_result(
+                                        runtime,
+                                        metric_date,
+                                        reason="login_expired",
+                                    )
+                                state_cookies = state_store.load_cookie_mapping(
+                                    account_id
+                                )
+                                if state_cookies:
+                                    runtime.cookies = state_cookies
+                            payload = browser.retry_http(scraper, runtime, metric_date)
+                            _append_fallback_trace(
+                                fallback_trace,
+                                stage="browser",
+                                status="success",
+                            )
+                            return _normalize_task_result(
+                                runtime,
+                                metric_date,
+                                payload,
+                                retry_count=retry_count,
+                                fallback_trace=fallback_trace,
+                            )
                     except ScrapingFailedException as exc:
                         retry_count += 1
                         last_error = exc
@@ -494,11 +523,6 @@ def _collect_one_day(
                                 reason="login_expired",
                             )
                         continue
-                    finally:
-                        if account_lock_token:
-                            lock_manager.release_account_lock(
-                                account_id, account_lock_token
-                            )
                 if stage_name == "agent":
                     _append_fallback_trace(
                         fallback_trace,
@@ -525,8 +549,6 @@ def _collect_one_day(
                     ]
                 },
             )
-    finally:
-        lock_manager.release_shop_lock(shop_lock_id, shop_lock_token)
 
 
 def _is_login_expired_exception(exc: ScrapingFailedException) -> bool:

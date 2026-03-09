@@ -23,6 +23,8 @@ def build_collection_plan(
     *,
     now: datetime | None = None,
 ) -> list[CollectionPlanUnit]:
+    if now is not None and now.tzinfo is None:
+        raise ValueError("now must be an aware datetime")
     granularity = str(getattr(config, "granularity", "DAY")).upper()
     timezone_name = str(getattr(config, "timezone", "Asia/Shanghai") or "Asia/Shanghai")
     timezone = _resolve_timezone(timezone_name)
@@ -169,6 +171,7 @@ def _parse_time_range_boundary(
     raw = value.strip()
     if not raw:
         return fallback
+    target_tz = fallback.tzinfo or UTC
     try:
         parsed = datetime.fromisoformat(raw)
     except ValueError:
@@ -176,16 +179,18 @@ def _parse_time_range_boundary(
             try:
                 base = datetime.fromisoformat(f"{raw}T00:00:00")
                 if end_boundary:
-                    return base.replace(
+                    parsed = base.replace(
                         hour=23, minute=59, second=59, microsecond=999999
                     )
-                return base
+                else:
+                    parsed = base
             except ValueError:
                 return fallback
-        return fallback
-    if parsed.tzinfo is not None:
-        parsed = parsed.astimezone(fallback.tzinfo or UTC).replace(tzinfo=None)
-    return parsed
+        else:
+            return fallback
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=target_tz)
+    return parsed.astimezone(target_tz)
 
 
 def _align_window_start(base: datetime, *, granularity: str) -> datetime:
@@ -241,6 +246,8 @@ def _shift_base(base: datetime, *, granularity: str, offset: int) -> datetime:
 def _shift_month(base: datetime, offset: int) -> datetime:
     total_months = base.year * 12 + (base.month - 1) - offset
     year = total_months // 12
+    if year < 1:
+        raise ValueError("month offset out of range")
     month = total_months % 12 + 1
     max_day = monthrange(year, month)[1]
     return base.replace(year=year, month=month, day=min(base.day, max_day))

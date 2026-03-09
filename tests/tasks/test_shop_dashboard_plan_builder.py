@@ -10,7 +10,10 @@ from src.domains.data_source.enums import (
 )
 from src.domains.data_source.models import DataSource, ScrapingRule
 from src.scrapers.shop_dashboard.rule_config_resolver import resolve_rule_config
-from src.tasks.collection.shop_dashboard_plan_builder import build_collection_plan
+from src.tasks.collection.shop_dashboard_plan_builder import (
+    _shift_month,
+    build_collection_plan,
+)
 
 
 def _resolve_config(
@@ -135,3 +138,36 @@ def test_by_cursor_uses_cursor_from_filters_or_extra_config():
     )
     assert len(units_with_extra_cursor) == 1
     assert units_with_extra_cursor[0].cursor == "cursor-from-extra"
+
+
+def test_time_range_with_timezone_keeps_aware_windows():
+    config = _resolve_config(
+        granularity=Granularity.DAY,
+        time_range={
+            "start": "2026-03-02T00:00:00+08:00",
+            "end": "2026-03-02T23:59:59+08:00",
+        },
+    )
+    units = build_collection_plan(
+        config,
+        now=datetime(2026, 3, 9, 12, 0, tzinfo=UTC),
+    )
+    assert len(units) == 1
+    assert units[0].window_start.tzinfo is not None
+    assert units[0].window_end.tzinfo is not None
+    assert units[0].window_start.isoformat().endswith("+08:00")
+    assert units[0].window_end.isoformat().endswith("+08:00")
+
+
+def test_build_collection_plan_rejects_naive_now():
+    config = _resolve_config(granularity=Granularity.DAY)
+    with pytest.raises(ValueError, match="aware"):
+        build_collection_plan(
+            config,
+            now=datetime(2026, 3, 9, 12, 0),
+        )
+
+
+def test_shift_month_rejects_out_of_range_offset():
+    with pytest.raises(ValueError, match="month offset out of range"):
+        _shift_month(datetime(2026, 3, 31, tzinfo=UTC), 25000)
