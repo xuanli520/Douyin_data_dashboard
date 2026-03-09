@@ -29,6 +29,30 @@ async def test_run_task_dispatches_by_task_type_and_persists_queued_execution(
         called["shop"] += 1
         assert kwargs["data_source_id"] == 10
         assert kwargs["rule_id"] == 20
+        assert kwargs["shop_id"] == "shop-10"
+        assert kwargs["shop_ids"] == ["shop-10", "shop-11"]
+        assert kwargs["granularity"] == "HOUR"
+        assert kwargs["timezone"] == "Asia/Shanghai"
+        assert kwargs["time_range"] == {
+            "start": "2026-03-01",
+            "end": "2026-03-02",
+        }
+        assert kwargs["incremental_mode"] == "BY_CURSOR"
+        assert kwargs["backfill_last_n_days"] == 14
+        assert kwargs["data_latency"] == "T+2"
+        assert kwargs["filters"] == {
+            "shop_id": ["shop-10", "shop-11"],
+            "region": "east",
+        }
+        assert kwargs["dimensions"] == ["shop", "category"]
+        assert kwargs["metrics"] == ["overview", "analysis"]
+        assert kwargs["dedupe_key"] == "{shop_id}:{window_start}"
+        assert kwargs["rate_limit"] == {"qps": 2, "burst": 4}
+        assert kwargs["top_n"] == 50
+        assert kwargs["sort_by"] == "-score"
+        assert kwargs["include_long_tail"] is True
+        assert kwargs["session_level"] is True
+        assert kwargs["extra_config"] == {"cursor": "cursor-1"}
         return SimpleNamespace(task_id="queue-shop-1")
 
     monkeypatch.setattr(module.process_orders, "push", _orders_push, raising=False)
@@ -71,6 +95,27 @@ async def test_run_task_dispatches_by_task_type_and_persists_queued_execution(
                 "data_source_id": 10,
                 "rule_id": 20,
                 "execution_id": "shop-exec-1",
+                "shop_id": "shop-10",
+                "shop_ids": ["shop-10", "shop-11"],
+                "granularity": "HOUR",
+                "timezone": "Asia/Shanghai",
+                "time_range": {
+                    "start": "2026-03-01",
+                    "end": "2026-03-02",
+                },
+                "incremental_mode": "BY_CURSOR",
+                "backfill_last_n_days": 14,
+                "data_latency": "T+2",
+                "filters": {"shop_id": ["shop-10", "shop-11"], "region": "east"},
+                "dimensions": ["shop", "category"],
+                "metrics": ["overview", "analysis"],
+                "dedupe_key": "{shop_id}:{window_start}",
+                "rate_limit": {"qps": 2, "burst": 4},
+                "top_n": 50,
+                "sort_by": "-score",
+                "include_long_tail": True,
+                "session_level": True,
+                "extra_config": {"cursor": "cursor-1"},
             },
             triggered_by=99,
             trigger_mode=TaskTriggerMode.MANUAL,

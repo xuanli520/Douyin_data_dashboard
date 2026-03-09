@@ -751,3 +751,145 @@ def test_sync_shop_dashboard_reuses_shared_helpers_across_metric_dates(monkeypat
     assert result["status"] == "success"
     assert len(helper_ids) == 2
     assert helper_ids[0] == helper_ids[1]
+
+
+def test_sync_shop_dashboard_result_count_matches_shop_count_times_window_count(
+    monkeypatch,
+):
+    runtime = ShopDashboardRuntimeConfig(
+        shop_id="shop-1",
+        cookies={"sid": "v"},
+        proxy=None,
+        timeout=15,
+        retry_count=3,
+        rate_limit=100,
+        granularity="DAY",
+        time_range={"start": "2026-03-03", "end": "2026-03-04"},
+        incremental_mode="BY_DATE",
+        backfill_last_n_days=2,
+        data_latency="T+1",
+        target_type="SHOP_OVERVIEW",
+        metrics=[],
+        dimensions=[],
+        filters={"shop_id": ["shop-1", "shop-2"]},
+        top_n=None,
+        include_long_tail=False,
+        session_level=False,
+        dedupe_key=None,
+        rule_id=1,
+        execution_id="exec-fanout-count",
+        fallback_chain=("http",),
+        graphql_query=None,
+        common_query={},
+        token_keys=[],
+        api_groups=["overview"],
+        account_id="acct-1",
+    )
+
+    class _FakeRedis:
+        def hset(self, _key, mapping=None, **_kwargs):
+            _ = mapping
+            return None
+
+        def expire(self, _key, _seconds):
+            return None
+
+    class _FakeIdempotencyHelper:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def get_cached_result(self, _key):
+            return None
+
+        def acquire_lock(self, _key, ttl):
+            _ = ttl
+            return "token-1"
+
+        def cache_result(self, _key, _result, ttl=86400):
+            _ = ttl
+            return None
+
+        def release_lock(self, _key, _token):
+            return None
+
+    class _FakeStateStore:
+        def __init__(self, base_dir=None):
+            self.base_dir = base_dir
+
+        def save(self, _account_id, _state):
+            return None
+
+        def load_cookie_mapping(self, _account_id):
+            return {}
+
+    class _FakeLockManager:
+        def __init__(self, redis_client=None):
+            self.redis_client = redis_client
+
+    class _FakeLoginStateManager:
+        def __init__(self, state_store, redis_client=None):
+            self.state_store = state_store
+            self.redis_client = redis_client
+
+    async def _fake_load_runtime_config(**_kwargs):
+        return runtime
+
+    async def _fake_persist_result(_runtime, _metric_date, _payload):
+        return None
+
+    def _fake_collect_one_day(
+        runtime_config,
+        metric_date,
+        _browser,
+        *,
+        lock_manager,
+        state_store,
+        login_state_manager,
+    ):
+        _ = lock_manager
+        _ = state_store
+        _ = login_state_manager
+        return {
+            "status": "success",
+            "shop_id": runtime_config.shop_id,
+            "metric_date": metric_date,
+            "rule_id": runtime_config.rule_id,
+            "execution_id": runtime_config.execution_id,
+            "source": "script",
+            "total_score": 0.0,
+            "product_score": 0.0,
+            "logistics_score": 0.0,
+            "service_score": 0.0,
+            "reviews": {"summary": {}, "items": []},
+            "violations": {"summary": {}, "waiting_list": []},
+            "raw": {},
+        }
+
+    monkeypatch.setattr(
+        module.sync_shop_dashboard,
+        "publisher",
+        type("_Publisher", (), {"redis_db_frame": _FakeRedis()})(),
+        raising=False,
+    )
+    monkeypatch.setattr(module, "FunboostIdempotencyHelper", _FakeIdempotencyHelper)
+    monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
+    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
+    monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
+    monkeypatch.setattr(module, "BrowserScraper", lambda: object())
+    monkeypatch.setattr(module, "_load_runtime_config", _fake_load_runtime_config)
+    monkeypatch.setattr(
+        module,
+        "_resolve_metric_dates",
+        lambda _runtime: ["2026-03-03", "2026-03-04"],
+    )
+    monkeypatch.setattr(module, "_collect_one_day", _fake_collect_one_day)
+    monkeypatch.setattr(module, "_persist_result", _fake_persist_result)
+
+    result = module.sync_shop_dashboard(
+        data_source_id=1,
+        rule_id=1,
+        execution_id="exec-fanout-count",
+    )
+
+    assert result["status"] == "success"
+    assert len(result["items"]) == 4

@@ -19,6 +19,10 @@ def test_register_jobs_contains_dashboard_full_incremental_cookie_agent(monkeypa
                 "rule_id": 2,
                 "data_source_id": 1,
                 "shop_id": "shop-1",
+                "timezone": "Asia/Shanghai",
+                "granularity": "DAY",
+                "incremental_mode": "BY_DATE",
+                "data_latency": "T+1",
                 "schedule": {"cron": "0 3 * * *"},
             }
         ],
@@ -32,6 +36,27 @@ def test_register_jobs_contains_dashboard_full_incremental_cookie_agent(monkeypa
     assert "shop_dashboard_agent_backfill" in jobs
     assert jobs["shop_dashboard_agent_backfill"]["kwargs"]["shop_id"] == "shop-1"
     assert "date" not in jobs["shop_dashboard_agent_backfill"]["kwargs"]
+    assert jobs["scraping_rule_2_collection_shop_dashboard_sync"]["timezone"] == (
+        "Asia/Shanghai"
+    )
+    assert (
+        jobs["scraping_rule_2_collection_shop_dashboard_sync"]["kwargs"]["timezone"]
+        == "Asia/Shanghai"
+    )
+    assert (
+        jobs["scraping_rule_2_collection_shop_dashboard_sync"]["kwargs"]["granularity"]
+        == "DAY"
+    )
+    assert (
+        jobs["scraping_rule_2_collection_shop_dashboard_sync"]["kwargs"][
+            "incremental_mode"
+        ]
+        == "BY_DATE"
+    )
+    assert (
+        jobs["scraping_rule_2_collection_shop_dashboard_sync"]["kwargs"]["data_latency"]
+        == "T+1"
+    )
 
 
 def test_register_jobs_skips_agent_backfill_without_shop_id(monkeypatch):
