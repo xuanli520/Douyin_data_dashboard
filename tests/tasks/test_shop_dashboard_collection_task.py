@@ -188,3 +188,104 @@ def test_sync_shop_dashboard_cookie_health_check_bypasses_result_cache(monkeypat
     assert result["items"][0]["status"] == "success"
     assert calls["get_cached_result"] == 0
     assert calls["cache_result"] == 0
+
+
+def test_sync_shop_dashboard_applies_rate_limit_policy_before_each_plan_unit(
+    monkeypatch,
+):
+    runtime = _build_runtime()
+    runtime.time_range = {"start": "2026-03-01", "end": "2026-03-02"}
+    runtime.rate_limit = {"qps": 2, "burst": 1, "concurrency": 1}
+
+    waits = {"count": 0}
+
+    class _FakeRateLimiter:
+        def __init__(self, policy):
+            assert policy == {"qps": 2, "burst": 1, "concurrency": 1}
+
+        def wait(self):
+            waits["count"] += 1
+
+    def _fake_collect_one_day(
+        _runtime,
+        metric_date,
+        _browser,
+        *,
+        lock_manager,
+        state_store,
+        login_state_manager,
+    ):
+        _ = lock_manager
+        _ = state_store
+        _ = login_state_manager
+        return {
+            "status": "success",
+            "source": "script",
+            "metric_date": metric_date,
+        }
+
+    async def _fake_load_runtime_config(**_kwargs):
+        return runtime
+
+    monkeypatch.setattr(
+        module.sync_shop_dashboard,
+        "publisher",
+        SimpleNamespace(redis_db_frame=_FakeRedis()),
+        raising=False,
+    )
+    monkeypatch.setattr(module, "FunboostIdempotencyHelper", _FakeIdempotencyHelper)
+    monkeypatch.setattr(module, "_RateLimiter", _FakeRateLimiter)
+    monkeypatch.setattr(module, "BrowserScraper", lambda: object())
+    monkeypatch.setattr(module, "_load_runtime_config", _fake_load_runtime_config)
+    monkeypatch.setattr(module, "_collect_one_day", _fake_collect_one_day)
+    monkeypatch.setattr(module, "_persist_result", _fake_persist)
+
+    result = module.sync_shop_dashboard(
+        data_source_id=1,
+        rule_id=2,
+        execution_id="exec-rate-limit-dict",
+    )
+
+    assert result["planned_units"] == 2
+    assert waits["count"] == 2
+
+
+def test_sync_shop_dashboard_accepts_integer_rate_limit_policy(monkeypatch):
+    runtime = _build_runtime()
+    runtime.rate_limit = 3
+
+    observed: dict[str, int] = {}
+
+    class _FakeRateLimiter:
+        def __init__(self, policy):
+            observed["policy"] = policy
+
+        def wait(self):
+            return None
+
+    async def _fake_load_runtime_config(**_kwargs):
+        return runtime
+
+    def _fake_collect_one_day(_runtime, _metric_date, _browser):
+        return {"status": "success", "source": "script"}
+
+    monkeypatch.setattr(
+        module.sync_shop_dashboard,
+        "publisher",
+        SimpleNamespace(redis_db_frame=_FakeRedis()),
+        raising=False,
+    )
+    monkeypatch.setattr(module, "FunboostIdempotencyHelper", _FakeIdempotencyHelper)
+    monkeypatch.setattr(module, "_RateLimiter", _FakeRateLimiter)
+    monkeypatch.setattr(module, "BrowserScraper", lambda: object())
+    monkeypatch.setattr(module, "_load_runtime_config", _fake_load_runtime_config)
+    monkeypatch.setattr(module, "_collect_one_day", _fake_collect_one_day)
+    monkeypatch.setattr(module, "_persist_result", _fake_persist)
+
+    module.sync_shop_dashboard(
+        data_source_id=1,
+        rule_id=2,
+        execution_id="exec-rate-limit-int",
+    )
+
+    assert observed["policy"] == 3

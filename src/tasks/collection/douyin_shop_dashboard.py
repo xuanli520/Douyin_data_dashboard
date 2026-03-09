@@ -39,6 +39,48 @@ from src.tasks.status_store import write_started_task_status
 logger = logging.getLogger(__name__)
 
 
+class _RateLimiter:
+    def __init__(self, policy: int | dict[str, Any] | None):
+        self._qps = 0.0
+        self._burst = 1.0
+        self._concurrency = 1
+        self._tokens = 1.0
+        self._last_refill = time.perf_counter()
+        self._configure(policy)
+
+    def _configure(self, policy: int | dict[str, Any] | None) -> None:
+        if isinstance(policy, int):
+            self._qps = max(float(policy), 0.0)
+            self._burst = 1.0
+        elif isinstance(policy, dict):
+            raw_qps = policy.get("qps", 0)
+            raw_burst = policy.get("burst", 1)
+            raw_concurrency = policy.get("concurrency", 1)
+            self._qps = max(float(raw_qps or 0), 0.0)
+            self._burst = max(float(raw_burst or 1), 1.0)
+            try:
+                self._concurrency = max(int(raw_concurrency or 1), 1)
+            except (TypeError, ValueError):
+                self._concurrency = 1
+        self._tokens = self._burst
+
+    def wait(self) -> None:
+        if self._qps <= 0:
+            return
+        now = time.perf_counter()
+        elapsed = max(now - self._last_refill, 0.0)
+        self._tokens = min(self._burst, self._tokens + elapsed * self._qps)
+        self._last_refill = now
+        if self._tokens >= 1:
+            self._tokens -= 1
+            return
+        sleep_seconds = (1 - self._tokens) / self._qps
+        if sleep_seconds > 0:
+            time.sleep(sleep_seconds)
+        self._last_refill = time.perf_counter()
+        self._tokens = max(self._tokens - 1, 0.0)
+
+
 def _write_started_status(
     task_func,
     task_name: str,
@@ -116,8 +158,10 @@ def sync_shop_dashboard(
         redis_client=redis_client,
     )
     collector_supports_shared_helpers = _supports_shared_helpers(_collect_one_day)
+    rate_limiter = _RateLimiter(runtime.rate_limit)
     items: list[dict[str, Any]] = []
     for plan_unit in plan_units:
+        rate_limiter.wait()
         unit_runtime = runtimes_by_shop[plan_unit.shop_id]
         business_key = _build_business_key(
             unit_runtime,
