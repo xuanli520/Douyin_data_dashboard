@@ -164,6 +164,41 @@ def _normalize_shop_dashboard_config(config: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _has_valid_storage_state_cookies(config: dict[str, Any]) -> bool:
+    login_state = _extract_shop_dashboard_login_state(config)
+    storage_state = login_state.get("storage_state")
+    if not isinstance(storage_state, dict):
+        return False
+    cookies = storage_state.get("cookies")
+    if not isinstance(cookies, list):
+        return False
+    for cookie in cookies:
+        if not isinstance(cookie, dict):
+            continue
+        name = cookie.get("name")
+        value = cookie.get("value")
+        if str(name or "").strip() and value is not None and str(value).strip():
+            return True
+    return False
+
+
+def _has_valid_cookie_mapping(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(
+            str(key or "").strip() and item is not None and str(item).strip()
+            for key, item in value.items()
+        )
+    if isinstance(value, str):
+        cookie_pairs = [item.strip() for item in value.split(";") if item.strip()]
+        for pair in cookie_pairs:
+            if "=" not in pair:
+                continue
+            key, item = pair.split("=", 1)
+            if key.strip() and item.strip():
+                return True
+    return False
+
+
 @DataSourceTypeRegistry.register_validator(DataSourceType.DOUYIN_SHOP)
 def _validate_douyin_api_config(config: dict[str, Any]) -> None:
     _ = config
@@ -259,10 +294,11 @@ def _extract_file_upload_config_v2(config: dict[str, Any]) -> dict[str, Any]:
 @DataSourceTypeRegistry.register_connection_tester(ModelDataSourceType.DOUYIN_SHOP)
 async def _test_douyin_shop_connection(ds: DataSource) -> tuple[bool, str]:
     config = dict(ds.extra_config or {})
-    credentials = _extract_shop_dashboard_credentials(config)
-    if not credentials.get("api_key") or not credentials.get("api_key_password"):
-        return False, "Missing API credentials"
-    return True, "Connection validated"
+    if _has_valid_storage_state_cookies(config):
+        return True, "Connection validated"
+    if _has_valid_cookie_mapping(config.get("cookies")):
+        return True, "Connection validated"
+    return False, "Missing shop dashboard login state cookies"
 
 
 @DataSourceTypeRegistry.register_connection_tester(ModelDataSourceType.DOUYIN_API)

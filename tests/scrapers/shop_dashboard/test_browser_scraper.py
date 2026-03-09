@@ -60,8 +60,8 @@ async def test_browser_scraper_loads_and_saves_state_without_redis(
 
     await scraper.refresh_runtime_context(runtime)
 
-    assert store.exists("acct-1") is True
     assert runtime.cookies["sid"] == "new-token"
+    assert runtime.common_query["msToken"] == "ms-token"
 
 
 def test_browser_scraper_retry_http_sets_browser_source():

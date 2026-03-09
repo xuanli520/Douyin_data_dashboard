@@ -65,23 +65,16 @@ def test_runtime_reads_storage_state_from_extra_config():
     assert runtime.cookies["sid"] == "token"
 
 
-def test_runtime_shop_overview_includes_violation_groups_even_with_explicit_groups():
+def test_runtime_shop_overview_metrics_overview_does_not_force_violation_groups():
     runtime = build_runtime_config(
         data_source=_ds(extra_config={}, shop_id="shop-5"),
         rule=ScrapingRule(
-            name="runtime-rule-explicit",
+            name="runtime-rule-metric-overview",
             data_source_id=1,
-            extra_config={"api_groups": ["overview"]},
+            metrics=["overview"],
         ),
         execution_id="exec-5",
     )
-    expected = {
-        "cash_info",
-        "score_node",
-        "ticket_count",
-        "enum_config",
-        "waiting_list",
-        "top_rule",
-        "high_frequency",
-    }
-    assert expected.issubset(set(runtime.api_groups))
+    assert runtime.api_groups == ["overview"]
+    assert "ticket_count" not in runtime.api_groups
+    assert "waiting_list" not in runtime.api_groups

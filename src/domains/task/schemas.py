@@ -64,3 +64,7 @@ class TaskExecutionResponse(BaseModel):
 class TaskExecutionCreate(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     trigger_mode: TaskTriggerMode = TaskTriggerMode.MANUAL
+
+
+class TaskRunRequest(BaseModel):
+    payload: dict[str, Any] = Field(default_factory=dict)

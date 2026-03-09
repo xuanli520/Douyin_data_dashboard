@@ -50,6 +50,40 @@ async def test_upsert_score_by_shop_and_date(test_db):
         assert count == 1
 
 
+async def test_upsert_score_preserves_valid_score_when_degraded_zero_overwrites(
+    test_db,
+):
+    async with test_db() as session:
+        repo = ShopDashboardRepository(session)
+        metric_date = date(2026, 3, 3)
+
+        first = await repo.upsert_score(
+            shop_id="shop-1",
+            metric_date=metric_date,
+            total_score=4.86,
+            product_score=4.88,
+            logistics_score=4.82,
+            service_score=4.90,
+            source="script",
+        )
+        second = await repo.upsert_score(
+            shop_id="shop-1",
+            metric_date=metric_date,
+            total_score=0.0,
+            product_score=0.0,
+            logistics_score=0.0,
+            service_score=0.0,
+            source="degraded",
+        )
+
+        assert first.id == second.id
+        assert second.total_score == 4.86
+        assert second.product_score == 4.88
+        assert second.logistics_score == 4.82
+        assert second.service_score == 4.90
+        assert second.source == "script"
+
+
 async def test_replace_reviews_by_shop_and_date(test_db):
     async with test_db() as session:
         repo = ShopDashboardRepository(session)

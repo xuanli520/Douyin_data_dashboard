@@ -124,13 +124,9 @@ def parse_violation_summary(
     score_node_payload: Mapping[str, Any],
     ticket_count_payload: Mapping[str, Any],
 ) -> dict[str, Any]:
-    ensure_payload_success(cash_payload)
-    ensure_payload_success(score_node_payload)
-    ensure_payload_success(ticket_count_payload)
-
-    cash_data = _extract_data(cash_payload)
-    score_data = _extract_data(score_node_payload)
-    ticket_data = _extract_data(ticket_count_payload)
+    cash_data = _safe_extract_data(cash_payload)
+    score_data = _safe_extract_data(score_node_payload)
+    ticket_data = _safe_extract_data(ticket_count_payload)
 
     return {
         "cash_deduct_amount": _first_float(
@@ -169,14 +165,11 @@ def parse_violation_details(
     top_rule_payload: Mapping[str, Any],
     high_frequency_payload: Mapping[str, Any],
 ) -> dict[str, list[Any]]:
-    ensure_payload_success(waiting_payload)
-    ensure_payload_success(top_rule_payload)
-    ensure_payload_success(high_frequency_payload)
     return {
-        "waiting_list": _extract_list(_extract_data(waiting_payload)),
-        "top_rules": _extract_list(_extract_data(top_rule_payload)),
+        "waiting_list": _extract_list(_safe_extract_data(waiting_payload)),
+        "top_rules": _extract_list(_safe_extract_data(top_rule_payload)),
         "high_frequency_penalties": _extract_list(
-            _extract_data(high_frequency_payload)
+            _safe_extract_data(high_frequency_payload)
         ),
     }
 
@@ -188,6 +181,14 @@ def _extract_data(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     if isinstance(data, list):
         return {"list": data}
     return {}
+
+
+def _safe_extract_data(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    try:
+        ensure_payload_success(payload)
+    except ScrapingFailedException:
+        return {}
+    return _extract_data(payload)
 
 
 def _extract_list(data: Mapping[str, Any]) -> list[Any]:

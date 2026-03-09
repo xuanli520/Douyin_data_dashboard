@@ -37,6 +37,12 @@ class _FakeHttpScraper:
     def __init__(self, **_kwargs):
         pass
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc_value, _traceback):
+        return None
+
     def fetch_dashboard_with_context(self, _runtime, _metric_date):
         raise ScrapingFailedException("http failed")
 

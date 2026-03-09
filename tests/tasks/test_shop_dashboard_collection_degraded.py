@@ -42,6 +42,12 @@ def test_collect_one_day_returns_degraded_when_shop_lock_unavailable(monkeypatch
         def __init__(self, **_kwargs):
             pass
 
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, _exc_value, _traceback):
+            return None
+
         def close(self):
             return None
 
@@ -71,6 +77,12 @@ def test_collect_one_day_returns_degraded_when_login_expired(monkeypatch):
     class _FakeHttpScraper:
         def __init__(self, **_kwargs):
             pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, _exc_value, _traceback):
+            return None
 
         def close(self):
             return None
@@ -127,6 +139,12 @@ def test_collect_one_day_returns_degraded_when_browser_reports_login_expired(
         def __init__(self, **_kwargs):
             pass
 
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, _exc_value, _traceback):
+            return None
+
         def close(self):
             return None
 
@@ -173,3 +191,62 @@ def test_collect_one_day_returns_degraded_when_browser_reports_login_expired(
 
     assert payload["status"] == "degraded"
     assert payload["reason"] == "login_expired"
+
+
+def test_collect_one_day_uses_account_fallback_shop_lock_when_shop_id_empty(
+    monkeypatch,
+):
+    runtime = _runtime()
+    runtime.shop_id = ""
+    runtime.account_id = "acct-fallback"
+    runtime.fallback_chain = ("http",)
+
+    seen_shop_ids: list[str] = []
+
+    class _FakeHttpScraper:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, _exc_value, _traceback):
+            return None
+
+        def fetch_dashboard_with_context(self, _runtime, _metric_date):
+            return {
+                "source": "script",
+                "total_score": 4.8,
+                "product_score": 4.7,
+                "logistics_score": 4.9,
+                "service_score": 4.6,
+                "reviews": {"summary": {}, "items": []},
+                "violations": {"summary": {}, "waiting_list": []},
+                "raw": {},
+            }
+
+        def close(self):
+            return None
+
+    class _FakeBrowser:
+        def retry_http(self, _http_scraper, _runtime, _metric_date):
+            raise AssertionError("browser should not be used")
+
+    class _FakeLockManager:
+        def acquire_shop_lock(self, shop_id, ttl_seconds=None):  # noqa: ARG002
+            seen_shop_ids.append(shop_id)
+            if not shop_id:
+                return None
+            return "shop-token"
+
+        def release_shop_lock(self, _shop_id, _token):
+            return None
+
+    monkeypatch.setattr(module, "HttpScraper", _FakeHttpScraper)
+    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
+
+    payload = module._collect_one_day(runtime, "2026-03-03", _FakeBrowser())
+
+    assert payload["status"] == "success"
+    assert payload["source"] == "script"
+    assert seen_shop_ids == ["account:acct-fallback"]

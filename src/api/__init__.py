@@ -7,7 +7,6 @@ from .v1.data_source import router as data_source_router
 from .v1.data_source import scraping_rule_router
 from .v1.data_import import router as data_import_router
 from .v1.task import router as task_router
-from .v1.task_status import router as task_status_router
 from .v1.shop_dashboard import router as shop_dashboard_router
 from .v1.alerts import router as alerts_router
 from .v1.shops import router as shops_router
@@ -37,7 +36,6 @@ __all__ = [
     "scraping_rule_router",
     "data_import_router",
     "task_router",
-    "task_status_router",
     "shop_dashboard_router",
     "alerts_router",
     "shops_router",

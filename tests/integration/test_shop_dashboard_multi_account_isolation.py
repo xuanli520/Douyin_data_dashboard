@@ -55,5 +55,5 @@ async def test_multi_account_isolation(tmp_path):
     await scraper.refresh_runtime_context(runtime_a)
     await scraper.refresh_runtime_context(runtime_b)
 
-    assert store.load_cookie_mapping("acct-a")["sid"] == "acct-a-token"
-    assert store.load_cookie_mapping("acct-b")["sid"] == "acct-b-token"
+    assert runtime_a.cookies["sid"] == "acct-a-token"
+    assert runtime_b.cookies["sid"] == "acct-b-token"

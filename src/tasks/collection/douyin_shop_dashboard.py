@@ -211,6 +211,26 @@ def _materialize_runtime_storage_state(
         runtime.cookies = cookies
 
 
+def _normalize_fallback_stage(stage: Any) -> str:
+    stage_name = str(stage).strip().lower()
+    if stage_name in {"agent", "llm"}:
+        return "agent"
+    return stage_name
+
+
+def _append_fallback_trace(
+    fallback_trace: list[dict[str, Any]],
+    *,
+    stage: str,
+    status: str,
+    error: Exception | None = None,
+) -> None:
+    entry: dict[str, Any] = {"stage": stage, "status": status}
+    if error is not None:
+        entry["error"] = str(error)
+    fallback_trace.append(entry)
+
+
 def _collect_one_day(
     runtime: ShopDashboardRuntimeConfig,
     metric_date: str,
@@ -230,8 +250,9 @@ def _collect_one_day(
     )
     explicit_account_id = str(getattr(runtime, "account_id", "") or "").strip()
     account_id = explicit_account_id or f"shop_{runtime.shop_id}"
+    shop_lock_id = _resolve_shop_lock_id(runtime.shop_id, account_id)
     shop_lock_token = lock_manager.acquire_shop_lock(
-        runtime.shop_id, ttl_seconds=settings.lock_ttl_seconds
+        shop_lock_id, ttl_seconds=settings.lock_ttl_seconds
     )
     if not shop_lock_token:
         return _build_expired_account_result(
@@ -240,127 +261,143 @@ def _collect_one_day(
             reason="shop_locked",
         )
 
-    scraper = HttpScraper(
-        base_url=settings.base_url,
-        timeout=float(runtime.timeout),
-        graphql_query=runtime.graphql_query,
-    )
     last_error: ScrapingFailedException | None = None
     http_error: ScrapingFailedException | None = None
     browser_error: ScrapingFailedException | None = None
     retry_count = 0
     fallback_trace: list[dict[str, Any]] = []
     try:
-        for stage in runtime.fallback_chain:
-            stage_name = str(stage).strip().lower()
-            if stage_name == "http":
-                try:
-                    payload = scraper.fetch_dashboard_with_context(runtime, metric_date)
-                    payload["source"] = "script"
-                    fallback_trace.append({"stage": "http", "status": "success"})
-                    return _normalize_task_result(
-                        runtime,
-                        metric_date,
-                        payload,
-                        retry_count=retry_count,
-                        fallback_trace=fallback_trace,
-                    )
-                except ScrapingFailedException as exc:
-                    retry_count += 1
-                    last_error = exc
-                    http_error = exc
-                    fallback_trace.append(
-                        {
-                            "stage": "http",
-                            "status": "failed",
-                            "error": str(exc),
-                        }
-                    )
-                    continue
-            if stage_name == "browser":
-                account_lock_token: str | None = None
-                try:
-                    account_lock_token = lock_manager.acquire_account_lock(
-                        account_id,
-                        ttl_seconds=settings.lock_ttl_seconds,
-                    )
-                    if not account_lock_token:
-                        return _build_expired_account_result(
+        with HttpScraper(
+            base_url=settings.base_url,
+            timeout=float(runtime.timeout),
+            graphql_query=runtime.graphql_query,
+        ) as scraper:
+            for stage in runtime.fallback_chain:
+                stage_name = _normalize_fallback_stage(stage)
+                if stage_name == "http":
+                    try:
+                        payload = scraper.fetch_dashboard_with_context(
+                            runtime, metric_date
+                        )
+                        payload["source"] = "script"
+                        _append_fallback_trace(
+                            fallback_trace,
+                            stage="http",
+                            status="success",
+                        )
+                        return _normalize_task_result(
                             runtime,
                             metric_date,
-                            reason="account_locked",
+                            payload,
+                            retry_count=retry_count,
+                            fallback_trace=fallback_trace,
                         )
-                    if explicit_account_id:
-                        can_refresh = _run_async(
-                            login_state_manager.check_and_refresh(account_id)
+                    except ScrapingFailedException as exc:
+                        retry_count += 1
+                        last_error = exc
+                        http_error = exc
+                        _append_fallback_trace(
+                            fallback_trace,
+                            stage="http",
+                            status="failed",
+                            error=exc,
                         )
-                        if not can_refresh:
+                        continue
+                if stage_name == "browser":
+                    account_lock_token: str | None = None
+                    try:
+                        account_lock_token = lock_manager.acquire_account_lock(
+                            account_id,
+                            ttl_seconds=settings.lock_ttl_seconds,
+                        )
+                        if not account_lock_token:
+                            return _build_expired_account_result(
+                                runtime,
+                                metric_date,
+                                reason="account_locked",
+                            )
+                        if explicit_account_id:
+                            can_refresh = _run_async(
+                                login_state_manager.check_and_refresh(account_id)
+                            )
+                            if not can_refresh:
+                                return _build_expired_account_result(
+                                    runtime,
+                                    metric_date,
+                                    reason="login_expired",
+                                )
+                            state_cookies = state_store.load_cookie_mapping(account_id)
+                            if state_cookies:
+                                runtime.cookies = state_cookies
+                        payload = browser.retry_http(scraper, runtime, metric_date)
+                        _append_fallback_trace(
+                            fallback_trace,
+                            stage="browser",
+                            status="success",
+                        )
+                        return _normalize_task_result(
+                            runtime,
+                            metric_date,
+                            payload,
+                            retry_count=retry_count,
+                            fallback_trace=fallback_trace,
+                        )
+                    except ScrapingFailedException as exc:
+                        retry_count += 1
+                        last_error = exc
+                        browser_error = exc
+                        _append_fallback_trace(
+                            fallback_trace,
+                            stage="browser",
+                            status="failed",
+                            error=exc,
+                        )
+                        if _is_login_expired_exception(exc):
+                            _run_async(
+                                login_state_manager.mark_expired(
+                                    account_id,
+                                    reason="refresh_failed",
+                                )
+                            )
                             return _build_expired_account_result(
                                 runtime,
                                 metric_date,
                                 reason="login_expired",
                             )
-                        state_cookies = state_store.load_cookie_mapping(account_id)
-                        if state_cookies:
-                            runtime.cookies = state_cookies
-                    payload = browser.retry_http(scraper, runtime, metric_date)
-                    fallback_trace.append({"stage": "browser", "status": "success"})
-                    return _normalize_task_result(
+                        continue
+                    finally:
+                        if account_lock_token:
+                            lock_manager.release_account_lock(
+                                account_id, account_lock_token
+                            )
+                if stage_name == "agent":
+                    _append_fallback_trace(
+                        fallback_trace,
+                        stage="agent",
+                        status="success",
+                    )
+                    return _build_agent_fallback_result(
                         runtime,
                         metric_date,
-                        payload,
+                        http_error=http_error,
+                        browser_error=browser_error,
                         retry_count=retry_count,
                         fallback_trace=fallback_trace,
                     )
-                except ScrapingFailedException as exc:
-                    retry_count += 1
-                    last_error = exc
-                    browser_error = exc
-                    fallback_trace.append(
-                        {
-                            "stage": "browser",
-                            "status": "failed",
-                            "error": str(exc),
-                        }
-                    )
-                    if _is_login_expired_exception(exc):
-                        _run_async(
-                            login_state_manager.mark_expired(
-                                account_id,
-                                reason="refresh_failed",
-                            )
-                        )
-                        return _build_expired_account_result(
-                            runtime,
-                            metric_date,
-                            reason="login_expired",
-                        )
-                    continue
-                finally:
-                    if account_lock_token:
-                        lock_manager.release_account_lock(
-                            account_id, account_lock_token
-                        )
-            if stage_name == "llm":
-                fallback_trace.append({"stage": "llm", "status": "success"})
-                return _build_llm_fallback_result(
-                    runtime,
-                    metric_date,
-                    http_error=http_error,
-                    browser_error=browser_error,
-                    retry_count=retry_count,
-                    fallback_trace=fallback_trace,
-                )
 
-        if last_error is not None:
-            raise last_error
-        raise ScrapingFailedException(
-            "Unsupported fallback chain",
-            error_data={"fallback_chain": list(runtime.fallback_chain)},
-        )
+            if last_error is not None:
+                raise last_error
+            raise ScrapingFailedException(
+                "Unsupported fallback chain",
+                error_data={
+                    "fallback_chain": [
+                        _normalize_fallback_stage(stage)
+                        for stage in runtime.fallback_chain
+                    ]
+                },
+            )
     finally:
-        scraper.close()
-        lock_manager.release_shop_lock(runtime.shop_id, shop_lock_token)
+        lock_manager.release_shop_lock(shop_lock_id, shop_lock_token)
 
 
 def _is_login_expired_exception(exc: ScrapingFailedException) -> bool:
@@ -431,7 +468,7 @@ def _normalize_task_result(
     return result
 
 
-def _resolve_llm_reason(
+def _resolve_agent_reason(
     http_error: ScrapingFailedException | None,
     browser_error: ScrapingFailedException | None,
 ) -> str:
@@ -444,7 +481,7 @@ def _resolve_llm_reason(
     return "fallback"
 
 
-def _build_llm_fallback_result(
+def _build_agent_fallback_result(
     runtime: ShopDashboardRuntimeConfig,
     metric_date: str,
     *,
@@ -453,7 +490,7 @@ def _build_llm_fallback_result(
     retry_count: int = 0,
     fallback_trace: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    reason = _resolve_llm_reason(http_error, browser_error)
+    reason = _resolve_agent_reason(http_error, browser_error)
     payload: dict[str, Any] = {
         "source": "llm",
         "total_score": 0.0,
@@ -538,6 +575,16 @@ def _parse_data_latency(data_latency: str) -> int:
         except ValueError:
             return 0
     return 0
+
+
+def _resolve_shop_lock_id(shop_id: str, account_id: str) -> str:
+    normalized_shop_id = str(shop_id or "").strip()
+    if normalized_shop_id:
+        return normalized_shop_id
+    normalized_account_id = str(account_id or "").strip()
+    if normalized_account_id:
+        return f"account:{normalized_account_id}"
+    return "account:anonymous"
 
 
 def _is_result_cache_enabled(execution_id: str) -> bool:

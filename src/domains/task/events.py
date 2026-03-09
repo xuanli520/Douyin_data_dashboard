@@ -32,3 +32,6 @@ class TaskExecutionTriggeredEvent(DomainEvent):
     status: TaskExecutionStatus
     queue_task_id: str | None = None
     triggered_by: int | None = None
+
+
+TaskDomainEvent = TaskStatusChangedEvent | TaskExecutionTriggeredEvent

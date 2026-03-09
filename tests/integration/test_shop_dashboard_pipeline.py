@@ -37,6 +37,12 @@ class _FakeHttpScraper:
     def __init__(self, **_kwargs):
         pass
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc_value, _traceback):
+        return None
+
     def fetch_dashboard_with_context(self, _runtime, _metric_date):
         raise ScrapingFailedException("http failed")
 
@@ -125,3 +131,64 @@ def test_pipeline_http_fail_then_browser_then_llm(monkeypatch):
     assert result["items"][0]["source"] == "llm"
     assert result["items"][0]["retry_count"] == 2
     assert len(result["items"][0]["fallback_trace"]) == 3
+    assert result["items"][0]["fallback_trace"][0]["stage"] == "http"
+    assert result["items"][0]["fallback_trace"][0]["status"] == "failed"
+    assert result["items"][0]["fallback_trace"][1]["stage"] == "browser"
+    assert result["items"][0]["fallback_trace"][1]["status"] == "failed"
+    assert result["items"][0]["fallback_trace"][2]["stage"] in {"llm", "agent"}
+    assert result["items"][0]["fallback_trace"][2]["status"] == "success"
+
+
+def test_pipeline_cookie_only_http_success(monkeypatch):
+    monkeypatch.setattr(
+        module.sync_shop_dashboard,
+        "publisher",
+        SimpleNamespace(redis_db_frame=_FakeRedis()),
+        raising=False,
+    )
+    monkeypatch.setattr(module, "FunboostIdempotencyHelper", _FakeIdempotencyHelper)
+    monkeypatch.setattr(module, "_load_runtime_config", _fake_runtime_loader)
+    monkeypatch.setattr(module, "_persist_result", _fake_persist)
+    monkeypatch.setattr(module, "BrowserScraper", lambda: _FakeBrowserScraper())
+
+    class _SuccessHttpScraper:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, _exc_value, _traceback):
+            return None
+
+        def fetch_dashboard_with_context(self, runtime, metric_date):
+            assert runtime.cookies["sessionid"] == "token"
+            return {
+                "shop_id": runtime.shop_id,
+                "metric_date": metric_date,
+                "source": "script",
+                "total_score": 4.8,
+                "product_score": 4.7,
+                "logistics_score": 4.9,
+                "service_score": 4.6,
+                "reviews": {"summary": {}, "items": []},
+                "violations": {"summary": {}, "waiting_list": []},
+                "raw": {},
+            }
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(module, "HttpScraper", _SuccessHttpScraper)
+
+    result = module.sync_shop_dashboard(
+        data_source_id=1,
+        rule_id=2,
+        execution_id="exec-pipeline-cookie-only",
+    )
+
+    assert result["items"][0]["source"] == "script"
+    assert result["items"][0]["retry_count"] == 0
+    assert result["items"][0]["fallback_trace"] == [
+        {"stage": "http", "status": "success"}
+    ]

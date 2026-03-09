@@ -15,7 +15,11 @@ from src.domains.task.enums import (
     TaskTriggerMode,
     TaskType,
 )
-from src.domains.task.events import TaskExecutionTriggeredEvent, TaskStatusChangedEvent
+from src.domains.task.events import (
+    TaskDomainEvent,
+    TaskExecutionTriggeredEvent,
+    TaskStatusChangedEvent,
+)
 from src.domains.task.models import TaskDefinition, TaskExecution
 from src.domains.task.repository import (
     TaskDefinitionRepository,
@@ -38,16 +42,45 @@ class TaskService:
         self.session = session
         self.task_repo = task_repo or TaskDefinitionRepository(session)
         self.execution_repo = execution_repo or TaskExecutionRepository(session)
-        self._events: list[TaskStatusChangedEvent | TaskExecutionTriggeredEvent] = []
+        self._events: list[TaskDomainEvent] = []
 
     @property
-    def events(self) -> list[TaskStatusChangedEvent | TaskExecutionTriggeredEvent]:
+    def events(self) -> list[TaskDomainEvent]:
         return list(self._events)
 
-    def pull_events(self) -> list[TaskStatusChangedEvent | TaskExecutionTriggeredEvent]:
+    def pull_events(self) -> list[TaskDomainEvent]:
         events = list(self._events)
         self._events.clear()
         return events
+
+    def _emit_status_changed_event(
+        self,
+        *,
+        task: TaskDefinition,
+        old_status: TaskDefinitionStatus,
+        changed_by_id: int | None,
+    ) -> None:
+        self._events.append(
+            TaskStatusChangedEvent(
+                task_id=task.id if task.id is not None else 0,
+                task_type=task.task_type,
+                old_status=old_status,
+                new_status=task.status,
+                changed_by_id=changed_by_id,
+            )
+        )
+
+    def _emit_execution_triggered_event(self, execution: TaskExecution) -> None:
+        self._events.append(
+            TaskExecutionTriggeredEvent(
+                task_id=execution.task_id,
+                execution_id=execution.id if execution.id is not None else 0,
+                trigger_mode=execution.trigger_mode,
+                status=execution.status,
+                queue_task_id=execution.queue_task_id,
+                triggered_by=execution.triggered_by,
+            )
+        )
 
     async def create_task(
         self,
@@ -102,14 +135,10 @@ class TaskService:
             },
         )
         await self.session.commit()
-        self._events.append(
-            TaskStatusChangedEvent(
-                task_id=updated.id if updated.id is not None else 0,
-                task_type=updated.task_type,
-                old_status=old_status,
-                new_status=updated.status,
-                changed_by_id=changed_by_id,
-            )
+        self._emit_status_changed_event(
+            task=updated,
+            old_status=old_status,
+            changed_by_id=changed_by_id,
         )
         return updated
 
@@ -134,16 +163,7 @@ class TaskService:
         )
         await self.session.commit()
         if emit_event:
-            self._events.append(
-                TaskExecutionTriggeredEvent(
-                    task_id=execution.task_id,
-                    execution_id=execution.id if execution.id is not None else 0,
-                    trigger_mode=execution.trigger_mode,
-                    status=execution.status,
-                    queue_task_id=execution.queue_task_id,
-                    triggered_by=execution.triggered_by,
-                )
-            )
+            self._emit_execution_triggered_event(execution)
         return execution
 
     async def run_task(
@@ -181,16 +201,7 @@ class TaskService:
             {"queue_task_id": queue_task_id},
         )
         await self.session.commit()
-        self._events.append(
-            TaskExecutionTriggeredEvent(
-                task_id=execution.task_id,
-                execution_id=execution.id if execution.id is not None else 0,
-                trigger_mode=execution.trigger_mode,
-                status=execution.status,
-                queue_task_id=execution.queue_task_id,
-                triggered_by=execution.triggered_by,
-            )
-        )
+        self._emit_execution_triggered_event(execution)
         return execution
 
     async def run_task_by_type(

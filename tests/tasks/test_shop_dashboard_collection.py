@@ -120,10 +120,6 @@ async def test_load_runtime_config_reads_storage_state_from_extra_config(
             extra_config={
                 "shop_dashboard_login_state": {
                     "storage_state": storage_state,
-                    "credentials": {
-                        "api_key": "test_key",
-                        "api_key_password": "test_password",
-                    },
                 }
             },
         )
@@ -149,6 +145,97 @@ async def test_load_runtime_config_reads_storage_state_from_extra_config(
 
     assert runtime.storage_state == storage_state
     assert runtime.cookies["sid"] == "token-from-db"
+
+
+def test_collect_one_day_forwards_runtime_retry_count_to_http_scraper(monkeypatch):
+    runtime = ShopDashboardRuntimeConfig(
+        shop_id="shop-1",
+        cookies={"sid": "token"},
+        proxy=None,
+        timeout=15,
+        retry_count=2,
+        rate_limit=100,
+        granularity="DAY",
+        time_range=None,
+        incremental_mode="BY_DATE",
+        backfill_last_n_days=1,
+        data_latency="T+1",
+        target_type="SHOP_OVERVIEW",
+        metrics=[],
+        dimensions=[],
+        filters={},
+        top_n=None,
+        include_long_tail=False,
+        session_level=False,
+        dedupe_key=None,
+        rule_id=1,
+        execution_id="exec-retry-forward",
+        fallback_chain=("http",),
+        graphql_query=None,
+        common_query={},
+        token_keys=[],
+        api_groups=["overview"],
+    )
+    calls = {"http": 0}
+
+    class _FakeHttpScraper:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, _exc_value, _traceback):
+            return None
+
+        def fetch_dashboard_with_context(self, runtime_config, _metric_date):
+            calls["http"] += 1
+            assert runtime_config.retry_count == 2
+            return {
+                "shop_id": runtime_config.shop_id,
+                "source": "script",
+                "total_score": 4.8,
+                "product_score": 4.7,
+                "logistics_score": 4.9,
+                "service_score": 4.6,
+                "reviews": {"summary": {}, "items": []},
+                "violations": {"summary": {}, "waiting_list": []},
+                "raw": {},
+            }
+
+        def close(self):
+            return None
+
+    class _FakeBrowser:
+        def retry_http(self, _scraper, _runtime, _metric_date):
+            raise AssertionError("browser should not be used")
+
+    class _FakeLockManager:
+        def acquire_shop_lock(self, _shop_id, ttl_seconds=None):  # noqa: ARG002
+            return "shop-token"
+
+        def release_shop_lock(self, _shop_id, _token):
+            return None
+
+    class _FakeStore:
+        def __init__(self, base_dir=None):  # noqa: ARG002
+            pass
+
+    class _FakeLoginStateManager:
+        def __init__(self, state_store):
+            self._state_store = state_store
+
+    monkeypatch.setattr(module, "HttpScraper", _FakeHttpScraper)
+    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
+    monkeypatch.setattr(module, "SessionStateStore", _FakeStore)
+    monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
+
+    payload = module._collect_one_day(runtime, "2026-03-03", _FakeBrowser())
+
+    assert payload["source"] == "script"
+    assert payload["retry_count"] == 0
+    assert payload["fallback_trace"] == [{"stage": "http", "status": "success"}]
+    assert calls["http"] == 1
 
 
 async def test_persist_result_reads_violations_from_raw_waiting_list(
@@ -418,6 +505,12 @@ def test_collect_one_day_runs_fallback_chain_in_declared_order(monkeypatch):
         def __init__(self, **_kwargs):
             pass
 
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, _exc_value, _traceback):
+            return None
+
         def fetch_dashboard_with_context(self, _runtime, _metric_date):
             call_order.append("http")
             raise ScrapingFailedException("http failed")
@@ -504,6 +597,12 @@ def test_collection_uses_shop_lock_refresh_uses_account_lock(monkeypatch):
     class _FakeHttpScraper:
         def __init__(self, **_kwargs):
             pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, _exc_value, _traceback):
+            return None
 
         def close(self):
             return None

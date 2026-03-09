@@ -248,7 +248,14 @@ class TestDataSourceServiceIntegration:
                 DataSourceCreate(
                     name="Connection Test",
                     type=SchemaDataSourceType.DOUYIN_SHOP,
-                    config={"api_key": "key", "api_secret": "secret"},
+                    config={
+                        "shop_dashboard_login_state": {
+                            "storage_state": {
+                                "cookies": [{"name": "sid", "value": "token"}],
+                                "origins": [],
+                            }
+                        }
+                    },
                 ),
                 user_id=test_user.id,
             )
@@ -277,6 +284,7 @@ class TestDataSourceServiceIntegration:
 
             result = await service.validate_connection(created.id)
             assert result["valid"] is False
+            assert result["message"] == "Missing shop dashboard login state cookies"
 
             fetched = await ds_repo.get_by_id(created.id)
             assert fetched.status == DataSourceStatus.ERROR

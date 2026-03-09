@@ -31,16 +31,6 @@ DEFAULT_GROUPS_BY_TARGET: dict[str, list[str]] = {
     ],
 }
 
-SHOP_OVERVIEW_REQUIRED_VIOLATION_GROUPS = [
-    "cash_info",
-    "score_node",
-    "ticket_count",
-    "enum_config",
-    "waiting_list",
-    "top_rule",
-    "high_frequency",
-]
-
 METRIC_TO_GROUP: dict[str, str] = {
     "overview": "overview",
     "analysis": "analysis",
@@ -133,7 +123,7 @@ def build_runtime_config(
         metrics=metrics,
         explicit_groups=rule_extra.get("api_groups"),
     )
-    api_groups = _ensure_required_api_groups(target_type=target_type, groups=api_groups)
+    api_groups = _ensure_required_api_groups(api_groups)
     shop_id = str(pick("shop_id", ds_value=data_source.shop_id, default=""))
     raw_login_state = ds_extra.get("shop_dashboard_login_state")
     login_state = raw_login_state if isinstance(raw_login_state, dict) else {}
@@ -266,11 +256,9 @@ def _resolve_api_groups(
     return [group for group in defaults if group in set(metric_groups)]
 
 
-def _ensure_required_api_groups(*, target_type: str, groups: list[str]) -> list[str]:
+def _ensure_required_api_groups(groups: list[str]) -> list[str]:
     normalized = [str(group).strip() for group in groups if str(group).strip()]
-    if target_type != "SHOP_OVERVIEW":
-        return normalized
-    return list(dict.fromkeys([*normalized, *SHOP_OVERVIEW_REQUIRED_VIOLATION_GROUPS]))
+    return list(dict.fromkeys(normalized))
 
 
 def _parse_storage_state(value: Any) -> dict[str, Any] | None:

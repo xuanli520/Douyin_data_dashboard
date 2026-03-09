@@ -381,10 +381,10 @@ class TestDataSourceServiceUnit:
             source_type=ModelDataSourceType.DOUYIN_SHOP,
             extra_config={
                 "shop_dashboard_login_state": {
-                    "credentials": {
-                        "api_key": "test_key",
-                        "api_key_password": "test_secret",
-                    }
+                    "storage_state": {
+                        "cookies": [{"name": "sid", "value": "token"}],
+                        "origins": [],
+                    },
                 }
             },
         )
@@ -409,6 +409,7 @@ class TestDataSourceServiceUnit:
         result = await service.validate_connection(1)
 
         assert result["valid"] is False
+        assert result["message"] == "Missing shop dashboard login state cookies"
         mock_ds_repo.record_error.assert_called_once()
 
     async def test_create_scraping_rule_success(self):

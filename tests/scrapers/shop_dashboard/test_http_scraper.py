@@ -1,7 +1,45 @@
 import httpx
 import pytest
 
+from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.tasks.exceptions import ScrapingFailedException
+
+
+def _build_runtime(
+    *,
+    api_groups: list[str],
+    cookies: dict[str, str] | None = None,
+    retry_count: int = 3,
+    graphql_query: str | None = None,
+) -> ShopDashboardRuntimeConfig:
+    return ShopDashboardRuntimeConfig(
+        shop_id="shop-1",
+        cookies=cookies or {},
+        proxy=None,
+        timeout=15,
+        retry_count=retry_count,
+        rate_limit=100,
+        granularity="DAY",
+        time_range=None,
+        incremental_mode="BY_DATE",
+        backfill_last_n_days=3,
+        data_latency="T+1",
+        target_type="SHOP_OVERVIEW",
+        metrics=[],
+        dimensions=[],
+        filters={},
+        top_n=None,
+        include_long_tail=False,
+        session_level=False,
+        dedupe_key=None,
+        rule_id=1,
+        execution_id="exec-1",
+        fallback_chain=("http", "browser", "llm"),
+        graphql_query=graphql_query,
+        common_query={},
+        token_keys=[],
+        api_groups=api_groups,
+    )
 
 
 def _build_handler():
@@ -140,49 +178,77 @@ def test_http_scraper_raises_when_login_expired():
 
 def test_http_scraper_accepts_runtime_context():
     from src.scrapers.shop_dashboard.http_scraper import HttpScraper
-    from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 
     transport = httpx.MockTransport(_build_handler())
     with httpx.Client(
         transport=transport, base_url="https://fxg.jinritemai.com"
     ) as client:
         scraper = HttpScraper(client=client)
-        runtime = ShopDashboardRuntimeConfig(
-            shop_id="shop-1",
-            cookies={"a": "b"},
-            proxy=None,
-            timeout=15,
-            retry_count=3,
-            rate_limit=100,
-            granularity="DAY",
-            time_range=None,
-            incremental_mode="BY_DATE",
-            backfill_last_n_days=3,
-            data_latency="T+1",
-            target_type="SHOP_OVERVIEW",
-            metrics=[],
-            dimensions=[],
-            filters={},
-            top_n=None,
-            include_long_tail=False,
-            session_level=False,
-            dedupe_key=None,
-            rule_id=1,
-            execution_id="exec-1",
-            fallback_chain=("http", "browser", "llm"),
-            graphql_query=None,
-            common_query={},
-            token_keys=[],
-            api_groups=["overview"],
-        )
+        runtime = _build_runtime(api_groups=["overview"])
         result = scraper.fetch_dashboard_with_context(runtime, "2026-03-03")
 
     assert result["total_score"] == 4.8
 
 
+def test_http_scraper_keeps_core_scores_when_violation_groups_return_business_error():
+    from src.scrapers.shop_dashboard.http_scraper import HttpScraper
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/governance/shop/experiencescore/getOverviewByVersion"):
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "experience_score": {"value": "4.8"},
+                        "goods_score": {"value": 4.7},
+                        "logistics_score": {"value": 4.9},
+                        "service_score": {"value": 4.6},
+                    },
+                },
+            )
+        if path.endswith("/governance/shop/penalty/penalty_ticket_count"):
+            return httpx.Response(
+                200,
+                json={"code": 30042, "message": "permission denied"},
+            )
+        if path.endswith("/governance/shop/penalty/get_waiting_list"):
+            return httpx.Response(
+                200,
+                json={"code": 30043, "message": "forbidden"},
+            )
+        return httpx.Response(200, json={"code": 0, "data": {}})
+
+    transport = httpx.MockTransport(handler)
+    with httpx.Client(
+        transport=transport, base_url="https://fxg.jinritemai.com"
+    ) as client:
+        scraper = HttpScraper(client=client)
+        runtime = _build_runtime(
+            api_groups=[
+                "overview",
+                "analysis",
+                "cash_info",
+                "score_node",
+                "ticket_count",
+                "waiting_list",
+            ]
+        )
+        result = scraper.fetch_dashboard_with_context(runtime, "2026-03-03")
+
+    assert result["total_score"] == 4.8
+    assert result["product_score"] == 4.7
+    assert result["logistics_score"] == 4.9
+    assert result["service_score"] == 4.6
+    assert result["violations"]["summary"]["ticket_count"] == 0
+    assert result["violations"]["waiting_list"] == []
+    assert result["raw"]["group_errors"]["ticket_count"]["code"] == "30042"
+    assert result["raw"]["group_errors"]["waiting_list"]["message"] == "forbidden"
+
+
 def test_http_scraper_rejects_empty_api_groups():
     from src.scrapers.shop_dashboard.http_scraper import HttpScraper
-    from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(500, json={"code": 500})
@@ -192,41 +258,13 @@ def test_http_scraper_rejects_empty_api_groups():
         transport=transport, base_url="https://fxg.jinritemai.com"
     ) as client:
         scraper = HttpScraper(client=client)
-        runtime = ShopDashboardRuntimeConfig(
-            shop_id="shop-1",
-            cookies={"a": "b"},
-            proxy=None,
-            timeout=15,
-            retry_count=3,
-            rate_limit=100,
-            granularity="DAY",
-            time_range=None,
-            incremental_mode="BY_DATE",
-            backfill_last_n_days=3,
-            data_latency="T+1",
-            target_type="TRAFFIC",
-            metrics=[],
-            dimensions=[],
-            filters={},
-            top_n=None,
-            include_long_tail=False,
-            session_level=False,
-            dedupe_key=None,
-            rule_id=1,
-            execution_id="exec-1",
-            fallback_chain=("http", "browser", "llm"),
-            graphql_query=None,
-            common_query={},
-            token_keys=[],
-            api_groups=[],
-        )
+        runtime = _build_runtime(api_groups=[])
         with pytest.raises(ScrapingFailedException):
             scraper.fetch_dashboard_with_context(runtime, "2026-03-03")
 
 
 def test_http_scraper_uses_runtime_cookie_mapping_without_redis():
     from src.scrapers.shop_dashboard.http_scraper import HttpScraper
-    from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 
     calls = {"count": 0}
 
@@ -239,35 +277,127 @@ def test_http_scraper_uses_runtime_cookie_mapping_without_redis():
         transport=transport, base_url="https://fxg.jinritemai.com"
     ) as client:
         scraper = HttpScraper(client=client, cookie_provider=cookie_provider)
-        runtime = ShopDashboardRuntimeConfig(
-            shop_id="shop-1",
-            cookies={},
-            proxy=None,
-            timeout=15,
-            retry_count=3,
-            rate_limit=100,
-            granularity="DAY",
-            time_range=None,
-            incremental_mode="BY_DATE",
-            backfill_last_n_days=3,
-            data_latency="T+1",
-            target_type="SHOP_OVERVIEW",
-            metrics=[],
-            dimensions=[],
-            filters={},
-            top_n=None,
-            include_long_tail=False,
-            session_level=False,
-            dedupe_key=None,
-            rule_id=1,
-            execution_id="exec-1",
-            fallback_chain=("http", "browser", "llm"),
-            graphql_query=None,
-            common_query={},
-            token_keys=[],
-            api_groups=["overview"],
-        )
+        runtime = _build_runtime(api_groups=["overview"], cookies={})
         result = scraper.fetch_dashboard_with_context(runtime, "2026-03-03")
 
     assert result["source"] == "script"
     assert calls["count"] == 0
+
+
+def test_http_scraper_supports_context_manager():
+    from src.scrapers.shop_dashboard.http_scraper import HttpScraper
+
+    transport = httpx.MockTransport(_build_handler())
+    with httpx.Client(
+        transport=transport, base_url="https://fxg.jinritemai.com"
+    ) as client:
+        scraper = HttpScraper(client=client)
+        called = {"closed": False}
+
+        def _mark_closed() -> None:
+            called["closed"] = True
+
+        scraper.close = _mark_closed  # type: ignore[method-assign]
+        with scraper as scoped:
+            assert scoped is scraper
+
+    assert called["closed"] is True
+
+
+def test_http_scraper_default_payload_objects_are_isolated():
+    from src.scrapers.shop_dashboard.http_scraper import HttpScraper
+
+    transport = httpx.MockTransport(_build_handler())
+    with httpx.Client(
+        transport=transport, base_url="https://fxg.jinritemai.com"
+    ) as client:
+        scraper = HttpScraper(client=client)
+        runtime = _build_runtime(api_groups=["overview"])
+        result = scraper.fetch_dashboard_with_context(runtime, "2026-03-03")
+
+    analysis_payload = result["raw"]["experience"]["analysis"]
+    diagnosis_payload = result["raw"]["experience"]["diagnosis"]
+    statistics_payload = result["raw"]["reviews"]["statistics"]
+    assert analysis_payload == {"code": 0, "data": {}}
+    assert analysis_payload is not diagnosis_payload
+    assert analysis_payload is not statistics_payload
+
+
+def test_http_scraper_uses_httpx_cookies_with_special_values():
+    from src.scrapers.shop_dashboard.http_scraper import HttpScraper
+
+    seen_cookie_header: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(
+            "/governance/shop/experiencescore/getOverviewByVersion"
+        ):
+            seen_cookie_header["value"] = request.headers.get("cookie", "")
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "experience_score": {"value": "4.8"},
+                        "goods_score": {"value": 4.7},
+                        "logistics_score": {"value": 4.9},
+                        "service_score": {"value": 4.6},
+                    },
+                },
+            )
+        return httpx.Response(200, json={"code": 0, "data": {}})
+
+    transport = httpx.MockTransport(handler)
+    with httpx.Client(
+        transport=transport, base_url="https://fxg.jinritemai.com"
+    ) as client:
+        scraper = HttpScraper(client=client)
+        runtime = _build_runtime(
+            api_groups=["overview"],
+            cookies={"sid": "token=a b", "sessionid": "x=y"},
+        )
+        result = scraper.fetch_dashboard_with_context(runtime, "2026-03-03")
+
+    assert result["total_score"] == 4.8
+    assert "sid=token=a b" in seen_cookie_header["value"]
+    assert "sessionid=x=y" in seen_cookie_header["value"]
+
+
+def test_http_scraper_build_headers_does_not_embed_cookie():
+    from src.scrapers.shop_dashboard.http_scraper import HttpScraper
+
+    transport = httpx.MockTransport(_build_handler())
+    with httpx.Client(
+        transport=transport, base_url="https://fxg.jinritemai.com"
+    ) as client:
+        scraper = HttpScraper(client=client)
+        headers = scraper._build_headers("shop-1", cookie_mapping={"sid": "token"})
+
+    assert "Cookie" not in headers
+
+
+def test_http_scraper_executes_groups_via_endpoint_registry():
+    from src.scrapers.shop_dashboard.http_scraper import (
+        ENDPOINT_GROUP_ORDER,
+        ENDPOINT_SPECS,
+        HttpScraper,
+    )
+
+    calls: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        return httpx.Response(200, json={"code": 0, "data": {}})
+
+    transport = httpx.MockTransport(handler)
+    with httpx.Client(
+        transport=transport, base_url="https://fxg.jinritemai.com"
+    ) as client:
+        scraper = HttpScraper(client=client, graphql_query="query X { __typename }")
+        scraper.fetch_dashboard("shop-1", "2026-03-03")
+
+    expected = {
+        (ENDPOINT_SPECS[group].method, ENDPOINT_SPECS[group].path)
+        for group in ENDPOINT_GROUP_ORDER
+    }
+    assert set(calls) == expected
