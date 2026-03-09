@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import logging
+import random
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
@@ -441,14 +444,20 @@ class HttpScraper:
         try:
             payload = response.json()
         except ValueError as exc:
+            response_snippet = response.text[:500] if response.text else ""
             logger.warning(
-                "shop_dashboard request invalid json method=%s path=%s",
+                "shop_dashboard request invalid json method=%s path=%s snippet=%s",
                 method,
                 path,
+                response_snippet,
             )
             raise ScrapingFailedException(
                 "Invalid JSON response",
-                error_data={"path": path, "method": method},
+                error_data={
+                    "path": path,
+                    "method": method,
+                    "response_body_snippet": response_snippet,
+                },
             ) from exc
         if not isinstance(payload, dict):
             raise ScrapingFailedException(
@@ -493,13 +502,23 @@ class HttpScraper:
                     status_code
                 ):
                     raise
+                retry_after_seconds = self._retry_after_seconds(exc.response)
+                retry_reason = f"status={status_code}"
+                if retry_after_seconds is not None:
+                    retry_reason = (
+                        f"{retry_reason},retry_after={retry_after_seconds:.3f}s"
+                    )
                 self._log_retry(
                     attempt=attempt,
                     total_attempts=total_attempts,
                     method=method,
                     path=url,
-                    reason=f"status={status_code}",
+                    reason=retry_reason,
                 )
+                if retry_after_seconds is not None and retry_after_seconds > 0:
+                    time.sleep(retry_after_seconds)
+                else:
+                    self._sleep_before_retry(attempt)
             except httpx.TimeoutException:
                 if attempt >= total_attempts:
                     raise
@@ -510,6 +529,7 @@ class HttpScraper:
                     path=url,
                     reason="timeout",
                 )
+                self._sleep_before_retry(attempt)
             except httpx.RequestError as exc:
                 if attempt >= total_attempts:
                     raise
@@ -520,7 +540,7 @@ class HttpScraper:
                     path=url,
                     reason=str(exc),
                 )
-            self._sleep_before_retry(attempt)
+                self._sleep_before_retry(attempt)
         raise ScrapingFailedException(
             "HTTP request failed",
             error_data={"method": method, "path": url},
@@ -614,16 +634,44 @@ class HttpScraper:
 
     @staticmethod
     def _is_retryable_status(status_code: int) -> bool:
-        return status_code >= 500
+        return status_code == 429 or status_code >= 500
+
+    @staticmethod
+    def _retry_after_seconds(response: httpx.Response | None) -> float | None:
+        if response is None:
+            return None
+        retry_after = response.headers.get("Retry-After")
+        if not retry_after:
+            return None
+        text = retry_after.strip()
+        if not text:
+            return None
+        try:
+            return max(float(text), 0.0)
+        except ValueError:
+            pass
+        try:
+            parsed_time = parsedate_to_datetime(text)
+        except (TypeError, ValueError):
+            return None
+        if parsed_time.tzinfo is None:
+            parsed_time = parsed_time.replace(tzinfo=timezone.utc)
+        return max((parsed_time - datetime.now(timezone.utc)).total_seconds(), 0.0)
 
     def _sleep_before_retry(self, attempt: int) -> None:
         if self._retry_backoff_base <= 0 or self._retry_backoff_max <= 0:
             return
-        sleep_seconds = min(
+        base_sleep_seconds = min(
             self._retry_backoff_base * (2 ** (attempt - 1)),
             self._retry_backoff_max,
         )
-        time.sleep(sleep_seconds)
+        if base_sleep_seconds <= 0:
+            return
+        jittered_sleep_seconds = random.uniform(
+            base_sleep_seconds * 0.8,
+            base_sleep_seconds * 1.2,
+        )
+        time.sleep(max(jittered_sleep_seconds, 0.0))
 
     def _log_retry(
         self,

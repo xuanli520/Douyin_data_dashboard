@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from http.cookies import CookieError, SimpleCookie
 from typing import Any
 
 from src.domains.data_source.models import DataSource, ScrapingRule
@@ -635,8 +636,23 @@ def _parse_cookie_mapping(value: Any) -> dict[str, str]:
     if isinstance(value, dict):
         return {str(k): str(v) for k, v in value.items() if v is not None}
     if isinstance(value, str):
-        cookie_pairs = [item.strip() for item in value.split(";") if item.strip()]
+        text = value.strip()
+        if not text:
+            return {}
+        cookie = SimpleCookie()
         parsed: dict[str, str] = {}
+        try:
+            cookie.load(text)
+            parsed = {
+                key: morsel.value
+                for key, morsel in cookie.items()
+                if key and morsel.value is not None
+            }
+        except CookieError:
+            parsed = {}
+        if parsed:
+            return parsed
+        cookie_pairs = [item.strip() for item in text.split(";") if item.strip()]
         for pair in cookie_pairs:
             if "=" not in pair:
                 continue

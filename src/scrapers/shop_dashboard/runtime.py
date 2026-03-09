@@ -9,55 +9,6 @@ from src.scrapers.shop_dashboard.rule_config_resolver import (
     resolve_rule_config,
 )
 
-DEFAULT_GROUPS_BY_TARGET: dict[str, list[str]] = {
-    "SHOP_OVERVIEW": [
-        "overview",
-        "analysis",
-        "diagnosis",
-        "graphql",
-        "cash_info",
-        "score_node",
-        "ticket_count",
-        "enum_config",
-        "waiting_list",
-        "top_rule",
-        "high_frequency",
-    ],
-    "CUSTOMER": ["statistics", "comment_list", "unreply", "tags", "products"],
-    "AFTERSALE_REFUND": [
-        "cash_info",
-        "score_node",
-        "ticket_count",
-        "enum_config",
-        "waiting_list",
-        "top_rule",
-        "high_frequency",
-    ],
-}
-
-METRIC_TO_GROUP: dict[str, str] = {
-    "overview": "overview",
-    "analysis": "analysis",
-    "diagnosis": "diagnosis",
-    "graphql": "graphql",
-    "statistics": "statistics",
-    "commentlist": "comment_list",
-    "comment_list": "comment_list",
-    "unreply": "unreply",
-    "tags": "tags",
-    "products": "products",
-    "cash_info": "cash_info",
-    "score_node": "score_node",
-    "ticket": "ticket_count",
-    "ticket_count": "ticket_count",
-    "enum": "enum_config",
-    "enum_config": "enum_config",
-    "waiting": "waiting_list",
-    "waiting_list": "waiting_list",
-    "top_rule": "top_rule",
-    "high_frequency": "high_frequency",
-}
-
 
 @dataclass(slots=True)
 class ShopDashboardRuntimeConfig:
@@ -102,6 +53,8 @@ def build_runtime_config(
     execution_id: str,
     overrides: dict[str, Any] | None = None,
 ) -> ShopDashboardRuntimeConfig:
+    if not str(execution_id).strip():
+        raise ValueError("execution_id cannot be empty")
     runtimes = build_runtime_configs(
         data_source=data_source,
         rule=rule,
@@ -146,6 +99,8 @@ def build_runtime_configs(
     execution_id: str,
     overrides: dict[str, Any] | None = None,
 ) -> list[ShopDashboardRuntimeConfig]:
+    if not str(execution_id).strip():
+        raise ValueError("execution_id cannot be empty")
     resolved = resolve_rule_config(
         data_source=data_source,
         rule=rule,
@@ -199,81 +154,3 @@ def _build_runtime_from_resolved(
         account_id=resolved.account_id,
         storage_state=dict(resolved.storage_state) if resolved.storage_state else None,
     )
-
-
-def _resolve_api_groups(
-    *,
-    target_type: str,
-    metrics: list[str],
-    explicit_groups: Any,
-) -> list[str]:
-    if isinstance(explicit_groups, list):
-        normalized = [
-            str(item).strip() for item in explicit_groups if str(item).strip()
-        ]
-        if normalized:
-            return normalized
-    defaults = list(DEFAULT_GROUPS_BY_TARGET.get(target_type, []))
-    if not metrics:
-        return defaults
-    metric_groups = []
-    for metric in metrics:
-        key = str(metric).strip().lower()
-        group = METRIC_TO_GROUP.get(key, key)
-        metric_groups.append(group)
-    if not defaults:
-        return list(dict.fromkeys(metric_groups))
-    return [group for group in defaults if group in set(metric_groups)]
-
-
-def _ensure_required_api_groups(groups: list[str]) -> list[str]:
-    normalized = [str(group).strip() for group in groups if str(group).strip()]
-    return list(dict.fromkeys(normalized))
-
-
-def _parse_storage_state(value: Any) -> dict[str, Any] | None:
-    if isinstance(value, dict):
-        cookies = value.get("cookies")
-        origins = value.get("origins")
-        if isinstance(cookies, list) and (origins is None or isinstance(origins, list)):
-            return {
-                "cookies": cookies,
-                "origins": origins if isinstance(origins, list) else [],
-            }
-        return None
-    return None
-
-
-def _parse_storage_state_cookie_mapping(
-    storage_state: dict[str, Any] | None,
-) -> dict[str, str]:
-    if not storage_state:
-        return {}
-    cookies = storage_state.get("cookies")
-    if not isinstance(cookies, list):
-        return {}
-    mapping: dict[str, str] = {}
-    for cookie in cookies:
-        if not isinstance(cookie, dict):
-            continue
-        name = cookie.get("name")
-        value = cookie.get("value")
-        if name is None or value is None:
-            continue
-        mapping[str(name)] = str(value)
-    return mapping
-
-
-def _parse_cookie_mapping(value: Any) -> dict[str, str]:
-    if isinstance(value, dict):
-        return {str(k): str(v) for k, v in value.items() if v is not None}
-    if isinstance(value, str):
-        cookie_pairs = [item.strip() for item in value.split(";") if item.strip()]
-        parsed: dict[str, str] = {}
-        for pair in cookie_pairs:
-            if "=" not in pair:
-                continue
-            key, raw_value = pair.split("=", 1)
-            parsed[key.strip()] = raw_value.strip()
-        return parsed
-    return {}
