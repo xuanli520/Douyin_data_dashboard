@@ -245,6 +245,78 @@ async def test_run_task_and_list_executions(
 
 
 @pytest.mark.asyncio
+async def test_run_shop_dashboard_task_persists_payload_and_dispatches_overrides(
+    api_client,
+    permission_data,
+    test_db,
+    monkeypatch,
+):
+    from src.domains.task import services as module
+
+    captured: dict[str, object] = {}
+
+    async with test_db() as session:
+        service = TaskService(session)
+        task = await service.create_task(
+            TaskDefinitionCreate(
+                name="shop-dashboard",
+                task_type=TaskType.SHOP_DASHBOARD_COLLECTION,
+            ),
+            created_by_id=permission_data.id,
+        )
+
+    def _fake_shop_push(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(task_id="queue-shop-task-1")
+
+    monkeypatch.setattr(
+        module.sync_shop_dashboard, "push", _fake_shop_push, raising=False
+    )
+
+    headers = await get_auth_headers(
+        api_client,
+        "taskmanager@example.com",
+        "taskmanager123",
+    )
+
+    run_resp = await api_client.post(
+        f"/api/v1/tasks/{task.id}/run",
+        json={
+            "payload": {
+                "data_source_id": 10,
+                "rule_id": 20,
+                "execution_id": "shop-api-exec-1",
+                "shop_ids": ["shop-10", "shop-11"],
+                "timezone": "Asia/Shanghai",
+                "granularity": "DAY",
+                "incremental_mode": "BY_DATE",
+                "data_latency": "T+1",
+                "filters": {"shop_id": ["shop-10", "shop-11"], "region": "east"},
+                "dimensions": ["shop", "category"],
+                "metrics": ["overview"],
+                "top_n": 20,
+                "sort_by": "-score",
+                "include_long_tail": True,
+                "session_level": True,
+                "extra_config": {"cursor": "cursor-1"},
+            }
+        },
+        headers=headers,
+    )
+
+    execution = assert_success_response(run_resp)
+
+    assert execution["queue_task_id"] == "queue-shop-task-1"
+    assert execution["payload"]["timezone"] == "Asia/Shanghai"
+    assert execution["payload"]["filters"]["region"] == "east"
+    assert captured["data_source_id"] == 10
+    assert captured["rule_id"] == 20
+    assert captured["shop_ids"] == ["shop-10", "shop-11"]
+    assert captured["timezone"] == "Asia/Shanghai"
+    assert captured["filters"] == {"shop_id": ["shop-10", "shop-11"], "region": "east"}
+
+
+@pytest.mark.asyncio
 async def test_cancel_task(
     api_client,
     permission_data,

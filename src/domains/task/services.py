@@ -25,7 +25,11 @@ from src.domains.task.repository import (
     TaskDefinitionRepository,
     TaskExecutionRepository,
 )
-from src.domains.task.schemas import TaskDefinitionCreate, TaskExecutionCreate
+from src.domains.task.schemas import (
+    SHOP_DASHBOARD_OVERRIDE_KEYS,
+    TaskDefinitionCreate,
+    TaskExecutionCreate,
+)
 from src.session import get_session
 from src.tasks.collection.douyin_shop_dashboard import sync_shop_dashboard
 from src.tasks.etl.orders import process_orders
@@ -277,13 +281,19 @@ class TaskService:
                 execution_id=execution_id,
             )
         if task_type == TaskType.SHOP_DASHBOARD_COLLECTION:
-            return sync_shop_dashboard.push(
-                data_source_id=int(payload.get("data_source_id", 0)),
-                rule_id=int(payload.get("rule_id", 0)),
-                execution_id=str(
+            dispatch_kwargs: dict[str, Any] = {
+                "data_source_id": int(payload.get("data_source_id", 0)),
+                "rule_id": int(payload.get("rule_id", 0)),
+                "execution_id": str(
                     payload.get("execution_id") or f"task-execution-{execution_id}"
                 ),
-                triggered_by=triggered_by,
+                "triggered_by": triggered_by,
+            }
+            for key in SHOP_DASHBOARD_OVERRIDE_KEYS:
+                if key in payload:
+                    dispatch_kwargs[key] = payload[key]
+            return sync_shop_dashboard.push(
+                **dispatch_kwargs,
             )
         raise TaskPushFailedException()
 
