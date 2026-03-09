@@ -65,7 +65,7 @@ def test_runtime_reads_storage_state_from_extra_config():
     assert runtime.cookies["sid"] == "token"
 
 
-def test_runtime_shop_overview_metrics_overview_does_not_force_violation_groups():
+def test_runtime_api_groups_shop_overview_metrics_overview_does_not_force_violation_groups():
     runtime = build_runtime_config(
         data_source=_ds(extra_config={}, shop_id="shop-5"),
         rule=ScrapingRule(
