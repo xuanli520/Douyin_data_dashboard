@@ -4,6 +4,7 @@ import inspect
 import logging
 import time
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,7 @@ from src.scrapers.shop_dashboard.runtime import (
 )
 from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
 from src import session
+from src.tasks.collection.shop_dashboard_plan_builder import build_collection_plan
 from src.tasks.base import TaskStatusMixin
 from src.tasks.exceptions import ScrapingFailedException
 from src.tasks.funboost_compat import boost, fct
@@ -81,13 +83,30 @@ def sync_shop_dashboard(
             execution_id=execution_id,
         )
     )
-    if runtime.granularity != "DAY":
-        raise ScrapingFailedException(
-            "Unsupported granularity",
-            error_data={"granularity": runtime.granularity},
+    plan_units = build_collection_plan(runtime)
+    if not plan_units:
+        return {
+            "status": "success",
+            "data_source_id": data_source_id,
+            "rule_id": rule_id,
+            "execution_id": execution_id,
+            "shop_count": 0,
+            "planned_units": 0,
+            "completed_units": 0,
+            "failed_units": 0,
+            "items": [],
+        }
+
+    runtimes_by_shop: dict[str, ShopDashboardRuntimeConfig] = {
+        runtime.shop_id: runtime,
+    }
+    for plan_unit in plan_units:
+        if plan_unit.shop_id in runtimes_by_shop:
+            continue
+        runtimes_by_shop[plan_unit.shop_id] = replace(
+            runtime, shop_id=plan_unit.shop_id
         )
 
-    metric_dates = _resolve_metric_dates(runtime)
     browser = BrowserScraper()
     state_store = SessionStateStore(base_dir=Path(".runtime") / "shop_dashboard_state")
     _materialize_runtime_storage_state(runtime, state_store)
@@ -98,8 +117,13 @@ def sync_shop_dashboard(
     )
     collector_supports_shared_helpers = _supports_shared_helpers(_collect_one_day)
     items: list[dict[str, Any]] = []
-    for metric_date in metric_dates:
-        business_key = _build_business_key(runtime, metric_date)
+    for plan_unit in plan_units:
+        unit_runtime = runtimes_by_shop[plan_unit.shop_id]
+        business_key = _build_business_key(
+            unit_runtime,
+            plan_unit.metric_date,
+            plan_unit=plan_unit,
+        )
         cache_enabled = _is_result_cache_enabled(runtime.execution_id)
         cached = helper.get_cached_result(business_key) if cache_enabled else None
         if cached:
@@ -118,10 +142,10 @@ def sync_shop_dashboard(
             skipped_result = {
                 "status": "skipped",
                 "reason": "running",
-                "metric_date": metric_date,
-                "shop_id": runtime.shop_id,
-                "rule_id": runtime.rule_id,
-                "execution_id": runtime.execution_id,
+                "metric_date": plan_unit.metric_date,
+                "shop_id": unit_runtime.shop_id,
+                "rule_id": unit_runtime.rule_id,
+                "execution_id": unit_runtime.execution_id,
                 "retry_count": 0,
                 "fallback_trace": [],
             }
@@ -139,16 +163,26 @@ def sync_shop_dashboard(
         try:
             if collector_supports_shared_helpers:
                 collected = _collect_one_day(
-                    runtime,
-                    metric_date,
+                    unit_runtime,
+                    plan_unit.metric_date,
                     browser,
                     lock_manager=lock_manager,
                     state_store=state_store,
                     login_state_manager=login_state_manager,
                 )
             else:
-                collected = _collect_one_day(runtime, metric_date, browser)
-            _run_async(_persist_result(runtime, metric_date, collected))
+                collected = _collect_one_day(
+                    unit_runtime,
+                    plan_unit.metric_date,
+                    browser,
+                )
+            _run_async(
+                _persist_result(
+                    unit_runtime,
+                    plan_unit.metric_date,
+                    collected,
+                )
+            )
             if cache_enabled:
                 helper.cache_result(business_key, collected)
             items.append(collected)
@@ -175,6 +209,14 @@ def sync_shop_dashboard(
         "data_source_id": data_source_id,
         "rule_id": rule_id,
         "execution_id": execution_id,
+        "shop_count": len({plan_unit.shop_id for plan_unit in plan_units}),
+        "planned_units": len(plan_units),
+        "completed_units": sum(
+            1 for item in items if str(item.get("status", "success")) == "success"
+        ),
+        "failed_units": sum(
+            1 for item in items if str(item.get("status", "success")) != "success"
+        ),
         "items": items,
     }
 
@@ -591,14 +633,35 @@ def _is_result_cache_enabled(execution_id: str) -> bool:
     return not execution_id.startswith("cron_cookie_health_check_")
 
 
-def _build_business_key(runtime: ShopDashboardRuntimeConfig, metric_date: str) -> str:
+def _build_business_key(
+    runtime: ShopDashboardRuntimeConfig,
+    metric_date: str,
+    *,
+    plan_unit: Any | None = None,
+) -> str:
+    window_start = getattr(plan_unit, "window_start", None)
+    window_end = getattr(plan_unit, "window_end", None)
+    granular = getattr(plan_unit, "granularity", runtime.granularity)
+    format_context = {
+        "shop_id": runtime.shop_id,
+        "date": metric_date,
+        "metric_date": metric_date,
+        "rule_id": runtime.rule_id,
+        "execution_id": runtime.execution_id,
+        "granularity": granular,
+        "window_start": window_start.isoformat() if window_start else "",
+        "window_end": window_end.isoformat() if window_end else "",
+    }
     if runtime.dedupe_key:
-        return runtime.dedupe_key.format(
-            shop_id=runtime.shop_id,
-            date=metric_date,
-            rule_id=runtime.rule_id,
-            execution_id=runtime.execution_id,
-        )
+        try:
+            return runtime.dedupe_key.format(**format_context)
+        except KeyError:
+            return runtime.dedupe_key.format(
+                shop_id=runtime.shop_id,
+                date=metric_date,
+                rule_id=runtime.rule_id,
+                execution_id=runtime.execution_id,
+            )
     return f"{runtime.shop_id}:{metric_date}:{runtime.rule_id}:{runtime.execution_id}"
 
 
