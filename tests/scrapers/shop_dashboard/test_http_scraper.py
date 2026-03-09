@@ -1,3 +1,6 @@
+import json
+import logging
+
 import httpx
 import pytest
 
@@ -11,6 +14,13 @@ def _build_runtime(
     cookies: dict[str, str] | None = None,
     retry_count: int = 3,
     graphql_query: str | None = None,
+    filters: dict | None = None,
+    dimensions: list[str] | None = None,
+    metrics: list[str] | None = None,
+    top_n: int | None = None,
+    sort_by: str | None = None,
+    include_long_tail: bool = False,
+    session_level: bool = False,
 ) -> ShopDashboardRuntimeConfig:
     return ShopDashboardRuntimeConfig(
         shop_id="shop-1",
@@ -25,12 +35,13 @@ def _build_runtime(
         backfill_last_n_days=3,
         data_latency="T+1",
         target_type="SHOP_OVERVIEW",
-        metrics=[],
-        dimensions=[],
-        filters={},
-        top_n=None,
-        include_long_tail=False,
-        session_level=False,
+        metrics=metrics or [],
+        dimensions=dimensions or [],
+        filters=filters or {},
+        top_n=top_n,
+        sort_by=sort_by,
+        include_long_tail=include_long_tail,
+        session_level=session_level,
         dedupe_key=None,
         rule_id=1,
         execution_id="exec-1",
@@ -401,3 +412,83 @@ def test_http_scraper_executes_groups_via_endpoint_registry():
         for group in ENDPOINT_GROUP_ORDER
     }
     assert set(calls) == expected
+
+
+def test_http_scraper_applies_filters_dimensions_top_n_sort_into_post_json():
+    from src.scrapers.shop_dashboard.http_scraper import HttpScraper
+
+    captured: dict[str, dict] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/governance/shop/penalty/get_shop_score_node"):
+            captured["params"] = dict(request.url.params)
+            captured["json"] = json.loads(request.content.decode("utf-8"))
+            return httpx.Response(200, json={"code": 0, "data": {"score": {}}})
+        return httpx.Response(200, json={"code": 0, "data": {}})
+
+    transport = httpx.MockTransport(handler)
+    with httpx.Client(
+        transport=transport, base_url="https://fxg.jinritemai.com"
+    ) as client:
+        scraper = HttpScraper(client=client)
+        runtime = _build_runtime(
+            api_groups=["score_node"],
+            filters={"shop_id": ["shop-1"], "region": "east"},
+            dimensions=["shop", "category"],
+            metrics=["overview", "analysis"],
+            top_n=20,
+            sort_by="-total_score",
+            include_long_tail=True,
+            session_level=True,
+        )
+        scraper.fetch_dashboard_with_context(runtime, "2026-03-03")
+
+    assert captured["params"]["filter_region"] == "east"
+    assert captured["params"]["dimensions"] == "shop,category"
+    assert captured["params"]["metrics"] == "overview,analysis"
+    assert captured["params"]["top_n"] == "20"
+    assert captured["params"]["sort_by"] == "-total_score"
+    assert captured["json"]["filters"]["region"] == "east"
+    assert captured["json"]["dimensions"] == ["shop", "category"]
+    assert captured["json"]["metrics"] == ["overview", "analysis"]
+    assert captured["json"]["top_n"] == 20
+    assert captured["json"]["sort_by"] == "-total_score"
+    assert captured["json"]["include_long_tail"] is True
+    assert captured["json"]["session_level"] is True
+
+
+def test_http_scraper_unknown_filters_only_warn_and_continue(caplog):
+    from src.scrapers.shop_dashboard.http_scraper import HttpScraper
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(
+            "/governance/shop/experiencescore/getOverviewByVersion"
+        ):
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "experience_score": {"value": "4.8"},
+                        "goods_score": {"value": 4.7},
+                        "logistics_score": {"value": 4.9},
+                        "service_score": {"value": 4.6},
+                    },
+                },
+            )
+        return httpx.Response(200, json={"code": 0, "data": {}})
+
+    transport = httpx.MockTransport(handler)
+    with httpx.Client(
+        transport=transport, base_url="https://fxg.jinritemai.com"
+    ) as client:
+        scraper = HttpScraper(client=client)
+        runtime = _build_runtime(
+            api_groups=["overview"],
+            filters={"shop_id": ["shop-1"], "unknown_dimension": "x"},
+        )
+        with caplog.at_level(logging.WARNING):
+            result = scraper.fetch_dashboard_with_context(runtime, "2026-03-03")
+
+    assert result["total_score"] == 4.8
+    assert "unknown_filter:unknown_dimension" in caplog.text

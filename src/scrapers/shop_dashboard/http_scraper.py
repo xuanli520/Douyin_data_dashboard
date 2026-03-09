@@ -16,6 +16,10 @@ from src.scrapers.shop_dashboard.parsers import (
     parse_violation_details,
     parse_violation_summary,
 )
+from src.scrapers.shop_dashboard.query_builder import (
+    EndpointQueryContext,
+    build_endpoint_query_context,
+)
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.tasks.exceptions import ScrapingFailedException
 
@@ -180,6 +184,7 @@ class HttpScraper:
         return self._fetch_dashboard(
             shop_id=shop_id,
             date=date,
+            runtime_config=None,
             api_groups=list(ENDPOINT_GROUP_ORDER),
             common_query={},
             cookie_mapping=self._cookie_provider(shop_id)
@@ -196,6 +201,7 @@ class HttpScraper:
         return self._fetch_dashboard(
             shop_id=runtime_config.shop_id,
             date=date,
+            runtime_config=runtime_config,
             api_groups=runtime_config.api_groups,
             common_query=runtime_config.common_query,
             cookie_mapping=runtime_config.cookies,
@@ -209,6 +215,7 @@ class HttpScraper:
         *,
         shop_id: str,
         date: str,
+        runtime_config: ShopDashboardRuntimeConfig | None,
         api_groups: list[str],
         common_query: Mapping[str, Any],
         cookie_mapping: Mapping[str, str],
@@ -231,6 +238,11 @@ class HttpScraper:
             if group_name not in groups:
                 continue
             spec = ENDPOINT_SPECS[group_name]
+            query_context = self._build_query_context(
+                runtime_config=runtime_config,
+                date=date,
+                group_name=group_name,
+            )
             json_body = (
                 {
                     "operationName": "ExperienceScoreHome",
@@ -242,6 +254,25 @@ class HttpScraper:
                 if spec.json_body is not None
                 else None
             )
+            params = dict(spec.params) if spec.params is not None else {}
+            params.update(self._flatten_query_context_params(query_context.params))
+            if not params:
+                params = None
+            if spec.requires_graphql_query and json_body is not None:
+                variables = dict(json_body.get("variables") or {})
+                variables.update(query_context.graphql_variables)
+                json_body["variables"] = variables
+            elif query_context.json_body:
+                if json_body is None:
+                    json_body = {}
+                json_body.update(query_context.json_body)
+            for warning in query_context.warnings:
+                logger.warning(
+                    "shop_dashboard unknown filter group=%s warning=%s shop_id=%s",
+                    group_name,
+                    warning,
+                    shop_id,
+                )
             if spec.requires_graphql_query and not graphql_query:
                 continue
             try:
@@ -250,7 +281,7 @@ class HttpScraper:
                     spec.path,
                     shop_id,
                     date,
-                    params=dict(spec.params) if spec.params is not None else None,
+                    params=params,
                     json_body=json_body,
                     common_query=common_query,
                     cookie_mapping=cookie_mapping,
@@ -631,3 +662,42 @@ class HttpScraper:
             if raw_message:
                 message = str(raw_message)
         return {"code": code, "message": message}
+
+    @staticmethod
+    def _build_query_context(
+        *,
+        runtime_config: ShopDashboardRuntimeConfig | None,
+        date: str,
+        group_name: str,
+    ) -> EndpointQueryContext:
+        if runtime_config is None:
+            return EndpointQueryContext(
+                params={},
+                json_body={},
+                graphql_variables={},
+            )
+        return build_endpoint_query_context(
+            runtime_config,
+            metric_date=date,
+            group_name=group_name,
+        )
+
+    @staticmethod
+    def _flatten_query_context_params(params: Mapping[str, Any]) -> dict[str, Any]:
+        flattened: dict[str, Any] = {}
+        for key, value in params.items():
+            if value is None:
+                continue
+            if key == "filters" and isinstance(value, Mapping):
+                for filter_key, filter_value in value.items():
+                    if filter_value is None:
+                        continue
+                    flattened[f"filter_{filter_key}"] = filter_value
+                continue
+            if key in {"dimensions", "metrics"} and isinstance(value, list):
+                flattened[key] = ",".join(
+                    str(item) for item in value if item is not None
+                )
+                continue
+            flattened[key] = value
+        return flattened
