@@ -319,6 +319,57 @@ class TestScrapingRuleServiceIntegration:
             assert rule.id is not None
             assert rule.name == "Test Rule"
 
+    async def test_create_scraping_rule_with_full_rule_config_and_shop_id_list(
+        self, test_db, test_user
+    ):
+        async with test_db() as session:
+            ds_repo = DataSourceRepository(session)
+            rule_repo = ScrapingRuleRepository(session)
+            service = DataSourceService(ds_repo, rule_repo, session)
+
+            ds = await service.create(
+                DataSourceCreate(
+                    name="DS for Full Rule Config",
+                    type=SchemaDataSourceType.DOUYIN_SHOP,
+                    config={"shop_id": None},
+                ),
+                user_id=test_user.id,
+            )
+            shop_ids = [f"shop-{idx}" for idx in range(13)]
+            rule = await service.create_scraping_rule(
+                ds.id,
+                ScrapingRuleCreate(
+                    data_source_id=ds.id,
+                    name="Full Rule Config",
+                    target_type=TargetType.SHOP_OVERVIEW,
+                    config={
+                        "timezone": "Asia/Shanghai",
+                        "granularity": "DAY",
+                        "incremental_mode": "BY_DATE",
+                        "backfill_last_n_days": 2,
+                        "data_latency": "T+1",
+                        "filters": {"shop_id": shop_ids, "region": "east"},
+                        "dimensions": ["shop", "category"],
+                        "metrics": ["overview", "analysis"],
+                        "rate_limit": {"qps": 2, "burst": 2, "concurrency": 1},
+                        "top_n": 30,
+                        "sort_by": "-total_score",
+                        "include_long_tail": True,
+                        "session_level": True,
+                        "dedupe_key": "{shop_id}:{window_start}:{window_end}",
+                        "extra_config": {"cursor": "cursor-1"},
+                    },
+                ),
+            )
+
+            assert rule.config["timezone"] == "Asia/Shanghai"
+            assert rule.config["granularity"] == "DAY"
+            assert rule.config["incremental_mode"] == "BY_DATE"
+            assert rule.config["data_latency"] == "T+1"
+            assert len(rule.config["filters"]["shop_id"]) == 13
+            assert rule.config["top_n"] == 30
+            assert rule.config["sort_by"] == "-total_score"
+
     async def test_create_rule_for_inactive_source_fails(self, test_db, test_user):
         async with test_db() as session:
             ds_repo = DataSourceRepository(session)
