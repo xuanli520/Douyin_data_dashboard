@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from calendar import monthrange
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -238,14 +239,11 @@ def _shift_base(base: datetime, *, granularity: str, offset: int) -> datetime:
 
 
 def _shift_month(base: datetime, offset: int) -> datetime:
-    year = base.year
-    month = base.month
-    for _ in range(offset):
-        month -= 1
-        if month == 0:
-            month = 12
-            year -= 1
-    return base.replace(year=year, month=month)
+    total_months = base.year * 12 + (base.month - 1) - offset
+    year = total_months // 12
+    month = total_months % 12 + 1
+    max_day = monthrange(year, month)[1]
+    return base.replace(year=year, month=month, day=min(base.day, max_day))
 
 
 def _parse_data_latency(data_latency: str) -> int:

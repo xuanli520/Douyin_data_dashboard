@@ -112,17 +112,60 @@ def sync_shop_dashboard(
     rule_id: int,
     execution_id: str,
     triggered_by: int | None = None,
+    shop_id: str | None = None,
+    shop_ids: list[str] | str | None = None,
+    granularity: str | None = None,
+    timezone: str | None = None,
+    time_range: dict[str, Any] | None = None,
+    incremental_mode: str | None = None,
+    backfill_last_n_days: int | None = None,
+    data_latency: str | None = None,
+    filters: dict[str, Any] | None = None,
+    dimensions: list[str] | None = None,
+    metrics: list[str] | None = None,
+    dedupe_key: str | None = None,
+    rate_limit: int | dict[str, Any] | None = None,
+    top_n: int | None = None,
+    sort_by: str | None = None,
+    include_long_tail: bool | None = None,
+    session_level: bool | None = None,
+    extra_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     _write_started_status(sync_shop_dashboard, "sync_shop_dashboard", triggered_by)
     redis_client = sync_shop_dashboard.publisher.redis_db_frame
     helper = FunboostIdempotencyHelper(
         redis_client=redis_client, task_name="sync_shop_dashboard"
     )
+    runtime_overrides = {
+        key: value
+        for key, value in {
+            "shop_id": shop_id,
+            "shop_ids": shop_ids,
+            "granularity": granularity,
+            "timezone": timezone,
+            "time_range": time_range,
+            "incremental_mode": incremental_mode,
+            "backfill_last_n_days": backfill_last_n_days,
+            "data_latency": data_latency,
+            "filters": filters,
+            "dimensions": dimensions,
+            "metrics": metrics,
+            "dedupe_key": dedupe_key,
+            "rate_limit": rate_limit,
+            "top_n": top_n,
+            "sort_by": sort_by,
+            "include_long_tail": include_long_tail,
+            "session_level": session_level,
+            "extra_config": extra_config,
+        }.items()
+        if value is not None
+    }
     runtime = _run_async(
         _load_runtime_config(
             data_source_id=data_source_id,
             rule_id=rule_id,
             execution_id=execution_id,
+            overrides=runtime_overrides,
         )
     )
     plan_units = build_collection_plan(runtime)
@@ -714,6 +757,7 @@ async def _load_runtime_config(
     data_source_id: int,
     rule_id: int,
     execution_id: str,
+    overrides: Mapping[str, Any] | None = None,
 ) -> ShopDashboardRuntimeConfig:
     session_factory = session.async_session_factory
     if session_factory is None:
@@ -739,7 +783,10 @@ async def _load_runtime_config(
                 error_data={"rule_id": rule_id},
             )
         runtime = build_runtime_config(
-            data_source=data_source, rule=rule, execution_id=execution_id
+            data_source=data_source,
+            rule=rule,
+            execution_id=execution_id,
+            overrides=dict(overrides or {}),
         )
         if not runtime.api_groups:
             raise ScrapingFailedException(
