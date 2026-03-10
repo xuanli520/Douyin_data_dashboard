@@ -581,6 +581,7 @@ def _build_expired_account_result(
         "product_score": 0.0,
         "logistics_score": 0.0,
         "service_score": 0.0,
+        "bad_behavior_score": 0.0,
         "reviews": {"summary": {}, "items": []},
         "violations": {"summary": {}, "waiting_list": []},
         "raw": {},
@@ -605,6 +606,7 @@ def _normalize_task_result(
         "product_score": payload.get("product_score", 0.0),
         "logistics_score": payload.get("logistics_score", 0.0),
         "service_score": payload.get("service_score", 0.0),
+        "bad_behavior_score": payload.get("bad_behavior_score", 0.0),
         "reviews": payload.get("reviews", {"summary": {}, "items": []}),
         "violations": payload.get("violations", {"summary": {}, "waiting_list": []}),
         "raw": payload.get("raw", {}),
@@ -648,6 +650,7 @@ def _build_agent_fallback_result(
         "product_score": 0.0,
         "logistics_score": 0.0,
         "service_score": 0.0,
+        "bad_behavior_score": 0.0,
         "reviews": {"summary": {}, "items": []},
         "violations": {"summary": {}, "waiting_list": []},
         "raw": {},
@@ -840,6 +843,7 @@ async def _persist_result(
             product_score=float(payload.get("product_score", 0.0)),
             logistics_score=float(payload.get("logistics_score", 0.0)),
             service_score=float(payload.get("service_score", 0.0)),
+            bad_behavior_score=float(payload.get("bad_behavior_score", 0.0)),
             source=str(payload.get("source", "script")),
         )
 
