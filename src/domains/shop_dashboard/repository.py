@@ -27,6 +27,7 @@ class ShopDashboardRepository(BaseRepository):
         product_score: float,
         logistics_score: float,
         service_score: float,
+        bad_behavior_score: float | None = None,
         source: str,
     ) -> ShopDashboardScore:
         stmt = select(ShopDashboardScore).where(
