@@ -102,7 +102,9 @@ async def test_get_overview_returns_weighted_score_and_alerts(test_db):
 
         assert overview.shop_id == 1001
         assert len(overview.dimensions) == 4
-        assert overview.overall_score > 0
+        # formula: product*40% + logistics*30% + service*30% - risk_deduct_points
+        # latest scores: product=92, logistics=89, service=88, risk_deduct_points=21
+        assert overview.overall_score == 68.9
         assert overview.alerts.total == 2
         assert overview.alerts.critical == 1
         assert overview.alerts.warning == 1

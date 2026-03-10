@@ -16,10 +16,10 @@ SUPPORTED_EXPERIENCE_DIMENSIONS: tuple[ExperienceDimension, ...] = (
 )
 
 DIMENSION_WEIGHTS: dict[ExperienceDimension, float] = {
-    "product": 0.35,
+    "product": 0.40,
     "logistics": 0.30,
-    "service": 0.25,
-    "risk": 0.10,
+    "service": 0.30,
+    "risk": 0.00,
 }
 
 

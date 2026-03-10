@@ -72,6 +72,7 @@ class ExperienceQueryService:
             metric_key=DIMENSION_SCORE_KEY,
         )
         latest_scores = self._latest_scores_by_dimension(metric_rows)
+        risk_deduct_points = self._latest_risk_deduct_points(metric_rows)
 
         ranked_dimensions = sorted(
             (
@@ -102,7 +103,8 @@ class ExperienceQueryService:
             sum(
                 latest_scores.get(dimension, 0.0) * DIMENSION_WEIGHTS[dimension]
                 for dimension in SUPPORTED_EXPERIENCE_DIMENSIONS
-            ),
+            )
+            - risk_deduct_points,
             2,
         )
 
@@ -466,6 +468,25 @@ class ExperienceQueryService:
             if previous is None or metric_date >= previous[0]:
                 latest[row.dimension] = (metric_date, float(row.metric_score))
         return {dimension: score for dimension, (_, score) in latest.items()}
+
+    @staticmethod
+    def _latest_risk_deduct_points(rows: list[ExperienceMetricDaily]) -> float:
+        latest_risk: tuple[date, float, float] | None = None
+        for row in rows:
+            if row.dimension != "risk":
+                continue
+            metric_date = row.metric_date
+            current = (metric_date, float(row.metric_score), float(row.deduct_points))
+            if latest_risk is None or metric_date >= latest_risk[0]:
+                latest_risk = current
+
+        if latest_risk is None:
+            return 0.0
+
+        _, risk_score, deduct_points = latest_risk
+        if deduct_points > 0:
+            return round(deduct_points, 2)
+        return round(max(0.0, 100.0 - risk_score), 2)
 
     @staticmethod
     def _build_alert_summary(
