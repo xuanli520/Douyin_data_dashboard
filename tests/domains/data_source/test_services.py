@@ -297,6 +297,43 @@ class TestDataSourceServiceUnit:
         assert "shop_dashboard_login_state" not in result.config
         assert "shop_dashboard_login_state_meta" not in result.config
 
+    async def test_update_shop_dashboard_login_state_rejects_non_shop_source(self):
+        mock_ds_repo = AsyncMock()
+        mock_rule_repo = AsyncMock()
+        mock_ds_repo.get_by_id.return_value = MockDataSource(
+            id=1,
+            source_type=ModelDataSourceType.FILE_UPLOAD,
+            extra_config={},
+        )
+
+        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+
+        with pytest.raises(BusinessException) as exc_info:
+            await service.update_shop_dashboard_login_state(
+                1,
+                account_id="acct-1",
+                storage_state={"cookies": [{"name": "sid", "value": "token"}]},
+                user_id=1,
+            )
+
+        assert exc_info.value.code == ErrorCode.DATASOURCE_UNSUPPORTED_TYPE
+
+    async def test_clear_shop_dashboard_login_state_rejects_non_shop_source(self):
+        mock_ds_repo = AsyncMock()
+        mock_rule_repo = AsyncMock()
+        mock_ds_repo.get_by_id.return_value = MockDataSource(
+            id=1,
+            source_type=ModelDataSourceType.FILE_UPLOAD,
+            extra_config={},
+        )
+
+        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+
+        with pytest.raises(BusinessException) as exc_info:
+            await service.clear_shop_dashboard_login_state(1, user_id=1)
+
+        assert exc_info.value.code == ErrorCode.DATASOURCE_UNSUPPORTED_TYPE
+
     async def test_delete_success(self):
         mock_ds_repo = AsyncMock()
         mock_rule_repo = AsyncMock()

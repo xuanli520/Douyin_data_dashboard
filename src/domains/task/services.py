@@ -8,7 +8,13 @@ from typing import Any
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.exceptions import TaskNotFoundException, TaskPushFailedException
+from src.exceptions import (
+    BusinessException,
+    TaskInvalidPayloadException,
+    TaskInvalidStatusException,
+    TaskNotFoundException,
+    TaskPushFailedException,
+)
 from src.domains.task.enums import (
     TaskDefinitionStatus,
     TaskExecutionStatus,
@@ -181,8 +187,11 @@ class TaskService:
         task = await self.task_repo.get_by_id(task_id)
         if task is None:
             raise TaskNotFoundException(task_id=str(task_id))
+        if task.status != TaskDefinitionStatus.ACTIVE:
+            raise TaskInvalidStatusException(task_id=str(task_id), status=task.status)
 
         task_payload = dict(payload or {})
+        self._validate_payload(task_type=task.task_type, payload=task_payload)
         execution = await self.create_execution(
             task,
             payload=TaskExecutionCreate(
@@ -190,23 +199,37 @@ class TaskService:
             ),
             triggered_by=triggered_by,
         )
-        async_result = self._dispatch_task(
-            task_type=task.task_type,
-            payload=task_payload,
-            triggered_by=triggered_by,
-            execution_id=execution.id if execution.id is not None else 0,
-        )
-        queue_task_id = str(getattr(async_result, "task_id", "") or "")
-        if not queue_task_id:
-            raise TaskPushFailedException()
+        try:
+            async_result = self._dispatch_task(
+                task_type=task.task_type,
+                payload=task_payload,
+                triggered_by=triggered_by,
+                execution_id=execution.id if execution.id is not None else 0,
+            )
+            queue_task_id = str(getattr(async_result, "task_id", "") or "")
+            if not queue_task_id:
+                raise TaskPushFailedException()
 
-        execution = await self.execution_repo.update(
-            execution,
-            {"queue_task_id": queue_task_id},
-        )
-        await self.session.commit()
-        self._emit_execution_triggered_event(execution)
-        return execution
+            execution = await self.execution_repo.update(
+                execution,
+                {"queue_task_id": queue_task_id},
+            )
+            await self.session.commit()
+            self._emit_execution_triggered_event(execution)
+            return execution
+        except Exception as exc:
+            error_message = (
+                exc.msg if isinstance(exc, BusinessException) else str(exc)
+            )[:1000]
+            await self.execution_repo.update(
+                execution,
+                {
+                    "status": TaskExecutionStatus.FAILED,
+                    "error_message": error_message,
+                },
+            )
+            await self.session.commit()
+            raise
 
     async def run_task_by_type(
         self,
@@ -282,8 +305,8 @@ class TaskService:
             )
         if task_type == TaskType.SHOP_DASHBOARD_COLLECTION:
             dispatch_kwargs: dict[str, Any] = {
-                "data_source_id": int(payload.get("data_source_id", 0)),
-                "rule_id": int(payload.get("rule_id", 0)),
+                "data_source_id": payload["data_source_id"],
+                "rule_id": payload["rule_id"],
                 "execution_id": str(
                     payload.get("execution_id") or f"task-execution-{execution_id}"
                 ),
@@ -302,6 +325,39 @@ class TaskService:
         if isinstance(raw, str) and raw.strip():
             return raw.strip()
         return date_type.today().isoformat()
+
+    def _validate_payload(
+        self,
+        *,
+        task_type: TaskType,
+        payload: dict[str, Any],
+    ) -> None:
+        if task_type == TaskType.SHOP_DASHBOARD_COLLECTION:
+            payload["data_source_id"] = self._require_positive_int(
+                payload, field="data_source_id"
+            )
+            payload["rule_id"] = self._require_positive_int(payload, field="rule_id")
+
+    def _require_positive_int(self, payload: dict[str, Any], *, field: str) -> int:
+        raw = payload.get(field)
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            raise TaskInvalidPayloadException(
+                message=f"Missing required field: {field}",
+                field=field,
+            )
+        try:
+            value = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise TaskInvalidPayloadException(
+                message=f"Invalid integer field: {field}",
+                field=field,
+            ) from exc
+        if value <= 0:
+            raise TaskInvalidPayloadException(
+                message=f"Field {field} must be > 0",
+                field=field,
+            )
+        return value
 
 
 async def get_task_service(

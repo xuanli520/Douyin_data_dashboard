@@ -446,6 +446,7 @@ class DataSourceService:
             raise BusinessException(
                 ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
             )
+        self._ensure_shop_dashboard_source_type(ds)
 
         raw_state_version = storage_state.get("state_version")
         normalized_storage_state = normalize_login_state(storage_state)
@@ -496,6 +497,7 @@ class DataSourceService:
             raise BusinessException(
                 ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
             )
+        self._ensure_shop_dashboard_source_type(ds)
 
         extra_config = dict(ds.extra_config or {})
         extra_config.pop("shop_dashboard_login_state", None)
@@ -795,6 +797,13 @@ class DataSourceService:
             "triggered_rules": triggered,
             "total": len(triggered),
         }
+
+    def _ensure_shop_dashboard_source_type(self, ds: DataSource) -> None:
+        if ds.source_type != ModelDataSourceType.DOUYIN_SHOP:
+            raise BusinessException(
+                ErrorCode.DATASOURCE_UNSUPPORTED_TYPE,
+                "Shop dashboard login state is only supported for DOUYIN_SHOP",
+            )
 
     async def _push_shop_dashboard_task(
         self,

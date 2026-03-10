@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi_pagination import add_pagination
 from httpx import ASGITransport, AsyncClient
 from starlette.middleware import Middleware
+from src.shared.errors import ErrorCode
 
 from src.auth.models import User, UserRole
 
@@ -206,3 +207,40 @@ async def test_clear_shop_dashboard_login_state(test_client):
     data = response.json()["data"]
     assert "shop_dashboard_login_state_meta" not in data["config"]
     assert "shop_dashboard_login_state" not in data["config"]
+
+
+async def test_shop_dashboard_login_state_rejects_non_shop_source_type(test_client):
+    create_response = await test_client.post(
+        "/api/v1/data-sources",
+        json={
+            "name": "LoginState File Source",
+            "type": "FILE_UPLOAD",
+            "config": {"file_path": "/tmp/a.csv"},
+        },
+    )
+    assert create_response.status_code == 200
+    ds_id = create_response.json()["data"]["id"]
+
+    storage_state = {
+        "cookies": [{"name": "sid", "value": "token"}],
+        "origins": [],
+    }
+    upload_response = await test_client.post(
+        f"/api/v1/data-sources/{ds_id}/shop-dashboard/login-state",
+        data={"account_id": "acct-1"},
+        files={
+            "file": (
+                "storage_state.json",
+                json.dumps(storage_state, ensure_ascii=False),
+                "application/json",
+            )
+        },
+    )
+    assert upload_response.status_code == 400
+    assert upload_response.json()["code"] == int(ErrorCode.DATASOURCE_UNSUPPORTED_TYPE)
+
+    clear_response = await test_client.delete(
+        f"/api/v1/data-sources/{ds_id}/shop-dashboard/login-state"
+    )
+    assert clear_response.status_code == 400
+    assert clear_response.json()["code"] == int(ErrorCode.DATASOURCE_UNSUPPORTED_TYPE)

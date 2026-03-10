@@ -2,9 +2,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.domains.task.enums import TaskExecutionStatus, TaskTriggerMode, TaskType
+from src.domains.task.enums import (
+    TaskDefinitionStatus,
+    TaskExecutionStatus,
+    TaskTriggerMode,
+    TaskType,
+)
 from src.domains.task.schemas import TaskDefinitionCreate
 from src.domains.task.services import TaskService
+from src.exceptions import BusinessException
+from src.shared.errors import ErrorCode
 
 
 @pytest.mark.asyncio
@@ -128,3 +135,67 @@ async def test_run_task_dispatches_by_task_type_and_persists_queued_execution(
     assert orders_execution.queue_task_id == "queue-orders-1"
     assert products_execution.queue_task_id == "queue-products-1"
     assert shop_execution.queue_task_id == "queue-shop-1"
+
+
+@pytest.mark.asyncio
+async def test_run_task_rejects_non_active_status(test_db):
+    async with test_db() as session:
+        service = TaskService(session)
+        task = await service.create_task(
+            TaskDefinitionCreate(
+                name="orders-paused",
+                task_type=TaskType.ETL_ORDERS,
+                status=TaskDefinitionStatus.PAUSED,
+            ),
+            created_by_id=1,
+        )
+
+        with pytest.raises(BusinessException) as exc_info:
+            await service.run_task(
+                task_id=task.id if task.id is not None else 0,
+                payload={"batch_date": "2026-03-08"},
+                triggered_by=1,
+            )
+
+    assert exc_info.value.code == ErrorCode.TASK_INVALID_STATUS
+
+
+@pytest.mark.asyncio
+async def test_run_task_marks_execution_failed_when_push_missing_task_id(
+    test_db, monkeypatch
+):
+    from src.domains.task import services as module
+
+    def _fake_push_without_task_id(**_kwargs):
+        return object()
+
+    monkeypatch.setattr(
+        module.process_orders,
+        "push",
+        _fake_push_without_task_id,
+        raising=False,
+    )
+
+    async with test_db() as session:
+        service = TaskService(session)
+        task = await service.create_task(
+            TaskDefinitionCreate(name="orders", task_type=TaskType.ETL_ORDERS),
+            created_by_id=1,
+        )
+
+        with pytest.raises(BusinessException) as exc_info:
+            await service.run_task(
+                task_id=task.id if task.id is not None else 0,
+                payload={"batch_date": "2026-03-08"},
+                triggered_by=1,
+            )
+
+        executions = await service.list_executions(
+            task.id if task.id is not None else 0
+        )
+
+    assert exc_info.value.code == ErrorCode.TASK_PUSH_FAILED
+    assert len(executions) == 1
+    assert executions[0].status == TaskExecutionStatus.FAILED
+    assert executions[0].queue_task_id is None
+    assert executions[0].error_message == "Task push failed: missing task_id"

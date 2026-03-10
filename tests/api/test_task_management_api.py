@@ -10,6 +10,7 @@ from src.domains.task.enums import TaskDefinitionStatus, TaskType
 from src.domains.task.schemas import TaskDefinitionCreate
 from src.domains.task.services import TaskService
 from src.main import app
+from src.shared.errors import ErrorCode
 
 
 class MockCaptchaService:
@@ -342,3 +343,76 @@ async def test_cancel_task(
     cancelled = assert_success_response(cancel_resp)
     assert cancelled["id"] == task.id
     assert cancelled["status"] == "CANCELLED"
+
+
+@pytest.mark.asyncio
+async def test_run_task_rejects_cancelled_task(
+    api_client,
+    permission_data,
+    test_db,
+):
+    async with test_db() as session:
+        service = TaskService(session)
+        task = await service.create_task(
+            TaskDefinitionCreate(
+                name="orders-cancelled",
+                task_type=TaskType.ETL_ORDERS,
+                status=TaskDefinitionStatus.CANCELLED,
+            ),
+            created_by_id=permission_data.id,
+        )
+
+    headers = await get_auth_headers(
+        api_client,
+        "taskmanager@example.com",
+        "taskmanager123",
+    )
+
+    run_resp = await api_client.post(
+        f"/api/v1/tasks/{task.id}/run",
+        json={"payload": {"batch_date": "2026-03-08"}},
+        headers=headers,
+    )
+
+    assert run_resp.status_code == 409
+    payload = run_resp.json()
+    assert payload["code"] == int(ErrorCode.TASK_INVALID_STATUS)
+
+
+@pytest.mark.asyncio
+async def test_run_shop_dashboard_task_requires_positive_ids(
+    api_client,
+    permission_data,
+    test_db,
+):
+    async with test_db() as session:
+        service = TaskService(session)
+        task = await service.create_task(
+            TaskDefinitionCreate(
+                name="shop-dashboard-invalid-payload",
+                task_type=TaskType.SHOP_DASHBOARD_COLLECTION,
+            ),
+            created_by_id=permission_data.id,
+        )
+
+    headers = await get_auth_headers(
+        api_client,
+        "taskmanager@example.com",
+        "taskmanager123",
+    )
+
+    missing_rule_resp = await api_client.post(
+        f"/api/v1/tasks/{task.id}/run",
+        json={"payload": {"data_source_id": 10}},
+        headers=headers,
+    )
+    assert missing_rule_resp.status_code == 400
+    assert missing_rule_resp.json()["code"] == int(ErrorCode.TASK_INVALID_PAYLOAD)
+
+    invalid_int_resp = await api_client.post(
+        f"/api/v1/tasks/{task.id}/run",
+        json={"payload": {"data_source_id": "abc", "rule_id": 20}},
+        headers=headers,
+    )
+    assert invalid_int_resp.status_code == 400
+    assert invalid_int_resp.json()["code"] == int(ErrorCode.TASK_INVALID_PAYLOAD)
