@@ -46,7 +46,7 @@ services:
     image: postgres:15-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-S3curePg_7Qm9K2vX4rT8wL5}
       POSTGRES_DB: ${POSTGRES_DB:-appdb}
     ports:
       - "${DB_EXPOSE_PORT:-5432}:5432"
@@ -62,7 +62,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--requirepass", "${REDIS_PASSWORD:-S3cureRd_6Np4Zx8Jq2Vt9Hy}"]
     ports:
       - "${REDIS_EXPOSE_PORT:-6379}:6379"
     volumes:
