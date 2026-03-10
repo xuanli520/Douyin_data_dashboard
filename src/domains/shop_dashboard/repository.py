@@ -30,6 +30,9 @@ class ShopDashboardRepository(BaseRepository):
         bad_behavior_score: float | None = None,
         source: str,
     ) -> ShopDashboardScore:
+        normalized_bad_behavior_score = (
+            0.0 if bad_behavior_score is None else float(bad_behavior_score)
+        )
         stmt = select(ShopDashboardScore).where(
             ShopDashboardScore.shop_id == shop_id,
             ShopDashboardScore.metric_date == metric_date,
@@ -43,7 +46,7 @@ class ShopDashboardRepository(BaseRepository):
                 product_score=product_score,
                 logistics_score=logistics_score,
                 service_score=service_score,
-                bad_behavior_score=bad_behavior_score,
+                bad_behavior_score=normalized_bad_behavior_score,
                 source=source,
             )
             self.session.add(score)
@@ -62,7 +65,7 @@ class ShopDashboardRepository(BaseRepository):
                 and float(product_score) == 0.0
                 and float(logistics_score) == 0.0
                 and float(service_score) == 0.0
-                and float(bad_behavior_score) == 0.0
+                and normalized_bad_behavior_score == 0.0
             ):
                 await self.session.refresh(score)
                 return score
@@ -70,7 +73,7 @@ class ShopDashboardRepository(BaseRepository):
             score.product_score = product_score
             score.logistics_score = logistics_score
             score.service_score = service_score
-            score.bad_behavior_score = bad_behavior_score
+            score.bad_behavior_score = normalized_bad_behavior_score
             score.source = source
 
         await self._flush()
