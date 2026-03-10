@@ -40,6 +40,82 @@ class TestDataSourceServiceIntegration:
             assert fetched.id == created.id
             assert fetched.name == "Integration Test DS"
 
+    async def test_create_shop_dashboard_config_merges_credentials_into_login_state(
+        self, test_db, test_user
+    ):
+        async with test_db() as session:
+            ds_repo = DataSourceRepository(session)
+            rule_repo = ScrapingRuleRepository(session)
+            service = DataSourceService(ds_repo, rule_repo, session)
+
+            created = await service.create(
+                DataSourceCreate(
+                    name="Shop DS Credential Merge",
+                    type=SchemaDataSourceType.DOUYIN_SHOP,
+                    config={
+                        "api_key": "test_key",
+                        "api_key_password": "test_password",
+                        "shop_id": "shop-1",
+                    },
+                ),
+                user_id=test_user.id,
+            )
+
+            model = await ds_repo.get_by_id(created.id)
+            assert model is not None
+            login_state = model.extra_config.get("shop_dashboard_login_state")
+            assert login_state["credentials"]["api_key"] == "test_key"
+            assert login_state["credentials"]["api_key_password"] == "test_password"
+            assert "shop_dashboard_login_state" not in created.config
+
+    async def test_update_and_clear_shop_dashboard_login_state(
+        self, test_db, test_user
+    ):
+        async with test_db() as session:
+            ds_repo = DataSourceRepository(session)
+            rule_repo = ScrapingRuleRepository(session)
+            service = DataSourceService(ds_repo, rule_repo, session)
+
+            created = await service.create(
+                DataSourceCreate(
+                    name="Shop DS Login State",
+                    type=SchemaDataSourceType.DOUYIN_SHOP,
+                    config={
+                        "api_key": "test_key",
+                        "api_key_password": "test_password",
+                    },
+                ),
+                user_id=test_user.id,
+            )
+
+            updated = await service.update_shop_dashboard_login_state(
+                created.id,
+                account_id="acct-1",
+                storage_state={
+                    "cookies": [{"name": "sid", "value": "token"}],
+                    "origins": [],
+                },
+                user_id=test_user.id,
+            )
+            assert (
+                updated.config["shop_dashboard_login_state_meta"]["cookie_count"] == 1
+            )
+            assert "shop_dashboard_login_state" not in updated.config
+
+            model = await ds_repo.get_by_id(created.id)
+            assert model is not None
+            login_state = model.extra_config["shop_dashboard_login_state"]
+            assert isinstance(login_state.get("storage_state"), dict)
+            assert login_state["storage_state"]["cookies"][0]["name"] == "sid"
+            assert "cookies" not in login_state
+
+            cleared = await service.clear_shop_dashboard_login_state(
+                created.id,
+                user_id=test_user.id,
+            )
+            assert "shop_dashboard_login_state" not in cleared.config
+            assert "shop_dashboard_login_state_meta" not in cleared.config
+
     @pytest.mark.skip(reason="Requires PostgreSQL for unique constraint error handling")
     async def test_create_duplicate_name_raises_error(self, test_db, test_user):
         async with test_db() as session:
@@ -172,7 +248,14 @@ class TestDataSourceServiceIntegration:
                 DataSourceCreate(
                     name="Connection Test",
                     type=SchemaDataSourceType.DOUYIN_SHOP,
-                    config={"api_key": "key", "api_secret": "secret"},
+                    config={
+                        "shop_dashboard_login_state": {
+                            "storage_state": {
+                                "cookies": [{"name": "sid", "value": "token"}],
+                                "origins": [],
+                            }
+                        }
+                    },
                 ),
                 user_id=test_user.id,
             )
@@ -197,14 +280,11 @@ class TestDataSourceServiceIntegration:
                 ),
                 user_id=test_user.id,
             )
-            # Manually clear credentials to simulate invalid connection
-            created_model = await ds_repo.get_by_id(created.id)
-            created_model.api_key = None
-            created_model.api_secret = None
-            await ds_repo.update(created.id, {"api_key": None, "api_secret": None})
+            await ds_repo.update(created.id, {"extra_config": {}})
 
             result = await service.validate_connection(created.id)
             assert result["valid"] is False
+            assert result["message"] == "Missing shop dashboard login state cookies"
 
             fetched = await ds_repo.get_by_id(created.id)
             assert fetched.status == DataSourceStatus.ERROR
@@ -238,6 +318,57 @@ class TestScrapingRuleServiceIntegration:
 
             assert rule.id is not None
             assert rule.name == "Test Rule"
+
+    async def test_create_scraping_rule_with_full_rule_config_and_shop_id_list(
+        self, test_db, test_user
+    ):
+        async with test_db() as session:
+            ds_repo = DataSourceRepository(session)
+            rule_repo = ScrapingRuleRepository(session)
+            service = DataSourceService(ds_repo, rule_repo, session)
+
+            ds = await service.create(
+                DataSourceCreate(
+                    name="DS for Full Rule Config",
+                    type=SchemaDataSourceType.DOUYIN_SHOP,
+                    config={"shop_id": None},
+                ),
+                user_id=test_user.id,
+            )
+            shop_ids = [f"shop-{idx}" for idx in range(13)]
+            rule = await service.create_scraping_rule(
+                ds.id,
+                ScrapingRuleCreate(
+                    data_source_id=ds.id,
+                    name="Full Rule Config",
+                    target_type=TargetType.SHOP_OVERVIEW,
+                    config={
+                        "timezone": "Asia/Shanghai",
+                        "granularity": "DAY",
+                        "incremental_mode": "BY_DATE",
+                        "backfill_last_n_days": 2,
+                        "data_latency": "T+1",
+                        "filters": {"shop_id": shop_ids, "region": "east"},
+                        "dimensions": ["shop", "category"],
+                        "metrics": ["overview", "analysis"],
+                        "rate_limit": {"qps": 2, "burst": 2, "concurrency": 1},
+                        "top_n": 30,
+                        "sort_by": "-total_score",
+                        "include_long_tail": True,
+                        "session_level": True,
+                        "dedupe_key": "{shop_id}:{window_start}:{window_end}",
+                        "extra_config": {"cursor": "cursor-1"},
+                    },
+                ),
+            )
+
+            assert rule.config["timezone"] == "Asia/Shanghai"
+            assert rule.config["granularity"] == "DAY"
+            assert rule.config["incremental_mode"] == "BY_DATE"
+            assert rule.config["data_latency"] == "T+1"
+            assert len(rule.config["filters"]["shop_id"]) == 13
+            assert rule.config["top_n"] == 30
+            assert rule.config["sort_by"] == "-total_score"
 
     async def test_create_rule_for_inactive_source_fails(self, test_db, test_user):
         async with test_db() as session:

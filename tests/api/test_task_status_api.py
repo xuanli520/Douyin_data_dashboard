@@ -3,10 +3,11 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from src.auth.captcha import get_captcha_service
-from src.audit.schemas import AuditAction, AuditLog
 from src.cache import get_cache
+from src.domains.task.enums import TaskType
+from src.domains.task.schemas import TaskDefinitionCreate, TaskExecutionCreate
+from src.domains.task.services import TaskService
 from src.main import app
-from src.shared.errors import ErrorCode
 
 
 class MockCaptchaService:
@@ -23,7 +24,8 @@ async def api_client(test_db, local_cache):
     app.dependency_overrides[get_captcha_service] = lambda: MockCaptchaService()
 
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app),
+        base_url="http://test",
     ) as client:
         yield client
 
@@ -43,7 +45,6 @@ async def get_auth_headers(client: AsyncClient, email: str, password: str) -> di
 @pytest.fixture
 async def permission_data(test_db):
     from fastapi_users.password import PasswordHelper
-    from sqlalchemy import select
 
     from src.auth import User
     from src.auth.models import Permission, Role, RolePermission, UserRole
@@ -55,19 +56,21 @@ async def permission_data(test_db):
         result = await session.execute(select(Permission))
         perm_map = {p.code: p for p in result.scalars().all()}
 
-        for code in ("task:view",):
-            if code not in perm_map:
-                perm = Permission(code=code, name=code, module="task")
-                session.add(perm)
-                await session.commit()
-                perm_map[code] = perm
+        code = "task:view"
+        if code not in perm_map:
+            perm = Permission(code=code, name=code, module="task")
+            session.add(perm)
+            await session.commit()
+            perm_map[code] = perm
 
         role_result = await session.execute(
-            select(Role).where(Role.name == "task_status_viewer")
+            select(Role).where(Role.name == "task_execution_reader")
         )
         role = role_result.scalar_one_or_none()
         if not role:
-            role = Role(name="task_status_viewer", description="Task Status Viewer")
+            role = Role(
+                name="task_execution_reader", description="Task Execution Reader"
+            )
             session.add(role)
             await session.commit()
             await session.refresh(role)
@@ -85,99 +88,56 @@ async def permission_data(test_db):
         await session.refresh(user)
 
         session.add(UserRole(user_id=user.id, role_id=role.id))
-        session.add(
-            RolePermission(role_id=role.id, permission_id=perm_map["task:view"].id)
-        )
+        session.add(RolePermission(role_id=role.id, permission_id=perm_map[code].id))
         await session.commit()
         yield user
 
 
 @pytest.mark.asyncio
-async def test_get_task_status_requires_permission(api_client):
-    response = await api_client.get("/api/v1/task-status/task-id-1")
-    assert response.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_get_task_status_not_found(api_client, permission_data, monkeypatch):
-    from src.api.v1 import task_status as module
-
-    class _FakeRedis:
-        def hgetall(self, _key):
-            return {}
-
-    monkeypatch.setattr(module, "_get_redis_client", lambda: _FakeRedis())
-
+async def test_task_status_endpoint_removed(api_client, permission_data):
     headers = await get_auth_headers(
-        api_client, "statususer@example.com", "statususer123"
+        api_client,
+        "statususer@example.com",
+        "statususer123",
     )
     response = await api_client.get("/api/v1/task-status/task-id-1", headers=headers)
     assert response.status_code == 404
     payload = response.json()
-    assert payload["code"] == int(ErrorCode.TASK_NOT_FOUND)
+    if "code" in payload:
+        assert payload["code"] == 404
+    else:
+        assert payload["detail"] == "Not Found"
 
 
 @pytest.mark.asyncio
-async def test_get_task_status_success_and_audit(
-    api_client, permission_data, test_db, monkeypatch
+async def test_task_status_read_from_task_executions(
+    api_client, permission_data, test_db
 ):
-    from src.api.v1 import task_status as module
-
-    class _FakeRedis:
-        def hgetall(self, key):
-            assert key == "douyin:task:status:task-id-2"
-            return {
-                "status": "SUCCESS",
-                "task_name": "sync_shop_dashboard",
-                "triggered_by": str(permission_data.id),
-            }
-
-    monkeypatch.setattr(module, "_get_redis_client", lambda: _FakeRedis())
+    async with test_db() as session:
+        service = TaskService(session)
+        task = await service.create_task(
+            TaskDefinitionCreate(name="orders", task_type=TaskType.ETL_ORDERS),
+            created_by_id=permission_data.id,
+        )
+        await service.create_execution(
+            task,
+            payload=TaskExecutionCreate(payload={"batch_date": "2026-03-08"}),
+            queue_task_id="queue-status-1",
+            triggered_by=permission_data.id,
+        )
 
     headers = await get_auth_headers(
-        api_client, "statususer@example.com", "statususer123"
+        api_client,
+        "statususer@example.com",
+        "statususer123",
     )
-    response = await api_client.get("/api/v1/task-status/task-id-2", headers=headers)
+    response = await api_client.get(
+        f"/api/v1/tasks/{task.id}/executions",
+        headers=headers,
+    )
 
     assert response.status_code == 200
     payload = response.json()["data"]
-    assert payload["task_id"] == "task-id-2"
-    assert payload["status"]["status"] == "SUCCESS"
-
-    async with test_db() as session:
-        result = await session.execute(
-            select(AuditLog)
-            .where(
-                AuditLog.action == AuditAction.PROTECTED_RESOURCE_ACCESS,
-                AuditLog.actor_id == permission_data.id,
-                AuditLog.resource_type == "task_status",
-                AuditLog.resource_id == "task-id-2",
-            )
-            .order_by(AuditLog.id.desc())
-        )
-        audit_log = result.scalars().first()
-
-    assert audit_log is not None
-    assert audit_log.extra is not None
-    assert audit_log.extra["status_key"] == "douyin:task:status:task-id-2"
-
-
-@pytest.mark.asyncio
-async def test_get_task_status_redis_error_returns_503(
-    api_client, permission_data, monkeypatch
-):
-    from src.api.v1 import task_status as module
-
-    class _BrokenRedis:
-        def hgetall(self, _key):
-            raise RuntimeError("redis down")
-
-    monkeypatch.setattr(module, "_get_redis_client", lambda: _BrokenRedis())
-
-    headers = await get_auth_headers(
-        api_client, "statususer@example.com", "statususer123"
-    )
-    response = await api_client.get("/api/v1/task-status/task-id-3", headers=headers)
-    assert response.status_code == 503
-    payload = response.json()
-    assert payload["code"] == int(ErrorCode.TASK_STATUS_BACKEND_UNAVAILABLE)
+    assert payload["task_id"] == task.id
+    assert payload["items"]
+    assert payload["items"][0]["queue_task_id"] == "queue-status-1"

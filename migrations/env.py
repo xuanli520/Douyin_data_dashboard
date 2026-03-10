@@ -17,6 +17,7 @@ from src.domains.shop_dashboard.models import (  # noqa: F401
     ShopDashboardScore,
     ShopDashboardViolation,
 )
+from src.domains.task.models import TaskDefinition, TaskExecution  # noqa: F401
 
 config = context.config
 

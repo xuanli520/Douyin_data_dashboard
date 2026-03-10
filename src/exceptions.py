@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 
+from src.domains.task.enums import TaskDefinitionStatus
 from src.shared.errors import ErrorCode
 
 
@@ -159,4 +160,22 @@ class TaskStatusBackendUnavailableException(BusinessException):
             code=ErrorCode.TASK_STATUS_BACKEND_UNAVAILABLE,
             msg="Task status backend unavailable",
             data=None,
+        )
+
+
+class TaskInvalidStatusException(BusinessException):
+    def __init__(self, task_id: str, status: TaskDefinitionStatus):
+        super().__init__(
+            code=ErrorCode.TASK_INVALID_STATUS,
+            msg=f"Task status '{status.value}' cannot be run",
+            data={"task_id": task_id, "status": status.value},
+        )
+
+
+class TaskInvalidPayloadException(BusinessException):
+    def __init__(self, message: str, field: str):
+        super().__init__(
+            code=ErrorCode.TASK_INVALID_PAYLOAD,
+            msg=message,
+            data={"field": field},
         )

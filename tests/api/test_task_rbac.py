@@ -69,29 +69,26 @@ def rbac_client(db_session):
 
 
 def test_list_tasks_requires_permission(rbac_client):
-    response = rbac_client.post(
-        "/api/v1/tasks/etl/orders/trigger",
-        json={"batch_date": "2026-03-03"},
-    )
+    response = rbac_client.get("/api/v1/tasks")
     assert response.status_code == 401
 
 
 def test_create_task_requires_permission(rbac_client):
     response = rbac_client.post(
-        "/api/v1/tasks/etl/products/trigger",
-        json={"batch_date": "2026-03-03"},
+        "/api/v1/tasks",
+        json={
+            "name": "orders-task",
+            "task_type": "ETL_ORDERS",
+        },
     )
     assert response.status_code == 401
 
 
 def test_run_task_requires_permission(rbac_client):
-    response = rbac_client.post(
-        "/api/v1/tasks/etl/orders/trigger",
-        json={"batch_date": "2026-03-03"},
-    )
+    response = rbac_client.post("/api/v1/tasks/1/run")
     assert response.status_code == 401
 
 
 def test_get_task_executions_requires_permission(rbac_client):
-    response = rbac_client.get("/api/v1/task-status/task-id-1")
+    response = rbac_client.get("/api/v1/tasks/1/executions")
     assert response.status_code == 401

@@ -25,18 +25,6 @@ class DataSource(SQLModel, TimestampMixin, table=True):
 
     shop_id: str | None = Field(default=None, max_length=50, index=True)
     account_name: str | None = Field(default=None, max_length=100)
-    cookies: str | None = Field(default=None)
-    proxy: str | None = Field(default=None, max_length=255)
-
-    api_key: str | None = Field(default=None, max_length=255)
-    api_secret: str | None = Field(default=None, max_length=255)
-    access_token: str | None = Field(default=None)
-    refresh_token: str | None = Field(default=None)
-    token_expires_at: datetime | None = Field(
-        default=None,
-        sa_type=DateTime(timezone=True),
-    )
-
     rate_limit: int = Field(default=100)
     retry_count: int = Field(default=3)
     timeout: int = Field(default=30)

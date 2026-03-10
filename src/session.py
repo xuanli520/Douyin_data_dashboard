@@ -1,4 +1,6 @@
-from collections.abc import AsyncGenerator
+import asyncio
+from collections.abc import AsyncGenerator, Coroutine
+from typing import Any, TypeVar
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
@@ -6,6 +8,8 @@ from sqlalchemy.orm import sessionmaker
 
 engine: AsyncEngine | None = None
 async_session_factory: sessionmaker[AsyncSession] | None = None
+_worker_loop: asyncio.AbstractEventLoop | None = None
+T = TypeVar("T")
 
 
 async def init_db(url: str, echo: bool = False) -> None:
@@ -26,6 +30,8 @@ async def init_db(url: str, echo: bool = False) -> None:
 
 
 async def close_db() -> None:
+    if engine is None:
+        return
     await engine.dispose()
 
 
@@ -39,3 +45,15 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
             if session.in_transaction():
                 await session.rollback()
             raise
+
+
+def bind_worker_loop(loop: asyncio.AbstractEventLoop | None) -> None:
+    global _worker_loop
+    _worker_loop = loop
+
+
+def run_coro(coro: Coroutine[Any, Any, T]) -> T:
+    loop = _worker_loop
+    if loop is None or loop.is_closed():
+        return asyncio.run(coro)
+    return asyncio.run_coroutine_threadsafe(coro, loop).result()

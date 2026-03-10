@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 import inspect
 import logging
+import threading
 import time
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -26,31 +29,71 @@ from src.scrapers.shop_dashboard.runtime import (
     build_runtime_config,
 )
 from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
-from src.session import async_session_factory
+from src import session
+from src.tasks.collection.shop_dashboard_plan_builder import build_collection_plan
 from src.tasks.base import TaskStatusMixin
 from src.tasks.exceptions import ScrapingFailedException
 from src.tasks.funboost_compat import boost, fct
 from src.tasks.idempotency import FunboostIdempotencyHelper
 from src.tasks.params import CollectionTaskParams
+from src.tasks.status_store import write_started_task_status
 
 logger = logging.getLogger(__name__)
 
 
-def _write_started_status(task_func, task_name: str, triggered_by: int | None) -> None:
+class _RateLimiter:
+    def __init__(self, policy: int | dict[str, Any] | None):
+        self._qps = 0.0
+        self._burst = 1.0
+        self._tokens = 1.0
+        self._last_refill = time.perf_counter()
+        self._lock = threading.Lock()
+        self._configure(policy)
+
+    def _configure(self, policy: int | dict[str, Any] | None) -> None:
+        if isinstance(policy, int):
+            self._qps = max(float(policy), 0.0)
+            self._burst = 1.0
+        elif isinstance(policy, dict):
+            raw_qps = policy.get("qps", 0)
+            raw_burst = policy.get("burst", 1)
+            self._qps = max(float(raw_qps or 0), 0.0)
+            self._burst = max(float(raw_burst or 1), 1.0)
+        self._tokens = self._burst
+
+    def wait(self) -> None:
+        if self._qps <= 0:
+            return
+        while True:
+            sleep_seconds = 0.0
+            with self._lock:
+                now = time.perf_counter()
+                elapsed = max(now - self._last_refill, 0.0)
+                self._tokens = min(self._burst, self._tokens + elapsed * self._qps)
+                self._last_refill = now
+                if self._tokens >= 1.0:
+                    self._tokens -= 1.0
+                    return
+                sleep_seconds = (1.0 - self._tokens) / self._qps
+            if sleep_seconds > 0:
+                time.sleep(sleep_seconds)
+
+
+def _write_started_status(
+    task_func,
+    task_name: str,
+    triggered_by: int | None,
+    execution_id: int | None = None,
+) -> None:
     try:
-        redis_client = task_func.publisher.redis_db_frame
         task_id = str(getattr(fct, "task_id", "unknown"))
-        key = f"douyin:task:status:{task_id}"
-        redis_client.hset(
-            key,
-            mapping={
-                "status": "STARTED",
-                "started_at": time.time(),
-                "task_name": task_name,
-                "triggered_by": triggered_by if triggered_by is not None else "",
-            },
+        write_started_task_status(
+            owner=task_func,
+            task_id=task_id,
+            task_name=task_name,
+            triggered_by=triggered_by,
+            execution_id=execution_id,
         )
-        redis_client.expire(key, get_settings().funboost.status_ttl_seconds)
     except Exception:
         logger.exception("failed to write started task status: %s", task_name)
 
@@ -67,37 +110,105 @@ def sync_shop_dashboard(
     rule_id: int,
     execution_id: str,
     triggered_by: int | None = None,
+    shop_id: str | None = None,
+    shop_ids: list[str] | str | None = None,
+    granularity: str | None = None,
+    timezone: str | None = None,
+    time_range: dict[str, Any] | None = None,
+    incremental_mode: str | None = None,
+    backfill_last_n_days: int | None = None,
+    data_latency: str | None = None,
+    filters: dict[str, Any] | None = None,
+    dimensions: list[str] | None = None,
+    metrics: list[str] | None = None,
+    dedupe_key: str | None = None,
+    rate_limit: int | dict[str, Any] | None = None,
+    top_n: int | None = None,
+    sort_by: str | None = None,
+    include_long_tail: bool | None = None,
+    session_level: bool | None = None,
+    extra_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     _write_started_status(sync_shop_dashboard, "sync_shop_dashboard", triggered_by)
     redis_client = sync_shop_dashboard.publisher.redis_db_frame
     helper = FunboostIdempotencyHelper(
         redis_client=redis_client, task_name="sync_shop_dashboard"
     )
+    runtime_overrides = {
+        key: value
+        for key, value in {
+            "shop_id": shop_id,
+            "shop_ids": shop_ids,
+            "granularity": granularity,
+            "timezone": timezone,
+            "time_range": time_range,
+            "incremental_mode": incremental_mode,
+            "backfill_last_n_days": backfill_last_n_days,
+            "data_latency": data_latency,
+            "filters": filters,
+            "dimensions": dimensions,
+            "metrics": metrics,
+            "dedupe_key": dedupe_key,
+            "rate_limit": rate_limit,
+            "top_n": top_n,
+            "sort_by": sort_by,
+            "include_long_tail": include_long_tail,
+            "session_level": session_level,
+            "extra_config": extra_config,
+        }.items()
+        if value is not None
+    }
     runtime = _run_async(
         _load_runtime_config(
             data_source_id=data_source_id,
             rule_id=rule_id,
             execution_id=execution_id,
+            overrides=runtime_overrides,
         )
     )
-    if runtime.granularity != "DAY":
-        raise ScrapingFailedException(
-            "Unsupported granularity",
-            error_data={"granularity": runtime.granularity},
+    plan_units = build_collection_plan(runtime)
+    if not plan_units:
+        return {
+            "status": "success",
+            "data_source_id": data_source_id,
+            "rule_id": rule_id,
+            "execution_id": execution_id,
+            "shop_count": 0,
+            "planned_units": 0,
+            "completed_units": 0,
+            "failed_units": 0,
+            "items": [],
+        }
+
+    state_store = SessionStateStore(base_dir=Path(".runtime") / "shop_dashboard_state")
+    runtime = _materialize_runtime_storage_state(runtime, state_store)
+    runtimes_by_shop: dict[str, ShopDashboardRuntimeConfig] = {
+        runtime.shop_id: runtime,
+    }
+    for plan_unit in plan_units:
+        if plan_unit.shop_id in runtimes_by_shop:
+            continue
+        runtimes_by_shop[plan_unit.shop_id] = replace(
+            runtime, shop_id=plan_unit.shop_id
         )
 
-    metric_dates = _resolve_metric_dates(runtime)
     browser = BrowserScraper()
-    state_store = SessionStateStore(base_dir=Path(".runtime") / "shop_dashboard_state")
     lock_manager = LockManager(redis_client=redis_client)
     login_state_manager = LoginStateManager(
         state_store=state_store,
         redis_client=redis_client,
     )
     collector_supports_shared_helpers = _supports_shared_helpers(_collect_one_day)
+    rate_limiter = _RateLimiter(runtime.rate_limit)
     items: list[dict[str, Any]] = []
-    for metric_date in metric_dates:
-        business_key = _build_business_key(runtime, metric_date)
+    for plan_unit in plan_units:
+        rate_limiter.wait()
+        unit_runtime = runtimes_by_shop[plan_unit.shop_id]
+        business_key = _build_business_key(
+            unit_runtime,
+            plan_unit.metric_date,
+            plan_unit=plan_unit,
+        )
         cache_enabled = _is_result_cache_enabled(runtime.execution_id)
         cached = helper.get_cached_result(business_key) if cache_enabled else None
         if cached:
@@ -116,10 +227,10 @@ def sync_shop_dashboard(
             skipped_result = {
                 "status": "skipped",
                 "reason": "running",
-                "metric_date": metric_date,
-                "shop_id": runtime.shop_id,
-                "rule_id": runtime.rule_id,
-                "execution_id": runtime.execution_id,
+                "metric_date": plan_unit.metric_date,
+                "shop_id": unit_runtime.shop_id,
+                "rule_id": unit_runtime.rule_id,
+                "execution_id": unit_runtime.execution_id,
                 "retry_count": 0,
                 "fallback_trace": [],
             }
@@ -137,16 +248,26 @@ def sync_shop_dashboard(
         try:
             if collector_supports_shared_helpers:
                 collected = _collect_one_day(
-                    runtime,
-                    metric_date,
+                    unit_runtime,
+                    plan_unit.metric_date,
                     browser,
                     lock_manager=lock_manager,
                     state_store=state_store,
                     login_state_manager=login_state_manager,
                 )
             else:
-                collected = _collect_one_day(runtime, metric_date, browser)
-            _run_async(_persist_result(runtime, metric_date, collected))
+                collected = _collect_one_day(
+                    unit_runtime,
+                    plan_unit.metric_date,
+                    browser,
+                )
+            _run_async(
+                _persist_result(
+                    unit_runtime,
+                    plan_unit.metric_date,
+                    collected,
+                )
+            )
             if cache_enabled:
                 helper.cache_result(business_key, collected)
             items.append(collected)
@@ -173,6 +294,14 @@ def sync_shop_dashboard(
         "data_source_id": data_source_id,
         "rule_id": rule_id,
         "execution_id": execution_id,
+        "shop_count": len({plan_unit.shop_id for plan_unit in plan_units}),
+        "planned_units": len(plan_units),
+        "completed_units": sum(
+            1 for item in items if str(item.get("status", "success")) == "success"
+        ),
+        "failed_units": sum(
+            1 for item in items if str(item.get("status", "success")) != "success"
+        ),
         "items": items,
     }
 
@@ -189,6 +318,73 @@ def handle_collection_shop_dashboard_dead_letter(**payload) -> dict[str, Any]:
         "queue": "collection_shop_dashboard_dlx",
         "payload": payload,
     }
+
+
+def _materialize_runtime_storage_state(
+    runtime: ShopDashboardRuntimeConfig,
+    state_store: SessionStateStore,
+) -> ShopDashboardRuntimeConfig:
+    storage_state = getattr(runtime, "storage_state", None)
+    if not isinstance(storage_state, dict):
+        return runtime
+
+    account_id = str(getattr(runtime, "account_id", "") or "").strip()
+    if not account_id:
+        account_id = f"shop_{runtime.shop_id}"
+
+    state_store.save(account_id, storage_state)
+    cookies = state_store.load_cookie_mapping(account_id)
+    if cookies:
+        return replace(runtime, cookies=dict(cookies))
+    return runtime
+
+
+@contextmanager
+def _acquire_shop_lock(
+    lock_manager: LockManager,
+    shop_lock_id: str,
+    ttl_seconds: int,
+) -> Generator[str | None, None, None]:
+    token = lock_manager.acquire_shop_lock(shop_lock_id, ttl_seconds=ttl_seconds)
+    try:
+        yield token
+    finally:
+        if token:
+            lock_manager.release_shop_lock(shop_lock_id, token)
+
+
+@contextmanager
+def _acquire_account_lock(
+    lock_manager: LockManager,
+    account_id: str,
+    ttl_seconds: int,
+) -> Generator[str | None, None, None]:
+    token = lock_manager.acquire_account_lock(account_id, ttl_seconds=ttl_seconds)
+    try:
+        yield token
+    finally:
+        if token:
+            lock_manager.release_account_lock(account_id, token)
+
+
+def _normalize_fallback_stage(stage: Any) -> str:
+    stage_name = str(stage).strip().lower()
+    if stage_name in {"agent", "llm"}:
+        return "agent"
+    return stage_name
+
+
+def _append_fallback_trace(
+    fallback_trace: list[dict[str, Any]],
+    *,
+    stage: str,
+    status: str,
+    error: Exception | None = None,
+) -> None:
+    entry: dict[str, Any] = {"stage": stage, "status": status}
+    if error is not None:
+        entry["error"] = str(error)
+    fallback_trace.append(entry)
 
 
 def _collect_one_day(
@@ -210,137 +406,149 @@ def _collect_one_day(
     )
     explicit_account_id = str(getattr(runtime, "account_id", "") or "").strip()
     account_id = explicit_account_id or f"shop_{runtime.shop_id}"
-    shop_lock_token = lock_manager.acquire_shop_lock(
-        runtime.shop_id, ttl_seconds=settings.lock_ttl_seconds
-    )
-    if not shop_lock_token:
-        return _build_expired_account_result(
-            runtime,
-            metric_date,
-            reason="shop_locked",
-        )
-
-    scraper = HttpScraper(
-        base_url=settings.base_url,
-        timeout=float(runtime.timeout),
-        graphql_query=runtime.graphql_query,
-    )
+    shop_lock_id = _resolve_shop_lock_id(runtime.shop_id, account_id)
     last_error: ScrapingFailedException | None = None
     http_error: ScrapingFailedException | None = None
     browser_error: ScrapingFailedException | None = None
     retry_count = 0
     fallback_trace: list[dict[str, Any]] = []
-    try:
-        for stage in runtime.fallback_chain:
-            stage_name = str(stage).strip().lower()
-            if stage_name == "http":
-                try:
-                    payload = scraper.fetch_dashboard_with_context(runtime, metric_date)
-                    payload["source"] = "script"
-                    fallback_trace.append({"stage": "http", "status": "success"})
-                    return _normalize_task_result(
-                        runtime,
-                        metric_date,
-                        payload,
-                        retry_count=retry_count,
-                        fallback_trace=fallback_trace,
-                    )
-                except ScrapingFailedException as exc:
-                    retry_count += 1
-                    last_error = exc
-                    http_error = exc
-                    fallback_trace.append(
-                        {
-                            "stage": "http",
-                            "status": "failed",
-                            "error": str(exc),
-                        }
-                    )
-                    continue
-            if stage_name == "browser":
-                account_lock_token: str | None = None
-                try:
-                    account_lock_token = lock_manager.acquire_account_lock(
-                        account_id,
-                        ttl_seconds=settings.lock_ttl_seconds,
-                    )
-                    if not account_lock_token:
-                        return _build_expired_account_result(
+    with _acquire_shop_lock(
+        lock_manager,
+        shop_lock_id,
+        settings.lock_ttl_seconds,
+    ) as shop_lock_token:
+        if not shop_lock_token:
+            return _build_expired_account_result(
+                runtime,
+                metric_date,
+                reason="shop_locked",
+            )
+        with HttpScraper(
+            base_url=settings.base_url,
+            timeout=float(runtime.timeout),
+            graphql_query=runtime.graphql_query,
+        ) as scraper:
+            for stage in runtime.fallback_chain:
+                stage_name = _normalize_fallback_stage(stage)
+                if stage_name == "http":
+                    try:
+                        payload = scraper.fetch_dashboard_with_context(
+                            runtime, metric_date
+                        )
+                        payload["source"] = "script"
+                        _append_fallback_trace(
+                            fallback_trace,
+                            stage="http",
+                            status="success",
+                        )
+                        return _normalize_task_result(
                             runtime,
                             metric_date,
-                            reason="account_locked",
+                            payload,
+                            retry_count=retry_count,
+                            fallback_trace=fallback_trace,
                         )
-                    if explicit_account_id:
-                        can_refresh = _run_async(
-                            login_state_manager.check_and_refresh(account_id)
+                    except ScrapingFailedException as exc:
+                        retry_count += 1
+                        last_error = exc
+                        http_error = exc
+                        _append_fallback_trace(
+                            fallback_trace,
+                            stage="http",
+                            status="failed",
+                            error=exc,
                         )
-                        if not can_refresh:
+                        continue
+                if stage_name == "browser":
+                    try:
+                        with _acquire_account_lock(
+                            lock_manager,
+                            account_id,
+                            settings.lock_ttl_seconds,
+                        ) as account_lock_token:
+                            if not account_lock_token:
+                                return _build_expired_account_result(
+                                    runtime,
+                                    metric_date,
+                                    reason="account_locked",
+                                )
+                            if explicit_account_id:
+                                can_refresh = _run_async(
+                                    login_state_manager.check_and_refresh(account_id)
+                                )
+                                if not can_refresh:
+                                    return _build_expired_account_result(
+                                        runtime,
+                                        metric_date,
+                                        reason="login_expired",
+                                    )
+                                state_cookies = state_store.load_cookie_mapping(
+                                    account_id
+                                )
+                                if state_cookies:
+                                    runtime.cookies = state_cookies
+                            payload = browser.retry_http(scraper, runtime, metric_date)
+                            _append_fallback_trace(
+                                fallback_trace,
+                                stage="browser",
+                                status="success",
+                            )
+                            return _normalize_task_result(
+                                runtime,
+                                metric_date,
+                                payload,
+                                retry_count=retry_count,
+                                fallback_trace=fallback_trace,
+                            )
+                    except ScrapingFailedException as exc:
+                        retry_count += 1
+                        last_error = exc
+                        browser_error = exc
+                        _append_fallback_trace(
+                            fallback_trace,
+                            stage="browser",
+                            status="failed",
+                            error=exc,
+                        )
+                        if _is_login_expired_exception(exc):
+                            _run_async(
+                                login_state_manager.mark_expired(
+                                    account_id,
+                                    reason="refresh_failed",
+                                )
+                            )
                             return _build_expired_account_result(
                                 runtime,
                                 metric_date,
                                 reason="login_expired",
                             )
-                        state_cookies = state_store.load_cookie_mapping(account_id)
-                        if state_cookies:
-                            runtime.cookies = state_cookies
-                    payload = browser.retry_http(scraper, runtime, metric_date)
-                    fallback_trace.append({"stage": "browser", "status": "success"})
-                    return _normalize_task_result(
+                        continue
+                if stage_name == "agent":
+                    _append_fallback_trace(
+                        fallback_trace,
+                        stage="agent",
+                        status="success",
+                    )
+                    return _build_agent_fallback_result(
                         runtime,
                         metric_date,
-                        payload,
+                        http_error=http_error,
+                        browser_error=browser_error,
                         retry_count=retry_count,
                         fallback_trace=fallback_trace,
                     )
-                except ScrapingFailedException as exc:
-                    retry_count += 1
-                    last_error = exc
-                    browser_error = exc
-                    fallback_trace.append(
-                        {
-                            "stage": "browser",
-                            "status": "failed",
-                            "error": str(exc),
-                        }
-                    )
-                    if _is_login_expired_exception(exc):
-                        _run_async(
-                            login_state_manager.mark_expired(
-                                account_id,
-                                reason="refresh_failed",
-                            )
-                        )
-                        return _build_expired_account_result(
-                            runtime,
-                            metric_date,
-                            reason="login_expired",
-                        )
-                    continue
-                finally:
-                    if account_lock_token:
-                        lock_manager.release_account_lock(
-                            account_id, account_lock_token
-                        )
-            if stage_name == "llm":
-                fallback_trace.append({"stage": "llm", "status": "success"})
-                return _build_llm_fallback_result(
-                    runtime,
-                    metric_date,
-                    http_error=http_error,
-                    browser_error=browser_error,
-                    retry_count=retry_count,
-                    fallback_trace=fallback_trace,
-                )
 
-        if last_error is not None:
-            raise last_error
-        raise ScrapingFailedException(
-            "Unsupported fallback chain",
-            error_data={"fallback_chain": list(runtime.fallback_chain)},
-        )
-    finally:
-        scraper.close()
-        lock_manager.release_shop_lock(runtime.shop_id, shop_lock_token)
+            if last_error is not None:
+                raise last_error
+            raise ScrapingFailedException(
+                "Unsupported fallback chain",
+                error_data={
+                    "fallback_chain": [
+                        _normalize_fallback_stage(stage)
+                        for stage in runtime.fallback_chain
+                    ]
+                },
+            )
 
 
 def _is_login_expired_exception(exc: ScrapingFailedException) -> bool:
@@ -411,7 +619,7 @@ def _normalize_task_result(
     return result
 
 
-def _resolve_llm_reason(
+def _resolve_agent_reason(
     http_error: ScrapingFailedException | None,
     browser_error: ScrapingFailedException | None,
 ) -> str:
@@ -424,7 +632,7 @@ def _resolve_llm_reason(
     return "fallback"
 
 
-def _build_llm_fallback_result(
+def _build_agent_fallback_result(
     runtime: ShopDashboardRuntimeConfig,
     metric_date: str,
     *,
@@ -433,7 +641,7 @@ def _build_llm_fallback_result(
     retry_count: int = 0,
     fallback_trace: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    reason = _resolve_llm_reason(http_error, browser_error)
+    reason = _resolve_agent_reason(http_error, browser_error)
     payload: dict[str, Any] = {
         "source": "llm",
         "total_score": 0.0,
@@ -520,18 +728,49 @@ def _parse_data_latency(data_latency: str) -> int:
     return 0
 
 
+def _resolve_shop_lock_id(shop_id: str, account_id: str) -> str:
+    normalized_shop_id = str(shop_id or "").strip()
+    if normalized_shop_id:
+        return normalized_shop_id
+    normalized_account_id = str(account_id or "").strip()
+    if normalized_account_id:
+        return f"account:{normalized_account_id}"
+    return "account:anonymous"
+
+
 def _is_result_cache_enabled(execution_id: str) -> bool:
     return not execution_id.startswith("cron_cookie_health_check_")
 
 
-def _build_business_key(runtime: ShopDashboardRuntimeConfig, metric_date: str) -> str:
+def _build_business_key(
+    runtime: ShopDashboardRuntimeConfig,
+    metric_date: str,
+    *,
+    plan_unit: Any | None = None,
+) -> str:
+    window_start = getattr(plan_unit, "window_start", None)
+    window_end = getattr(plan_unit, "window_end", None)
+    granular = getattr(plan_unit, "granularity", runtime.granularity)
+    format_context = {
+        "shop_id": runtime.shop_id,
+        "date": metric_date,
+        "metric_date": metric_date,
+        "rule_id": runtime.rule_id,
+        "execution_id": runtime.execution_id,
+        "granularity": granular,
+        "window_start": window_start.isoformat() if window_start else "",
+        "window_end": window_end.isoformat() if window_end else "",
+    }
     if runtime.dedupe_key:
-        return runtime.dedupe_key.format(
-            shop_id=runtime.shop_id,
-            date=metric_date,
-            rule_id=runtime.rule_id,
-            execution_id=runtime.execution_id,
-        )
+        try:
+            return runtime.dedupe_key.format(**format_context)
+        except KeyError:
+            return runtime.dedupe_key.format(
+                shop_id=runtime.shop_id,
+                date=metric_date,
+                rule_id=runtime.rule_id,
+                execution_id=runtime.execution_id,
+            )
     return f"{runtime.shop_id}:{metric_date}:{runtime.rule_id}:{runtime.execution_id}"
 
 
@@ -540,12 +779,14 @@ async def _load_runtime_config(
     data_source_id: int,
     rule_id: int,
     execution_id: str,
+    overrides: Mapping[str, Any] | None = None,
 ) -> ShopDashboardRuntimeConfig:
-    if async_session_factory is None:
+    session_factory = session.async_session_factory
+    if session_factory is None:
         raise ScrapingFailedException("Database is not initialized")
-    async with async_session_factory() as session:
-        ds_repo = DataSourceRepository(session)
-        rule_repo = ScrapingRuleRepository(session)
+    async with session_factory() as db_session:
+        ds_repo = DataSourceRepository(db_session)
+        rule_repo = ScrapingRuleRepository(db_session)
         data_source = await ds_repo.get_by_id(data_source_id)
         rule = await rule_repo.get_by_id(rule_id)
         if data_source is None or rule is None:
@@ -564,7 +805,10 @@ async def _load_runtime_config(
                 error_data={"rule_id": rule_id},
             )
         runtime = build_runtime_config(
-            data_source=data_source, rule=rule, execution_id=execution_id
+            data_source=data_source,
+            rule=rule,
+            execution_id=execution_id,
+            overrides=dict(overrides or {}),
         )
         if not runtime.api_groups:
             raise ScrapingFailedException(
@@ -583,10 +827,11 @@ async def _persist_result(
     metric_date: str,
     payload: dict[str, Any],
 ) -> None:
-    if async_session_factory is None:
+    session_factory = session.async_session_factory
+    if session_factory is None:
         return
-    async with async_session_factory() as session:
-        repo = ShopDashboardRepository(session)
+    async with session_factory() as db_session:
+        repo = ShopDashboardRepository(db_session)
         metric_day = date.fromisoformat(metric_date)
         await repo.upsert_score(
             shop_id=runtime.shop_id,
@@ -615,20 +860,34 @@ async def _persist_result(
             reviews=review_rows,
         )
 
-        violations = payload.get("violations", {}).get("waiting_list", [])
+        violations = _extract_violation_items(payload)
         violation_rows = []
         for item in violations:
             violation_rows.append(
                 {
                     "violation_id": item.get("ticket_id")
+                    or item.get("ticketId")
                     or item.get("id")
+                    or item.get("rule_id")
+                    or item.get("penalty_id")
                     or item.get("rule")
                     or "",
                     "violation_type": item.get("type")
                     or item.get("rule_type")
+                    or item.get("violation_type")
+                    or item.get("penalty_type")
                     or "unknown",
-                    "description": item.get("description") or item.get("rule"),
-                    "score": int(item.get("score") or 0),
+                    "description": item.get("description")
+                    or item.get("reason")
+                    or item.get("rule"),
+                    "score": _to_int(
+                        item.get("score")
+                        or item.get("deduct_score")
+                        or item.get("deductScore")
+                        or item.get("point")
+                        or item.get("points")
+                        or 0
+                    ),
                     "source": str(payload.get("source", "script")),
                 }
             )
@@ -637,11 +896,68 @@ async def _persist_result(
             metric_date=metric_day,
             violations=violation_rows,
         )
-        await session.commit()
+        await db_session.commit()
 
 
 def _run_async(coro):
-    return asyncio.run(coro)
+    return session.run_coro(coro)
+
+
+def _extract_violation_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    violations = payload.get("violations")
+    if isinstance(violations, dict):
+        direct = _normalize_violation_items(violations.get("waiting_list"))
+        if direct:
+            return direct
+
+    raw = payload.get("raw")
+    if isinstance(raw, dict):
+        raw_violations = raw.get("violations")
+        if isinstance(raw_violations, dict):
+            extracted = _extract_list(raw_violations.get("waiting_list"))
+            fallback = _normalize_violation_items(extracted)
+            if fallback:
+                return fallback
+
+    return []
+
+
+def _normalize_violation_items(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, Mapping):
+            rows.append(dict(item))
+    return rows
+
+
+def _extract_list(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    if not isinstance(value, Mapping):
+        return []
+
+    for key in ("list", "items", "records", "waiting_list", "rows", "result", "data"):
+        nested = value.get(key)
+        if isinstance(nested, list):
+            return nested
+
+    for key in ("data", "result", "records"):
+        nested = value.get(key)
+        if isinstance(nested, Mapping):
+            extracted = _extract_list(nested)
+            if extracted:
+                return extracted
+
+    return []
+
+
+def _to_int(value: Any) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _supports_shared_helpers(collector: Any) -> bool:

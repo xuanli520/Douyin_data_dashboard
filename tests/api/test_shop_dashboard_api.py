@@ -1,5 +1,4 @@
 from datetime import date
-from types import SimpleNamespace
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -57,25 +56,20 @@ async def permission_data(test_db):
         result = await session.execute(select(Permission))
         perm_map = {p.code: p for p in result.scalars().all()}
 
-        codes = {
-            "shop_dashboard:trigger",
-            "shop_dashboard:status",
-            "shop_dashboard:query",
-        }
-        for code in codes:
-            if code not in perm_map:
-                perm = Permission(code=code, name=code, module="shop_dashboard")
-                session.add(perm)
-                await session.commit()
-                perm_map[code] = perm
+        code = "shop_dashboard:query"
+        if code not in perm_map:
+            perm = Permission(code=code, name=code, module="shop_dashboard")
+            session.add(perm)
+            await session.commit()
+            perm_map[code] = perm
 
         role_result = await session.execute(
-            select(Role).where(Role.name == "shop_dashboard_operator")
+            select(Role).where(Role.name == "shop_dashboard_reader")
         )
         role = role_result.scalar_one_or_none()
         if not role:
             role = Role(
-                name="shop_dashboard_operator", description="Shop Dashboard Operator"
+                name="shop_dashboard_reader", description="Shop Dashboard Reader"
             )
             session.add(role)
             await session.commit()
@@ -94,38 +88,13 @@ async def permission_data(test_db):
         await session.refresh(user)
 
         session.add(UserRole(user_id=user.id, role_id=role.id))
-        for code in codes:
-            session.add(
-                RolePermission(role_id=role.id, permission_id=perm_map[code].id)
-            )
+        session.add(RolePermission(role_id=role.id, permission_id=perm_map[code].id))
         await session.commit()
         yield user
 
 
 @pytest.mark.asyncio
-async def test_shop_dashboard_batch_trigger_status_query(
-    api_client,
-    permission_data,
-    test_db,
-    monkeypatch,
-):
-    from src.api.v1 import shop_dashboard as module
-
-    push_calls: list[dict] = []
-
-    def _fake_push(**kwargs):
-        push_calls.append(kwargs)
-        return SimpleNamespace(task_id=f"task-{len(push_calls)}")
-
-    class _FakeRedis:
-        def hgetall(self, key: str):
-            if key == "douyin:task:status:task-1":
-                return {"status": "STARTED", "task_name": "sync_shop_dashboard"}
-            return {}
-
-    monkeypatch.setattr(module.sync_shop_dashboard, "push", _fake_push, raising=False)
-    monkeypatch.setattr(module, "_get_redis_client", lambda: _FakeRedis())
-
+async def test_shop_dashboard_query_only(api_client, permission_data, test_db):
     async with test_db() as session:
         repo = ShopDashboardRepository(session)
         metric_date = date(2026, 3, 2)
@@ -171,24 +140,33 @@ async def test_shop_dashboard_batch_trigger_status_query(
         "shopdashboard123",
     )
 
-    trigger_resp = await api_client.post(
-        "/api/v1/shop-dashboard/batch-trigger",
-        json={"items": [{"data_source_id": 1, "rule_id": 2}]},
-        headers=auth_headers,
-    )
-    assert trigger_resp.status_code == 200
-    task_id = trigger_resp.json()["data"]["items"][0]["task_id"]
-
-    status_resp = await api_client.get(
-        f"/api/v1/shop-dashboard/status/{task_id}",
-        headers=auth_headers,
-    )
-    assert status_resp.status_code == 200
-
     query_resp = await api_client.get(
         "/api/v1/shop-dashboard/query?shop_id=shop-1&start_date=2026-03-01&end_date=2026-03-03",
         headers=auth_headers,
     )
     assert query_resp.status_code == 200
     assert query_resp.json()["data"]["items"][0]["shop_id"] == "shop-1"
-    assert push_calls[0]["triggered_by"] == permission_data.id
+
+
+@pytest.mark.asyncio
+async def test_shop_dashboard_task_control_endpoints_removed(
+    api_client, permission_data
+):
+    auth_headers = await get_auth_headers(
+        api_client,
+        "shopdashboard@example.com",
+        "shopdashboard123",
+    )
+
+    trigger_resp = await api_client.post(
+        "/api/v1/shop-dashboard/batch-trigger",
+        json={"items": [{"data_source_id": 1, "rule_id": 2}]},
+        headers=auth_headers,
+    )
+    assert trigger_resp.status_code == 404
+
+    status_resp = await api_client.get(
+        "/api/v1/shop-dashboard/status/task-1",
+        headers=auth_headers,
+    )
+    assert status_resp.status_code == 404

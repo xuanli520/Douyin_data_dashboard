@@ -18,6 +18,10 @@ from src.domains.data_source.repository import (
     ScrapingRuleRepository,
 )
 from src.domains.data_source.config_mapper import ScrapingRuleConfigMapper
+from src.domains.data_source.login_state import (
+    build_login_state_meta,
+    normalize_login_state,
+)
 from src.domains.data_source.schemas import (
     DataSourceCreate,
     DataSourceResponse,
@@ -95,15 +99,109 @@ class DataSourceTypeRegistry:
         return False, f"Unsupported source type: {ds.source_type}"
 
 
+def _extract_shop_dashboard_login_state(config: dict[str, Any]) -> dict[str, Any]:
+    payload = config.get("shop_dashboard_login_state")
+    if isinstance(payload, dict):
+        return dict(payload)
+    return {}
+
+
+def _extract_shop_dashboard_credentials(config: dict[str, Any]) -> dict[str, Any]:
+    login_state = _extract_shop_dashboard_login_state(config)
+    raw_credentials = login_state.get("credentials")
+    credentials: dict[str, Any] = {}
+    if isinstance(raw_credentials, dict):
+        credentials.update(
+            {
+                str(key): value
+                for key, value in raw_credentials.items()
+                if value is not None
+            }
+        )
+
+    api_key = config.get("api_key")
+    if api_key:
+        credentials.setdefault("api_key", api_key)
+    api_key_password = config.get("api_key_password") or config.get("api_secret")
+    if api_key_password:
+        credentials.setdefault("api_key_password", api_key_password)
+    access_token = config.get("access_token")
+    if access_token:
+        credentials.setdefault("access_token", access_token)
+    refresh_token = config.get("refresh_token")
+    if refresh_token:
+        credentials.setdefault("refresh_token", refresh_token)
+    token_expires_at = config.get("token_expires_at")
+    if token_expires_at:
+        credentials.setdefault("token_expires_at", token_expires_at)
+    return credentials
+
+
+def _normalize_shop_dashboard_config(config: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(config)
+    normalized.pop("request_method", None)
+
+    login_state = _extract_shop_dashboard_login_state(normalized)
+    credentials = _extract_shop_dashboard_credentials(normalized)
+    if credentials:
+        login_state["credentials"] = credentials
+    if login_state:
+        state_version = login_state.get("state_version")
+        login_state["state_version"] = (
+            str(state_version).strip() if state_version else "v1"
+        )
+        normalized["shop_dashboard_login_state"] = login_state
+
+    for key in (
+        "api_key",
+        "api_secret",
+        "api_key_password",
+        "access_token",
+        "refresh_token",
+        "token_expires_at",
+    ):
+        normalized.pop(key, None)
+    return normalized
+
+
+def _has_valid_storage_state_cookies(config: dict[str, Any]) -> bool:
+    login_state = _extract_shop_dashboard_login_state(config)
+    storage_state = login_state.get("storage_state")
+    if not isinstance(storage_state, dict):
+        return False
+    cookies = storage_state.get("cookies")
+    if not isinstance(cookies, list):
+        return False
+    for cookie in cookies:
+        if not isinstance(cookie, dict):
+            continue
+        name = cookie.get("name")
+        value = cookie.get("value")
+        if str(name or "").strip() and value is not None and str(value).strip():
+            return True
+    return False
+
+
+def _has_valid_cookie_mapping(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(
+            str(key or "").strip() and item is not None and str(item).strip()
+            for key, item in value.items()
+        )
+    if isinstance(value, str):
+        cookie_pairs = [item.strip() for item in value.split(";") if item.strip()]
+        for pair in cookie_pairs:
+            if "=" not in pair:
+                continue
+            key, item = pair.split("=", 1)
+            if key.strip() and item.strip():
+                return True
+    return False
+
+
 @DataSourceTypeRegistry.register_validator(DataSourceType.DOUYIN_SHOP)
 def _validate_douyin_api_config(config: dict[str, Any]) -> None:
-    required = ["api_key", "api_secret"]
-    missing = [f for f in required if not config.get(f)]
-    if missing:
-        raise BusinessException(
-            ErrorCode.DATA_VALIDATION_FAILED,
-            f"Missing required fields: {', '.join(missing)}",
-        )
+    _ = config
 
 
 @DataSourceTypeRegistry.register_validator(DataSourceType.FILE_IMPORT)
@@ -155,16 +253,13 @@ def _validate_douyin_api_config_v2(config: dict[str, Any]) -> None:
 
 @DataSourceTypeRegistry.register_extractor(DataSourceType.DOUYIN_SHOP)
 def _extract_douyin_api_config(config: dict[str, Any]) -> dict[str, Any]:
+    normalized = _normalize_shop_dashboard_config(config)
     return {
-        "extra_config": config,
-        "api_key": config.get("api_key"),
-        "api_secret": config.get("api_secret"),
-        "shop_id": config.get("shop_id"),
-        "access_token": config.get("access_token"),
-        "refresh_token": config.get("refresh_token"),
-        "rate_limit": config.get("rate_limit", 100),
-        "retry_count": config.get("retry_count", 3),
-        "timeout": config.get("timeout", 30),
+        "extra_config": normalized,
+        "shop_id": normalized.get("shop_id"),
+        "rate_limit": normalized.get("rate_limit", 100),
+        "retry_count": normalized.get("retry_count", 3),
+        "timeout": normalized.get("timeout", 30),
     }
 
 
@@ -198,9 +293,12 @@ def _extract_file_upload_config_v2(config: dict[str, Any]) -> dict[str, Any]:
 
 @DataSourceTypeRegistry.register_connection_tester(ModelDataSourceType.DOUYIN_SHOP)
 async def _test_douyin_shop_connection(ds: DataSource) -> tuple[bool, str]:
-    if not ds.api_key or not ds.api_secret:
-        return False, "Missing API credentials"
-    return True, "Connection validated"
+    config = dict(ds.extra_config or {})
+    if _has_valid_storage_state_cookies(config):
+        return True, "Connection validated"
+    if _has_valid_cookie_mapping(config.get("cookies")):
+        return True, "Connection validated"
+    return False, "Missing shop dashboard login state cookies"
 
 
 @DataSourceTypeRegistry.register_connection_tester(ModelDataSourceType.DOUYIN_API)
@@ -328,6 +426,90 @@ class DataSourceService:
             )
 
         ds = await self.ds_repo.update(ds_id, update_data)
+        try:
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
+        return self._build_data_source_response(ds)
+
+    async def update_shop_dashboard_login_state(
+        self,
+        ds_id: int,
+        *,
+        account_id: str,
+        storage_state: dict[str, Any],
+        user_id: int,
+    ) -> DataSourceResponse:
+        ds = await self.ds_repo.get_by_id(ds_id)
+        if not ds:
+            raise BusinessException(
+                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
+            )
+        self._ensure_shop_dashboard_source_type(ds)
+
+        raw_state_version = storage_state.get("state_version")
+        normalized_storage_state = normalize_login_state(storage_state)
+        extra_config = dict(ds.extra_config or {})
+        current_login_state = _extract_shop_dashboard_login_state(extra_config)
+        credentials = current_login_state.get("credentials")
+        next_login_state: dict[str, Any] = {}
+        if isinstance(credentials, dict) and credentials:
+            next_login_state["credentials"] = dict(credentials)
+
+        state_version = (
+            str(raw_state_version).strip()
+            if raw_state_version is not None and str(raw_state_version).strip()
+            else str(current_login_state.get("state_version") or "").strip()
+        ) or str(normalized_storage_state.get("state_version") or "v1").strip()
+        normalized_storage_state["state_version"] = state_version
+        next_login_state["state_version"] = state_version
+        next_login_state["storage_state"] = normalized_storage_state
+
+        extra_config["shop_dashboard_login_state"] = next_login_state
+        extra_config["shop_dashboard_login_state_meta"] = build_login_state_meta(
+            normalized_storage_state,
+            account_id=account_id,
+        )
+
+        ds = await self.ds_repo.update(
+            ds_id,
+            {
+                "extra_config": extra_config,
+                "updated_by_id": user_id,
+            },
+        )
+        try:
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
+        return self._build_data_source_response(ds)
+
+    async def clear_shop_dashboard_login_state(
+        self,
+        ds_id: int,
+        *,
+        user_id: int,
+    ) -> DataSourceResponse:
+        ds = await self.ds_repo.get_by_id(ds_id)
+        if not ds:
+            raise BusinessException(
+                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
+            )
+        self._ensure_shop_dashboard_source_type(ds)
+
+        extra_config = dict(ds.extra_config or {})
+        extra_config.pop("shop_dashboard_login_state", None)
+        extra_config.pop("shop_dashboard_login_state_meta", None)
+
+        ds = await self.ds_repo.update(
+            ds_id,
+            {
+                "extra_config": extra_config,
+                "updated_by_id": user_id,
+            },
+        )
         try:
             await self.session.commit()
         except Exception:
@@ -616,6 +798,13 @@ class DataSourceService:
             "total": len(triggered),
         }
 
+    def _ensure_shop_dashboard_source_type(self, ds: DataSource) -> None:
+        if ds.source_type != ModelDataSourceType.DOUYIN_SHOP:
+            raise BusinessException(
+                ErrorCode.DATASOURCE_UNSUPPORTED_TYPE,
+                "Shop dashboard login state is only supported for DOUYIN_SHOP",
+            )
+
     async def _push_shop_dashboard_task(
         self,
         *,
@@ -624,14 +813,22 @@ class DataSourceService:
         execution_id: str,
         triggered_by: int | None,
     ) -> Any:
-        from src.tasks.collection.douyin_shop_dashboard import sync_shop_dashboard
+        from types import SimpleNamespace
 
-        return sync_shop_dashboard.push(
-            data_source_id=data_source_id,
-            rule_id=rule_id,
-            execution_id=execution_id,
+        from src.domains.task.enums import TaskType
+        from src.domains.task.services import TaskService
+
+        execution = await TaskService(session=self.session).run_task_by_type(
+            task_type=TaskType.SHOP_DASHBOARD_COLLECTION,
+            payload={
+                "data_source_id": data_source_id,
+                "rule_id": rule_id,
+                "execution_id": execution_id,
+            },
             triggered_by=triggered_by,
+            task_name="shop-dashboard-collection",
         )
+        return SimpleNamespace(task_id=execution.queue_task_id or "")
 
     def _map_schema_type_to_model_type(
         self, schema_type: DataSourceType | None
@@ -651,12 +848,17 @@ class DataSourceService:
             )
         return result
 
+    def _build_data_source_config(self, ds: DataSource) -> dict[str, Any]:
+        config = dict(ds.extra_config or {})
+        config.pop("shop_dashboard_login_state", None)
+        return config
+
     def _build_data_source_response(self, ds: DataSource) -> DataSourceResponse:
         return DataSourceResponse(
             id=ds.id if ds.id is not None else 0,
             name=ds.name,
             type=self._map_model_type_to_schema_type(ds.source_type),
-            config=ds.extra_config or {},
+            config=self._build_data_source_config(ds),
             status=DataSourceStatus(ds.status.value),
             description=ds.description,
             created_at=ds.created_at,

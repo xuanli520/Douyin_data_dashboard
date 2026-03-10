@@ -68,8 +68,18 @@ if _FORCE_LOCAL_COMPAT:
             self._kv: dict[str, str] = {}
             self._hash: dict[str, dict[str, Any]] = {}
 
-        def hset(self, key: str, mapping: dict[str, Any]) -> None:
-            self._hash.setdefault(key, {}).update(mapping)
+        def hset(self, key: str, *args, **kwargs) -> None:
+            target = self._hash.setdefault(key, {})
+            if "mapping" in kwargs and isinstance(kwargs["mapping"], dict):
+                target.update(kwargs["mapping"])
+                return
+            if len(args) == 1 and isinstance(args[0], dict):
+                target.update(args[0])
+                return
+            if len(args) == 2:
+                target[str(args[0])] = args[1]
+                return
+            raise TypeError("unsupported hset signature")
 
         def hgetall(self, key: str) -> dict[str, Any]:
             return dict(self._hash.get(key, {}))

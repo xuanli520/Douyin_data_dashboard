@@ -188,6 +188,32 @@ class TestDataSourceAPI:
         assert data["name"] == "Test Douyin Shop"
         assert data["type"] == "DOUYIN_API"
 
+    async def test_create_data_source_masks_shop_dashboard_login_state(
+        self, test_client
+    ):
+        response = await test_client.post(
+            "/api/v1/data-sources",
+            json={
+                "name": "Masked Shop DS",
+                "type": "DOUYIN_SHOP",
+                "config": {
+                    "shop_dashboard_login_state": {
+                        "credentials": {
+                            "api_key": "test_key",
+                            "api_key_password": "test_password",
+                        },
+                        "storage_state": {
+                            "cookies": [{"name": "sid", "value": "token"}],
+                            "origins": [],
+                        },
+                    }
+                },
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert "shop_dashboard_login_state" not in data["config"]
+
     async def test_list_data_sources(self, test_client):
         response = await test_client.get("/api/v1/data-sources")
         assert response.status_code == 200
@@ -453,8 +479,8 @@ class TestTaskAPI:
             json={
                 "name": "Test Task",
                 "task_type": "ETL_ORDERS",
-                "data_source_id": 1,
-                "schedule": "0 */6 * * *",
+                "config": {"batch_date": "2026-03-03"},
+                "schedule": {"cron": "0 */6 * * *"},
             },
         )
         assert response.status_code == 200
@@ -462,17 +488,54 @@ class TestTaskAPI:
         assert json_data is not None
         assert "data" in json_data
 
-    async def test_run_task(self, test_client):
-        task_id = 1
+    async def test_run_task(self, test_client, monkeypatch):
+        from types import SimpleNamespace
 
-        response = await test_client.post(f"/api/v1/tasks/{task_id}/run")
+        from src.domains.task import services as task_service_module
+
+        def _fake_push(**_kwargs):
+            return SimpleNamespace(task_id="queue-run-1")
+
+        monkeypatch.setattr(
+            task_service_module.process_orders, "push", _fake_push, raising=False
+        )
+
+        create_response = await test_client.post(
+            "/api/v1/tasks",
+            json={"name": "Task Run", "task_type": "ETL_ORDERS"},
+        )
+        task_id = create_response.json()["data"]["id"]
+
+        response = await test_client.post(
+            f"/api/v1/tasks/{task_id}/run",
+            json={"payload": {"batch_date": "2026-03-03"}},
+        )
         assert response.status_code == 200
         json_data = response.json()
         assert json_data is not None
         assert "data" in json_data
 
-    async def test_get_task_executions(self, test_client):
-        task_id = 1
+    async def test_get_task_executions(self, test_client, monkeypatch):
+        from types import SimpleNamespace
+
+        from src.domains.task import services as task_service_module
+
+        def _fake_push(**_kwargs):
+            return SimpleNamespace(task_id="queue-exec-1")
+
+        monkeypatch.setattr(
+            task_service_module.process_orders, "push", _fake_push, raising=False
+        )
+
+        create_response = await test_client.post(
+            "/api/v1/tasks",
+            json={"name": "Task Executions", "task_type": "ETL_ORDERS"},
+        )
+        task_id = create_response.json()["data"]["id"]
+        await test_client.post(
+            f"/api/v1/tasks/{task_id}/run",
+            json={"payload": {"batch_date": "2026-03-03"}},
+        )
 
         response = await test_client.get(f"/api/v1/tasks/{task_id}/executions")
         assert response.status_code == 200

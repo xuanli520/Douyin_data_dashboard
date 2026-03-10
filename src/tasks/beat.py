@@ -24,6 +24,9 @@ def register_jobs() -> None:
         cron_parts = _parse_cron(cron_expression)
         if cron_parts is None:
             continue
+        timezone = (
+            str(rule.get("timezone") or "Asia/Shanghai").strip() or "Asia/Shanghai"
+        )
         dashboard_job.add_push_job(
             trigger="cron",
             minute=cron_parts["minute"],
@@ -31,11 +34,16 @@ def register_jobs() -> None:
             day=cron_parts["day"],
             month=cron_parts["month"],
             day_of_week=cron_parts["day_of_week"],
+            timezone=timezone,
             kwargs={
                 "data_source_id": rule["data_source_id"],
                 "rule_id": rule["rule_id"],
                 "execution_id": f"cron_rule_{rule['rule_id']}",
                 "triggered_by": None,
+                "granularity": rule.get("granularity"),
+                "timezone": timezone,
+                "incremental_mode": rule.get("incremental_mode"),
+                "data_latency": rule.get("data_latency"),
             },
             id=f"scraping_rule_{rule['rule_id']}_collection_shop_dashboard_sync",
         )
@@ -92,6 +100,10 @@ def _build_dashboard_job_kwargs(
         "rule_id": int(rule["rule_id"]),
         "execution_id": f"cron_{execution_tag}_{rule['rule_id']}",
         "triggered_by": None,
+        "granularity": rule.get("granularity"),
+        "timezone": str(rule.get("timezone") or "Asia/Shanghai"),
+        "incremental_mode": rule.get("incremental_mode"),
+        "data_latency": rule.get("data_latency"),
     }
 
 
@@ -134,6 +146,22 @@ async def _load_active_shop_dashboard_rules_async() -> list[dict]:
                 "rule_id": rule.id if rule.id is not None else 0,
                 "data_source_id": rule.data_source_id,
                 "shop_id": shop_id,
+                "timezone": str(rule.timezone or "Asia/Shanghai"),
+                "granularity": str(
+                    rule.granularity.value
+                    if hasattr(rule.granularity, "value")
+                    else rule.granularity
+                ),
+                "incremental_mode": str(
+                    rule.incremental_mode.value
+                    if hasattr(rule.incremental_mode, "value")
+                    else rule.incremental_mode
+                ),
+                "data_latency": str(
+                    rule.data_latency.value
+                    if hasattr(rule.data_latency, "value")
+                    else rule.data_latency
+                ),
                 "schedule": rule.schedule or {},
             }
             for rule, shop_id in rows

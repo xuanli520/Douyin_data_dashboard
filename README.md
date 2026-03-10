@@ -597,3 +597,11 @@ curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -
    ```
 
 For Chinese contributors, since this is a open-source project, please ensure that your commit messages or issues/PRs can be understood by the global community. It's recommended to write in English or provide English version alongside Chinese descriptions.
+
+## Douyin Shop Dashboard Login State
+
+- Upload endpoint: POST /api/v1/data-sources/{id}/shop-dashboard/login-state (multipart: account_id + file)
+- Clear endpoint: DELETE /api/v1/data-sources/{id}/shop-dashboard/login-state
+- Login state source of truth: data_sources.extra_config.shop_dashboard_login_state
+- API responses only expose shop_dashboard_login_state_meta
+- Worker materializes DB storage_state into .runtime/shop_dashboard_state/<account>.json before collection

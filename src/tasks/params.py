@@ -8,6 +8,19 @@ def _get_funboost_settings():
     return get_settings().funboost
 
 
+def _booster_param_fields() -> set[str]:
+    model_fields = getattr(BoosterParams, "model_fields", None)
+    if isinstance(model_fields, dict):
+        return {str(name) for name in model_fields}
+    legacy_fields = getattr(BoosterParams, "__fields__", None)
+    if isinstance(legacy_fields, dict):
+        return {str(name) for name in legacy_fields}
+    return set()
+
+
+_BOOSTER_PARAM_FIELDS = _booster_param_fields()
+
+
 class DouyinTaskParams(BoosterParams):
     broker_kind: str = Field(
         default_factory=lambda: _get_funboost_settings().broker_kind
@@ -15,9 +28,10 @@ class DouyinTaskParams(BoosterParams):
     max_retry_times: int = Field(
         default_factory=lambda: _get_funboost_settings().default_max_retry_times
     )
-    retry_interval: int = Field(
-        default_factory=lambda: _get_funboost_settings().default_retry_interval
-    )
+    if "retry_interval" in _BOOSTER_PARAM_FIELDS:
+        retry_interval: int = Field(
+            default_factory=lambda: _get_funboost_settings().default_retry_interval
+        )
     function_timeout: int = Field(
         default_factory=lambda: _get_funboost_settings().default_function_timeout
     )
