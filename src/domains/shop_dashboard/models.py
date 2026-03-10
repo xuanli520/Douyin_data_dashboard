@@ -20,6 +20,7 @@ class ShopDashboardScore(SQLModel, TimestampMixin, table=True):
     product_score: float
     logistics_score: float
     service_score: float
+    bad_behavior_score: float
     source: str = Field(max_length=20)
 
 

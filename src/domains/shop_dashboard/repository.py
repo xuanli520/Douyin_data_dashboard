@@ -27,6 +27,7 @@ class ShopDashboardRepository(BaseRepository):
         product_score: float,
         logistics_score: float,
         service_score: float,
+        bad_behavior_score: float,
         source: str,
     ) -> ShopDashboardScore:
         stmt = select(ShopDashboardScore).where(
@@ -42,6 +43,7 @@ class ShopDashboardRepository(BaseRepository):
                 product_score=product_score,
                 logistics_score=logistics_score,
                 service_score=service_score,
+                bad_behavior_score=bad_behavior_score,
                 source=source,
             )
             self.session.add(score)
@@ -53,12 +55,14 @@ class ShopDashboardRepository(BaseRepository):
                     or float(score.product_score) != 0.0
                     or float(score.logistics_score) != 0.0
                     or float(score.service_score) != 0.0
+                    or float(score.bad_behavior_score) != 0.0
                 )
                 and source in {"degraded", "llm"}
                 and float(total_score) == 0.0
                 and float(product_score) == 0.0
                 and float(logistics_score) == 0.0
                 and float(service_score) == 0.0
+                and float(bad_behavior_score) == 0.0
             ):
                 await self.session.refresh(score)
                 return score
@@ -66,6 +70,7 @@ class ShopDashboardRepository(BaseRepository):
             score.product_score = product_score
             score.logistics_score = logistics_score
             score.service_score = service_score
+            score.bad_behavior_score = bad_behavior_score
             score.source = source
 
         await self._flush()
@@ -215,6 +220,7 @@ class ShopDashboardRepository(BaseRepository):
             "product_score": float(score.product_score) if score else 0.0,
             "logistics_score": float(score.logistics_score) if score else 0.0,
             "service_score": float(score.service_score) if score else 0.0,
+            "bad_behavior_score": float(score.bad_behavior_score) if score else 0.0,
             "reviews": {
                 "summary": {},
                 "items": [
@@ -335,6 +341,7 @@ class ShopDashboardRepository(BaseRepository):
                     "product_score": float(row.product_score),
                     "logistics_score": float(row.logistics_score),
                     "service_score": float(row.service_score),
+                    "bad_behavior_score": float(row.bad_behavior_score),
                     "reviews": reviews_by_day.get(metric_date, []),
                     "violations": violations_by_day.get(metric_date, []),
                     "cold_metrics": cold_by_day.get(metric_date, []),
