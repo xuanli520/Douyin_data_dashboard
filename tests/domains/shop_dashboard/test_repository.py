@@ -50,6 +50,45 @@ async def test_upsert_score_by_shop_and_date(test_db):
         assert count == 1
 
 
+async def test_upsert_score_accepts_optional_bad_behavior_score(test_db):
+    async with test_db() as session:
+        repo = ShopDashboardRepository(session)
+        metric_date = date(2026, 3, 3)
+
+        row = await repo.upsert_score(
+            shop_id="shop-1",
+            metric_date=metric_date,
+            total_score=4.86,
+            product_score=4.88,
+            logistics_score=4.82,
+            service_score=4.90,
+            bad_behavior_score=0.0,
+            source="http",
+        )
+
+        assert row.total_score == 4.86
+        assert row.source == "http"
+
+
+async def test_upsert_score_uses_zero_when_bad_behavior_score_is_none(test_db):
+    async with test_db() as session:
+        repo = ShopDashboardRepository(session)
+        metric_date = date(2026, 3, 3)
+
+        row = await repo.upsert_score(
+            shop_id="shop-1",
+            metric_date=metric_date,
+            total_score=4.86,
+            product_score=4.88,
+            logistics_score=4.82,
+            service_score=4.90,
+            bad_behavior_score=None,
+            source="http",
+        )
+
+        assert row.bad_behavior_score == 0.0
+
+
 async def test_upsert_score_preserves_valid_score_when_degraded_zero_overwrites(
     test_db,
 ):

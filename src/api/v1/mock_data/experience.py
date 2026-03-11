@@ -15,10 +15,10 @@ SUPPORTED_EXPERIENCE_DIMENSIONS: tuple[ExperienceDimension, ...] = (
 )
 
 _DIMENSION_WEIGHTS: dict[ExperienceDimension, float] = {
-    "product": 0.35,
+    "product": 0.4,
     "logistics": 0.3,
-    "service": 0.25,
-    "risk": 0.1,
+    "service": 0.3,
+    "risk": 0.0,
 }
 
 _DIMENSION_BASE_SCORES: dict[ExperienceDimension, int] = {
@@ -250,11 +250,17 @@ def build_shop_score(shop_id: int, date_range: str | None) -> dict[str, object]:
         float(item["score"]) * _DIMENSION_WEIGHTS[item["dimension"]]
         for item in dimensions
     )
+    risk_score = float(
+        next(
+            (item["score"] for item in dimensions if item["dimension"] == "risk"), 100.0
+        )
+    )
+    risk_deduct_points = max(0.0, 100.0 - risk_score)
 
     return {
         "shop_id": shop_id,
         "shop_name": f"shop_{shop_id}",
-        "overall_score": round(weighted, 2),
+        "overall_score": round(weighted - risk_deduct_points, 2),
         "dimensions": dimensions,
         "trend": _build_trend(
             shop_id=shop_id, dimension="product", date_range=date_range
