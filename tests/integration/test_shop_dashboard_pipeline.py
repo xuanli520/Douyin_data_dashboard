@@ -1,7 +1,10 @@
+from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.tasks.collection import douyin_shop_dashboard as module
+from src.tasks.collection.shop_dashboard_plan_builder import build_collection_plan
 from src.tasks.exceptions import ScrapingFailedException
 
 
@@ -11,6 +14,45 @@ class _FakeRedis:
         return None
 
     def expire(self, _key, _seconds):
+        return None
+
+
+class _FakeStateStore:
+    def __init__(self, *args, **kwargs):
+        _ = (args, kwargs)
+
+    def save(self, *_args, **_kwargs):
+        return None
+
+    def load_cookie_mapping(self, _account_id):
+        return {}
+
+
+class _FakeLockManager:
+    def acquire_shop_lock(self, _shop_lock_id, ttl_seconds):
+        _ = ttl_seconds
+        return "shop-token"
+
+    def release_shop_lock(self, _shop_lock_id, _token):
+        return None
+
+    def acquire_account_lock(self, _account_id, ttl_seconds):
+        _ = ttl_seconds
+        return "account-token"
+
+    def release_account_lock(self, _account_id, _token):
+        return None
+
+
+class _FakeLoginStateManager:
+    def __init__(self, *args, **kwargs):
+        _ = (args, kwargs)
+
+    async def check_and_refresh(self, _account_id):
+        return True
+
+    async def mark_expired(self, _account_id, reason):
+        _ = reason
         return None
 
 
@@ -31,6 +73,126 @@ class _FakeIdempotencyHelper:
 
     def release_lock(self, _key, _token):
         return None
+
+
+def _install_fake_collection_usecase(monkeypatch):
+    from src.application.collection import usecase as usecase_module
+
+    class _FakeCollectionUseCase:
+        def execute(
+            self,
+            *,
+            data_source_id: int,
+            rule_id: int,
+            execution_id: str,
+            queue_task_id: str,
+            triggered_by: int | None = None,
+            overrides: dict | None = None,
+            redis_client=None,
+        ) -> dict:
+            _ = (data_source_id, rule_id, queue_task_id, triggered_by)
+            runtime = module._run_async(
+                module._load_runtime_config(
+                    data_source_id=data_source_id,
+                    rule_id=rule_id,
+                    execution_id=execution_id,
+                    overrides=overrides or {},
+                )
+            )
+            state_store = _FakeStateStore(
+                base_dir=Path(".runtime") / "shop_dashboard_state"
+            )
+            runtime = module._materialize_runtime_storage_state(runtime, state_store)
+            plan_units = build_collection_plan(runtime)
+            helper = module.FunboostIdempotencyHelper(
+                redis_client=redis_client,
+                task_name="sync_shop_dashboard",
+            )
+            browser = module.BrowserScraper()
+            lock_manager = _FakeLockManager()
+            login_state_manager = _FakeLoginStateManager(
+                state_store=state_store,
+                redis_client=redis_client,
+            )
+            items = []
+            for plan_unit in plan_units:
+                unit_runtime = (
+                    runtime
+                    if plan_unit.shop_id == runtime.shop_id
+                    else replace(runtime, shop_id=plan_unit.shop_id)
+                )
+                business_key = module._build_business_key(
+                    unit_runtime,
+                    plan_unit.metric_date,
+                    plan_unit=plan_unit,
+                )
+                cached = helper.get_cached_result(business_key)
+                if cached:
+                    items.append(cached)
+                    continue
+                token = helper.acquire_lock(business_key, ttl=300)
+                if not token:
+                    items.append(
+                        {
+                            "status": "skipped",
+                            "reason": "running",
+                            "metric_date": plan_unit.metric_date,
+                            "shop_id": unit_runtime.shop_id,
+                            "rule_id": unit_runtime.rule_id,
+                            "execution_id": unit_runtime.execution_id,
+                            "retry_count": 0,
+                            "fallback_trace": [],
+                        }
+                    )
+                    continue
+                try:
+                    if module._supports_shared_helpers(module._collect_one_day):
+                        collected = module._collect_one_day(
+                            unit_runtime,
+                            plan_unit.metric_date,
+                            browser,
+                            lock_manager=lock_manager,
+                            state_store=state_store,
+                            login_state_manager=login_state_manager,
+                        )
+                    else:
+                        collected = module._collect_one_day(
+                            unit_runtime,
+                            plan_unit.metric_date,
+                            browser,
+                        )
+                    module._run_async(
+                        module._persist_result(
+                            unit_runtime,
+                            plan_unit.metric_date,
+                            collected,
+                        )
+                    )
+                    helper.cache_result(business_key, collected)
+                    items.append(collected)
+                finally:
+                    helper.release_lock(business_key, token)
+            return {
+                "status": "success",
+                "data_source_id": data_source_id,
+                "rule_id": rule_id,
+                "execution_id": execution_id,
+                "shop_count": len({plan_unit.shop_id for plan_unit in plan_units}),
+                "planned_units": len(plan_units),
+                "completed_units": sum(
+                    1
+                    for item in items
+                    if str(item.get("status", "success")) == "success"
+                ),
+                "failed_units": sum(
+                    1
+                    for item in items
+                    if str(item.get("status", "success")) != "success"
+                ),
+                "items": items,
+            }
+
+    monkeypatch.setattr(usecase_module, "CollectionUseCase", _FakeCollectionUseCase)
 
 
 class _FakeHttpScraper:
@@ -95,13 +257,19 @@ async def _fake_persist(*_args, **_kwargs):
 
 
 def test_pipeline_http_fail_then_browser_then_llm(monkeypatch):
+    _install_fake_collection_usecase(monkeypatch)
     monkeypatch.setattr(
         module.sync_shop_dashboard,
         "publisher",
         SimpleNamespace(redis_db_frame=_FakeRedis()),
         raising=False,
     )
-    monkeypatch.setattr(module, "FunboostIdempotencyHelper", _FakeIdempotencyHelper)
+    monkeypatch.setattr(
+        module,
+        "FunboostIdempotencyHelper",
+        _FakeIdempotencyHelper,
+        raising=False,
+    )
     monkeypatch.setattr(module, "HttpScraper", _FakeHttpScraper)
     monkeypatch.setattr(module, "BrowserScraper", _FakeBrowserScraper)
     monkeypatch.setattr(module, "_load_runtime_config", _fake_runtime_loader)
@@ -140,13 +308,19 @@ def test_pipeline_http_fail_then_browser_then_llm(monkeypatch):
 
 
 def test_pipeline_cookie_only_http_success(monkeypatch):
+    _install_fake_collection_usecase(monkeypatch)
     monkeypatch.setattr(
         module.sync_shop_dashboard,
         "publisher",
         SimpleNamespace(redis_db_frame=_FakeRedis()),
         raising=False,
     )
-    monkeypatch.setattr(module, "FunboostIdempotencyHelper", _FakeIdempotencyHelper)
+    monkeypatch.setattr(
+        module,
+        "FunboostIdempotencyHelper",
+        _FakeIdempotencyHelper,
+        raising=False,
+    )
     monkeypatch.setattr(module, "_load_runtime_config", _fake_runtime_loader)
     monkeypatch.setattr(module, "_persist_result", _fake_persist)
     monkeypatch.setattr(module, "BrowserScraper", lambda: _FakeBrowserScraper())
@@ -195,6 +369,7 @@ def test_pipeline_cookie_only_http_success(monkeypatch):
 
 
 def test_pipeline_rule_config_fields_flow_into_plan_and_query_context(monkeypatch):
+    _install_fake_collection_usecase(monkeypatch)
     from src.scrapers.shop_dashboard.query_builder import build_endpoint_query_context
 
     runtime = ShopDashboardRuntimeConfig(
@@ -275,7 +450,12 @@ def test_pipeline_rule_config_fields_flow_into_plan_and_query_context(monkeypatc
         SimpleNamespace(redis_db_frame=_FakeRedis()),
         raising=False,
     )
-    monkeypatch.setattr(module, "FunboostIdempotencyHelper", _FakeIdempotencyHelper)
+    monkeypatch.setattr(
+        module,
+        "FunboostIdempotencyHelper",
+        _FakeIdempotencyHelper,
+        raising=False,
+    )
     monkeypatch.setattr(module, "_load_runtime_config", _fake_runtime_loader)
     monkeypatch.setattr(module, "_collect_one_day", _fake_collect_one_day)
     monkeypatch.setattr(module, "_persist_result", _fake_persist)
@@ -293,6 +473,7 @@ def test_pipeline_rule_config_fields_flow_into_plan_and_query_context(monkeypatc
 
 
 def test_pipeline_shop_id_fanout_for_rule_8_like_config(monkeypatch):
+    _install_fake_collection_usecase(monkeypatch)
     runtime = _build_runtime()
     runtime.rule_id = 8
     runtime.shop_id = ""
@@ -338,7 +519,12 @@ def test_pipeline_shop_id_fanout_for_rule_8_like_config(monkeypatch):
         SimpleNamespace(redis_db_frame=_FakeRedis()),
         raising=False,
     )
-    monkeypatch.setattr(module, "FunboostIdempotencyHelper", _FakeIdempotencyHelper)
+    monkeypatch.setattr(
+        module,
+        "FunboostIdempotencyHelper",
+        _FakeIdempotencyHelper,
+        raising=False,
+    )
     monkeypatch.setattr(module, "_load_runtime_config", _fake_runtime_loader)
     monkeypatch.setattr(module, "_collect_one_day", _fake_collect_one_day)
     monkeypatch.setattr(module, "_persist_result", _fake_persist)

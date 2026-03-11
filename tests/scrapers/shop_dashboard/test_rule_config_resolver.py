@@ -143,3 +143,19 @@ def test_resolve_rule_config_should_not_fallback_to_data_source_shop_id():
 
     assert config.shop_id == ""
     assert config.shop_ids == []
+
+
+def test_resolve_rule_config_all_mode_uses_data_source_extra_shop_ids():
+    data_source = _build_data_source(extra_config={"shop_ids": ["shop-10", "shop-11"]})
+    rule = _build_rule(filters={})
+
+    config = resolve_rule_config(
+        data_source=data_source,
+        rule=rule,
+        execution_id="exec-all-mode",
+        overrides={"all": True},
+    )
+
+    assert config.shop_ids == ["shop-10", "shop-11"]
+    assert config.filters["all"] is True
+    assert config.filters["shop_id"] == ["shop-10", "shop-11"]

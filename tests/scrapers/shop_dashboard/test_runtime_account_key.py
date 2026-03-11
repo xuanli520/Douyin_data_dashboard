@@ -8,11 +8,12 @@ from src.scrapers.shop_dashboard.runtime import (
 
 
 def _ds(*, extra_config: dict | None = None, shop_id: str = "shop-1") -> DataSource:
+    config = dict(extra_config or {})
+    config.setdefault("shop_id", shop_id)
     return DataSource(
         name="runtime-ds",
         source_type=DataSourceType.DOUYIN_SHOP,
-        shop_id=shop_id,
-        extra_config=extra_config,
+        extra_config=config,
     )
 
 

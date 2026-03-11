@@ -23,8 +23,6 @@ class DataSource(SQLModel, TimestampMixin, table=True):
     source_type: DataSourceType = Field(default=DataSourceType.DOUYIN_SHOP)
     status: DataSourceStatus = Field(default=DataSourceStatus.ACTIVE)
 
-    shop_id: str | None = Field(default=None, max_length=50, index=True)
-    account_name: str | None = Field(default=None, max_length=100)
     rate_limit: int = Field(default=100)
     retry_count: int = Field(default=3)
     timeout: int = Field(default=30)

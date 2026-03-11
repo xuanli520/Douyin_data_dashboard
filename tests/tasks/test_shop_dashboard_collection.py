@@ -91,12 +91,15 @@ async def _seed_entities(
     *,
     rule_version: int = 1,
     data_source_status: DataSourceStatus = DataSourceStatus.ACTIVE,
+    ds_extra_config: dict[str, Any] | None = None,
+    rule_filters: dict[str, Any] | None = None,
 ) -> tuple[int, int]:
     async with test_db() as db_session:
         data_source = DataSource(
             name="task-collection-ds",
             source_type=DataSourceType.DOUYIN_SHOP,
             status=data_source_status,
+            extra_config=ds_extra_config,
         )
         db_session.add(data_source)
         await db_session.flush()
@@ -104,7 +107,9 @@ async def _seed_entities(
             name="task-collection-rule",
             data_source_id=data_source.id if data_source.id is not None else 0,
             version=rule_version,
-            filters={"shop_id": ["shop-1"]},
+            filters=rule_filters
+            if rule_filters is not None
+            else {"shop_id": ["shop-1"]},
             time_range={"start": "2026-03-01", "end": "2026-03-01"},
             backfill_last_n_days=1,
         )
@@ -134,6 +139,62 @@ async def test_collection_runtime_loader_should_capture_rule_version_and_snapsho
     assert loaded.runtime.shop_id == "shop-1"
     assert loaded.effective_config_snapshot["rule_version"] == 3
     assert loaded.effective_config_snapshot["rule_id"] == rule_id
+
+
+@pytest.mark.asyncio
+async def test_collection_runtime_loader_should_resolve_all_mode_shop_ids_from_data_source_config(
+    test_db,
+):
+    data_source_id, rule_id = await _seed_entities(
+        test_db,
+        ds_extra_config={"shop_ids": ["shop-a", "shop-b"]},
+        rule_filters={},
+    )
+    loader = CollectionRuntimeLoader()
+    async with test_db() as db_session:
+        loaded = await loader.load(
+            session=db_session,
+            data_source_id=data_source_id,
+            rule_id=rule_id,
+            execution_id="exec-loader-all-mode",
+            overrides={"all": True},
+        )
+
+    assert loaded.runtime.shop_id == "shop-a"
+    assert loaded.runtime.filters["all"] is True
+    assert loaded.runtime.filters["shop_id"] == ["shop-a", "shop-b"]
+    assert loaded.effective_config_snapshot["filters"]["shop_id"] == [
+        "shop-a",
+        "shop-b",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_collection_runtime_loader_should_resolve_all_mode_shop_ids_from_account_resolver(
+    test_db,
+):
+    data_source_id, rule_id = await _seed_entities(
+        test_db,
+        ds_extra_config={},
+        rule_filters={},
+    )
+
+    class _FakeAccountShopResolver:
+        async def resolve_shop_ids(self, **_kwargs) -> list[str]:
+            return ["shop-r1", "shop-r2"]
+
+    loader = CollectionRuntimeLoader(account_shop_resolver=_FakeAccountShopResolver())
+    async with test_db() as db_session:
+        loaded = await loader.load(
+            session=db_session,
+            data_source_id=data_source_id,
+            rule_id=rule_id,
+            execution_id="exec-loader-all-resolver",
+            overrides={"all": True},
+        )
+
+    assert loaded.runtime.shop_id == "shop-r1"
+    assert loaded.runtime.filters["shop_id"] == ["shop-r1", "shop-r2"]
 
 
 @pytest.mark.asyncio

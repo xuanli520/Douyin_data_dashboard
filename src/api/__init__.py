@@ -4,7 +4,8 @@ from .monitor import router as monitor_router
 from .oauth import create_oauth_router
 from .admin import router as admin_router
 from .v1.data_source import router as data_source_router
-from .v1.data_source import scraping_rule_router
+from .v1.scraping_rule import router as scraping_rule_router
+from .v1.collection_job import router as collection_job_router
 from .v1.data_import import router as data_import_router
 from .v1.task import router as task_router
 from .v1.shop_dashboard import router as shop_dashboard_router
@@ -34,6 +35,7 @@ __all__ = [
     "admin_router",
     "data_source_router",
     "scraping_rule_router",
+    "collection_job_router",
     "data_import_router",
     "task_router",
     "shop_dashboard_router",

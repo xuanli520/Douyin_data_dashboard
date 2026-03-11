@@ -244,7 +244,6 @@ def _extract_douyin_api_config(config: dict[str, Any]) -> dict[str, Any]:
     normalized = _normalize_shop_dashboard_config(config)
     return {
         "extra_config": normalized,
-        "shop_id": normalized.get("shop_id"),
         "rate_limit": normalized.get("rate_limit", 100),
         "retry_count": normalized.get("retry_count", 3),
         "timeout": normalized.get("timeout", 30),
@@ -253,10 +252,7 @@ def _extract_douyin_api_config(config: dict[str, Any]) -> dict[str, Any]:
 
 @DataSourceTypeRegistry.register_extractor(DataSourceType.SELF_HOSTED)
 def _extract_database_config(config: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "extra_config": config,
-        "account_name": config.get("connection_string", ""),
-    }
+    return {"extra_config": config}
 
 
 @DataSourceTypeRegistry.register_extractor(DataSourceType.FILE_IMPORT)

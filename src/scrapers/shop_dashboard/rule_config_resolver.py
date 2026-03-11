@@ -284,10 +284,6 @@ def resolve_rule_config(
         shop_ids = [shop for shop in shop_ids if not _is_all_shop_marker(shop)]
     if all_shops and explicit_shop_id and explicit_shop_id not in shop_ids:
         shop_ids.insert(0, explicit_shop_id)
-    if all_shops and not shop_ids:
-        source_shop_id = _normalize_nullable_text(_read_attr(data_source, "shop_id"))
-        if source_shop_id and not _is_all_shop_marker(source_shop_id):
-            shop_ids = [source_shop_id]
     if all_shops:
         explicit_shop_id = None
     if not shop_ids and explicit_shop_id:

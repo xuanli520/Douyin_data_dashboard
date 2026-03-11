@@ -131,10 +131,6 @@ class DataSourceRepository(BaseRepository):
         )
         return list((await self.session.execute(stmt)).scalars().all())
 
-    async def get_by_shop_id(self, shop_id: str) -> DataSource | None:
-        stmt = select(DataSource).where(DataSource.shop_id == shop_id)
-        return (await self.session.execute(stmt)).scalar_one_or_none()
-
     async def update_status(
         self, data_source_id: int, status: DataSourceStatus
     ) -> DataSource:

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from sqlalchemy import text
 
@@ -130,3 +132,8 @@ async def test_load_enabled_collection_jobs_async_requires_collection_jobs_table
 
     with pytest.raises(RuntimeError):
         await module._load_enabled_collection_jobs_async()
+
+
+def test_no_legacy_fixed_rule_scheduler_branch():
+    content = Path("src/tasks/beat.py").read_text(encoding="utf-8")
+    assert "fixed_rule =" not in content

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +12,7 @@ from src.domains.data_source.repository import DataSourceRepository
 from src.domains.scraping_rule.repository import ScrapingRuleRepository
 from src.scrapers.shop_dashboard.contracts import DataSourceContract
 from src.scrapers.shop_dashboard.contracts import ScrapingRuleContract
+from src.scrapers.shop_dashboard.account_shop_resolver import AccountShopResolver
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.scrapers.shop_dashboard.runtime import build_runtime_config
 from src.tasks.exceptions import ScrapingFailedException
@@ -25,6 +26,13 @@ class LoadedCollectionRuntime:
 
 
 class CollectionRuntimeLoader:
+    def __init__(
+        self,
+        *,
+        account_shop_resolver: AccountShopResolver | None = None,
+    ) -> None:
+        self.account_shop_resolver = account_shop_resolver or AccountShopResolver()
+
     async def load(
         self,
         *,
@@ -94,6 +102,10 @@ class CollectionRuntimeLoader:
             execution_id=execution_id,
             overrides=dict(overrides or {}),
         )
+        runtime = await self._resolve_all_mode_runtime(
+            runtime=runtime,
+            data_source=data_source_contract,
+        )
         if not runtime.api_groups:
             raise ScrapingFailedException(
                 "No API groups resolved for runtime",
@@ -147,6 +159,55 @@ class CollectionRuntimeLoader:
             "account_id": runtime.account_id,
         }
 
+    async def _resolve_all_mode_runtime(
+        self,
+        *,
+        runtime: ShopDashboardRuntimeConfig,
+        data_source: DataSourceContract,
+    ) -> ShopDashboardRuntimeConfig:
+        filters = dict(runtime.filters or {})
+        all_mode = bool(filters.get("all"))
+        if not all_mode:
+            return runtime
+        requested_shop_ids = _normalize_shop_ids(filters.get("shop_id"))
+        resolved_shop_ids = await self.account_shop_resolver.resolve_shop_ids(
+            account_id=runtime.account_id,
+            cookies=runtime.cookies,
+            common_query=runtime.common_query,
+            extra_config=data_source.extra_config,
+        )
+        if requested_shop_ids:
+            requested_shop_id_set = set(requested_shop_ids)
+            resolved_shop_ids = [
+                shop_id
+                for shop_id in resolved_shop_ids
+                if shop_id in requested_shop_id_set
+            ]
+        filters["all"] = True
+        filters["shop_id"] = list(resolved_shop_ids)
+        return replace(
+            runtime,
+            shop_id=resolved_shop_ids[0] if resolved_shop_ids else "",
+            filters=filters,
+        )
+
 
 def _as_enum_value(value: Any) -> Any:
     return value.value if hasattr(value, "value") else value
+
+
+def _normalize_shop_ids(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        parts = [item for chunk in value.split(",") for item in chunk.split("|")]
+    elif isinstance(value, list | tuple | set):
+        parts = list(value)
+    else:
+        return []
+    normalized: list[str] = []
+    for part in parts:
+        text = str(part or "").strip()
+        if text:
+            normalized.append(text)
+    return normalized

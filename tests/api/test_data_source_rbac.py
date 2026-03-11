@@ -110,3 +110,9 @@ def test_upload_shop_dashboard_login_state_requires_permission(rbac_client):
 def test_clear_shop_dashboard_login_state_requires_permission(rbac_client):
     response = rbac_client.delete("/api/v1/data-sources/1/shop-dashboard/login-state")
     assert response.status_code == 401
+
+
+def test_data_source_router_should_not_expose_scraping_rule_endpoints():
+    from src.api.v1 import data_source as module
+
+    assert not hasattr(module, "scraping_rule_router")
