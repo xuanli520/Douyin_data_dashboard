@@ -59,6 +59,13 @@ def parse_core_scores(payload: Mapping[str, Any]) -> dict[str, float]:
             ("service_score", "value"),
             ("service_score",),
         ),
+        "bad_behavior_score": _first_float(
+            data,
+            ("bad_behavior_deduct_score", "value"),
+            ("bad_behavior_deduct_score",),
+            ("bad_behavior_score", "value"),
+            ("bad_behavior_score",),
+        ),
     }
 
 
