@@ -602,10 +602,6 @@ def _resolve_shop_lock_id(shop_id: str, account_id: str) -> str:
     return "account:anonymous"
 
 
-def _is_result_cache_enabled(execution_id: str) -> bool:
-    return not execution_id.startswith("cron_cookie_health_check_")
-
-
 def _build_business_key(
     runtime: ShopDashboardRuntimeConfig,
     metric_date: str,
@@ -839,9 +835,3 @@ def _supports_shared_helpers(collector: Any) -> bool:
         return True
     required = {"lock_manager", "state_store", "login_state_manager"}
     return required.issubset(parameters.keys())
-
-
-collect_one_day = _collect_one_day
-RateLimiter = _RateLimiter
-build_business_key = _build_business_key
-materialize_runtime_storage_state = _materialize_runtime_storage_state

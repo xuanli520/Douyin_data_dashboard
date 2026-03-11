@@ -139,7 +139,7 @@ async def _seed_runtime_entities(test_db) -> tuple[int, int]:
 
 
 @pytest.mark.asyncio
-async def test_collection_usecase_should_be_idempotent_by_execution_id(
+async def test_collection_usecase_should_be_idempotent_by_queue_task_id(
     test_db,
     monkeypatch,
 ):
@@ -150,14 +150,14 @@ async def test_collection_usecase_should_be_idempotent_by_execution_id(
         test_db,
         raising=False,
     )
-    monkeypatch.setattr(module, "collect_one_day", _collect_success)
+    monkeypatch.setattr(module, "_collect_one_day", _collect_success)
     monkeypatch.setattr(module, "BrowserScraper", lambda: object())
     monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
     monkeypatch.setattr(module, "LockManager", _FakeLockManager)
     monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
     monkeypatch.setattr(
         module,
-        "materialize_runtime_storage_state",
+        "_materialize_runtime_storage_state",
         lambda runtime, _store: runtime,
     )
 
@@ -176,7 +176,7 @@ async def test_collection_usecase_should_be_idempotent_by_execution_id(
         data_source_id=data_source_id,
         rule_id=rule_id,
         execution_id="exec-usecase-idempotent",
-        queue_task_id="task-2",
+        queue_task_id="task-1",
         triggered_by=1,
         overrides={},
         redis_client=redis_client,
@@ -188,7 +188,7 @@ async def test_collection_usecase_should_be_idempotent_by_execution_id(
     async with test_db() as db_session:
         stmt = select(TaskExecution).where(
             TaskExecution.idempotency_key
-            == f"shop_dashboard:{data_source_id}:{rule_id}:exec-usecase-idempotent"
+            == f"shop_dashboard:{data_source_id}:{rule_id}:task-1"
         )
         execution = (await db_session.execute(stmt)).scalar_one()
         assert execution.status == TaskExecutionStatus.SUCCESS

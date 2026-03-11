@@ -211,7 +211,7 @@ async def test_collection_usecase_should_map_login_expired_to_task_exception(
     )
     monkeypatch.setattr(
         module,
-        "collect_one_day",
+        "_collect_one_day",
         _raise_login_expired,
     )
     monkeypatch.setattr(module, "BrowserScraper", lambda: object())
@@ -220,7 +220,7 @@ async def test_collection_usecase_should_map_login_expired_to_task_exception(
     monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
     monkeypatch.setattr(
         module,
-        "materialize_runtime_storage_state",
+        "_materialize_runtime_storage_state",
         lambda runtime, _store: runtime,
     )
 
@@ -239,7 +239,7 @@ async def test_collection_usecase_should_map_login_expired_to_task_exception(
     async with test_db() as db_session:
         stmt = select(TaskExecution).where(
             TaskExecution.idempotency_key
-            == f"shop_dashboard:{data_source_id}:{rule_id}:exec-login-expired"
+            == f"shop_dashboard:{data_source_id}:{rule_id}:queue-login-expired"
         )
         execution = (await db_session.execute(stmt)).scalar_one()
         assert execution.status == TaskExecutionStatus.FAILED

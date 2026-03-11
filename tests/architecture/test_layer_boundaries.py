@@ -133,3 +133,17 @@ def test_application_plan_builder_must_not_import_tasks() -> None:
         "src/application/collection/plan_builder.py",
         ("src.tasks",),
     )
+
+
+def test_application_runtime_loader_must_not_import_tasks() -> None:
+    _assert_no_forbidden_imports(
+        "src/application/collection/runtime_loader.py",
+        ("src.tasks",),
+    )
+
+
+def test_application_usecase_must_not_import_tasks() -> None:
+    _assert_no_forbidden_imports(
+        "src/application/collection/usecase.py",
+        ("src.tasks",),
+    )

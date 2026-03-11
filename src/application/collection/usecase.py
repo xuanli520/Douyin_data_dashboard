@@ -16,6 +16,9 @@ from src.application.collection.result_persister import CollectionResultPersiste
 from src.application.collection.runtime_loader import CollectionRuntimeLoader
 from src.application.collection.runtime_loader import LoadedCollectionRuntime
 from src.config import get_settings
+from src.domains.task.exceptions import ScrapingFailedException
+from src.domains.task.exceptions import ShopDashboardCookieExpiredException
+from src.domains.task.exceptions import ShopDashboardDataIncompleteException
 from src.domains.task.enums import TaskExecutionStatus
 from src.domains.task.enums import TaskTriggerMode
 from src.domains.task.enums import TaskType
@@ -30,10 +33,7 @@ from src.scrapers.shop_dashboard.lock_manager import LockManager
 from src.scrapers.shop_dashboard.login_state_manager import LoginStateManager
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
-from src.tasks.exceptions import ScrapingFailedException
-from src.tasks.exceptions import ShopDashboardCookieExpiredException
-from src.tasks.exceptions import ShopDashboardDataIncompleteException
-from src.tasks.idempotency import FunboostIdempotencyHelper
+from src.shared.idempotency import FunboostIdempotencyHelper
 
 
 class CollectionUseCase:
@@ -90,6 +90,7 @@ class CollectionUseCase:
             data_source_id=data_source_id,
             rule_id=rule_id,
             execution_id=execution_id,
+            queue_task_id=queue_task_id,
         )
         execution = await self._create_or_get_execution(
             data_source_id=data_source_id,
@@ -357,14 +358,15 @@ class CollectionUseCase:
             )
 
         from src.tasks.collection import douyin_shop_dashboard as task_module
-        from src.tasks.collection.douyin_shop_dashboard import (
-            RateLimiter,
-            build_business_key,
-            collect_one_day,
-            materialize_runtime_storage_state,
-        )
 
         resolved_redis = self._resolve_redis_client(redis_client)
+        rate_limiter_cls = getattr(task_module, "_RateLimiter")
+        build_business_key = getattr(task_module, "_build_business_key")
+        collect_one_day = getattr(task_module, "_collect_one_day")
+        materialize_runtime_storage_state = getattr(
+            task_module,
+            "_materialize_runtime_storage_state",
+        )
         helper_cls = getattr(
             task_module,
             "FunboostIdempotencyHelper",
@@ -403,7 +405,7 @@ class CollectionUseCase:
             redis_client=resolved_redis,
         )
         collector_supports_shared_helpers = _supports_shared_helpers(collect_one_day)
-        rate_limiter = RateLimiter(runtime.rate_limit)
+        rate_limiter = rate_limiter_cls(runtime.rate_limit)
         items: list[dict[str, Any]] = []
 
         for plan_unit in plan_units:
@@ -414,8 +416,7 @@ class CollectionUseCase:
                 plan_unit.metric_date,
                 plan_unit=plan_unit,
             )
-            cache_enabled = _is_result_cache_enabled(runtime.execution_id)
-            cached = helper.get_cached_result(business_key) if cache_enabled else None
+            cached = helper.get_cached_result(business_key)
             if cached:
                 items.append(cached)
                 observe_shop_dashboard_collection(
@@ -474,8 +475,7 @@ class CollectionUseCase:
                         metric_date=plan_unit.metric_date,
                         payload=collected,
                     )
-                if cache_enabled:
-                    helper.cache_result(business_key, collected)
+                helper.cache_result(business_key, collected)
                 items.append(collected)
                 source = str(collected.get("source", "unknown"))
                 status = str(collected.get("status", "success"))
@@ -517,8 +517,10 @@ class CollectionUseCase:
         data_source_id: int,
         rule_id: int,
         execution_id: str,
+        queue_task_id: str,
     ) -> str:
-        return f"shop_dashboard:{data_source_id}:{rule_id}:{execution_id}"
+        scope = queue_task_id.strip() or execution_id
+        return f"shop_dashboard:{data_source_id}:{rule_id}:{scope}"
 
     def _resolve_reused_result(self, execution: Any) -> dict[str, Any] | None:
         if execution.status != TaskExecutionStatus.SUCCESS:
@@ -586,7 +588,3 @@ def _supports_shared_helpers(collector: Any) -> bool:
         return True
     required = {"lock_manager", "state_store", "login_state_manager"}
     return required.issubset(parameters.keys())
-
-
-def _is_result_cache_enabled(execution_id: str) -> bool:
-    return not execution_id.startswith("cron_cookie_health_check_")

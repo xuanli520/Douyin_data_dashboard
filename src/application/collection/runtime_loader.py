@@ -10,12 +10,12 @@ from src.domains.data_source.enums import DataSourceStatus
 from src.domains.data_source.enums import ScrapingRuleStatus
 from src.domains.data_source.repository import DataSourceRepository
 from src.domains.scraping_rule.repository import ScrapingRuleRepository
+from src.domains.task.exceptions import ScrapingFailedException
 from src.scrapers.shop_dashboard.contracts import DataSourceContract
 from src.scrapers.shop_dashboard.contracts import ScrapingRuleContract
 from src.scrapers.shop_dashboard.account_shop_resolver import AccountShopResolver
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.scrapers.shop_dashboard.runtime import build_runtime_config
-from src.tasks.exceptions import ScrapingFailedException
 
 
 @dataclass(slots=True)

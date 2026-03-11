@@ -119,4 +119,4 @@ def test_contract_migration_executes_through_alembic(tmp_path, monkeypatch):
 
     assert "shop_id" not in data_source_columns
     assert "account_name" not in data_source_columns
-    assert version_num == "20260310_02"
+    assert version_num == "20260311_02"
