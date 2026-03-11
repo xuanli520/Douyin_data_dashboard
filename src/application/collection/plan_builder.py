@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.tasks.collection.shop_dashboard_plan_builder import CollectionPlanUnit
-from src.tasks.collection.shop_dashboard_plan_builder import build_collection_plan
+from src.application.collection.plan_builder_impl import CollectionPlanUnit
+from src.application.collection.plan_builder_impl import build_collection_plan
 
 
 class CollectionPlanBuilder:

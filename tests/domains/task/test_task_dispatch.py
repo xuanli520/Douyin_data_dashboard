@@ -25,7 +25,8 @@ def test_task_dispatcher_registry_handles_shop_dashboard():
 async def test_run_task_dispatches_by_task_type_and_persists_queued_execution(
     test_db, monkeypatch
 ):
-    from src.domains.task import services as module
+    from src.tasks import bootstrap as module
+    from src.tasks.bootstrap import build_task_dispatcher_registry
 
     called = {"orders": 0, "products": 0, "shop": 0}
 
@@ -75,7 +76,8 @@ async def test_run_task_dispatches_by_task_type_and_persists_queued_execution(
     monkeypatch.setattr(module.sync_shop_dashboard, "push", _shop_push, raising=False)
 
     async with test_db() as session:
-        service = TaskService(session)
+        registry = build_task_dispatcher_registry()
+        service = TaskService(session=session, dispatcher_registry=registry)
         task_orders = await service.create_task(
             TaskDefinitionCreate(name="orders", task_type=TaskType.ETL_ORDERS),
             created_by_id=1,
@@ -148,8 +150,11 @@ async def test_run_task_dispatches_by_task_type_and_persists_queued_execution(
 
 @pytest.mark.asyncio
 async def test_run_task_rejects_non_active_status(test_db):
+    from src.tasks.bootstrap import build_task_dispatcher_registry
+
     async with test_db() as session:
-        service = TaskService(session)
+        registry = build_task_dispatcher_registry()
+        service = TaskService(session=session, dispatcher_registry=registry)
         task = await service.create_task(
             TaskDefinitionCreate(
                 name="orders-paused",
@@ -173,7 +178,8 @@ async def test_run_task_rejects_non_active_status(test_db):
 async def test_run_task_marks_execution_failed_when_push_missing_task_id(
     test_db, monkeypatch
 ):
-    from src.domains.task import services as module
+    from src.tasks import bootstrap as module
+    from src.tasks.bootstrap import build_task_dispatcher_registry
 
     def _fake_push_without_task_id(**_kwargs):
         return object()
@@ -186,7 +192,8 @@ async def test_run_task_marks_execution_failed_when_push_missing_task_id(
     )
 
     async with test_db() as session:
-        service = TaskService(session)
+        registry = build_task_dispatcher_registry()
+        service = TaskService(session=session, dispatcher_registry=registry)
         task = await service.create_task(
             TaskDefinitionCreate(name="orders", task_type=TaskType.ETL_ORDERS),
             created_by_id=1,

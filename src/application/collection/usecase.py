@@ -356,7 +356,14 @@ class CollectionUseCase:
                 },
             )
 
-        task_module = _load_task_module()
+        from src.tasks.collection import douyin_shop_dashboard as task_module
+        from src.tasks.collection.douyin_shop_dashboard import (
+            RateLimiter,
+            build_business_key,
+            collect_one_day,
+            materialize_runtime_storage_state,
+        )
+
         resolved_redis = self._resolve_redis_client(redis_client)
         helper_cls = getattr(
             task_module,
@@ -371,7 +378,7 @@ class CollectionUseCase:
         state_store = state_store_cls(
             base_dir=Path(".runtime") / "shop_dashboard_state"
         )
-        runtime = task_module._materialize_runtime_storage_state(runtime, state_store)
+        runtime = materialize_runtime_storage_state(runtime, state_store)
         runtimes_by_shop: dict[str, ShopDashboardRuntimeConfig] = {
             runtime.shop_id: runtime,
         }
@@ -395,16 +402,14 @@ class CollectionUseCase:
             state_store=state_store,
             redis_client=resolved_redis,
         )
-        collector_supports_shared_helpers = _supports_shared_helpers(
-            task_module._collect_one_day
-        )
-        rate_limiter = task_module._RateLimiter(runtime.rate_limit)
+        collector_supports_shared_helpers = _supports_shared_helpers(collect_one_day)
+        rate_limiter = RateLimiter(runtime.rate_limit)
         items: list[dict[str, Any]] = []
 
         for plan_unit in plan_units:
             rate_limiter.wait()
             unit_runtime = runtimes_by_shop[plan_unit.shop_id]
-            business_key = task_module._build_business_key(
+            business_key = build_business_key(
                 unit_runtime,
                 plan_unit.metric_date,
                 plan_unit=plan_unit,
@@ -448,7 +453,7 @@ class CollectionUseCase:
             status = "failed"
             try:
                 if collector_supports_shared_helpers:
-                    collected = task_module._collect_one_day(
+                    collected = collect_one_day(
                         unit_runtime,
                         plan_unit.metric_date,
                         browser,
@@ -457,7 +462,7 @@ class CollectionUseCase:
                         login_state_manager=login_state_manager,
                     )
                 else:
-                    collected = task_module._collect_one_day(
+                    collected = collect_one_day(
                         unit_runtime,
                         plan_unit.metric_date,
                         browser,
@@ -585,9 +590,3 @@ def _supports_shared_helpers(collector: Any) -> bool:
 
 def _is_result_cache_enabled(execution_id: str) -> bool:
     return not execution_id.startswith("cron_cookie_health_check_")
-
-
-def _load_task_module():
-    from src.tasks.collection import douyin_shop_dashboard
-
-    return douyin_shop_dashboard

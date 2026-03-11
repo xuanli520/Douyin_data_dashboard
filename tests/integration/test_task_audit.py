@@ -12,6 +12,7 @@ from src.domains.task.events import TaskExecutionTriggeredEvent, TaskStatusChang
 from src.domains.task.schemas import TaskDefinitionCreate
 from src.domains.task.services import TaskService
 from src.main import app
+from src.tasks.bootstrap import build_task_dispatcher_registry
 
 
 class MockCaptchaService:
@@ -111,7 +112,7 @@ async def test_task_management_api_writes_audit_logs(
     test_db,
     monkeypatch,
 ):
-    from src.domains.task import services as task_services
+    from src.tasks import bootstrap as task_services
 
     def _fake_push(**_kwargs):
         return SimpleNamespace(task_id="audit-queue-task")
@@ -175,7 +176,7 @@ async def test_task_management_api_writes_audit_logs(
 
 @pytest.mark.asyncio
 async def test_task_service_emits_domain_events(test_db, monkeypatch):
-    from src.domains.task import services as task_services
+    from src.tasks import bootstrap as task_services
 
     def _fake_push(**_kwargs):
         return SimpleNamespace(task_id="event-queue-task")
@@ -183,7 +184,10 @@ async def test_task_service_emits_domain_events(test_db, monkeypatch):
     monkeypatch.setattr(task_services.process_orders, "push", _fake_push, raising=False)
 
     async with test_db() as session:
-        service = TaskService(session)
+        service = TaskService(
+            session=session,
+            dispatcher_registry=build_task_dispatcher_registry(),
+        )
         task = await service.create_task(
             TaskDefinitionCreate(
                 name="event-orders",

@@ -42,6 +42,11 @@ class _ImportCollector(ast.NodeVisitor):
         for alias in node.names:
             self.modules.add(alias.name)
 
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        return
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
 
 def _imports_from_source(source: str) -> set[str]:
     collector = _ImportCollector()
@@ -107,3 +112,24 @@ def test_data_source_service_should_not_handle_rule_or_trigger_logic() -> None:
     assert "update_scraping_rule(" not in content
     assert "delete_scraping_rule(" not in content
     assert "trigger_collection(" not in content
+
+
+def test_domains_task_services_must_not_import_tasks() -> None:
+    _assert_no_forbidden_imports(
+        "src/domains/task/services.py",
+        ("src.tasks",),
+    )
+
+
+def test_domains_task_schemas_must_not_import_tasks() -> None:
+    _assert_no_forbidden_imports(
+        "src/domains/task/schemas.py",
+        ("src.tasks",),
+    )
+
+
+def test_application_plan_builder_must_not_import_tasks() -> None:
+    _assert_no_forbidden_imports(
+        "src/application/collection/plan_builder.py",
+        ("src.tasks",),
+    )

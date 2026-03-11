@@ -491,7 +491,7 @@ class TestTaskAPI:
     async def test_run_task(self, test_client, monkeypatch):
         from types import SimpleNamespace
 
-        from src.domains.task import services as task_service_module
+        from src.tasks import bootstrap as task_service_module
 
         def _fake_push(**_kwargs):
             return SimpleNamespace(task_id="queue-run-1")
@@ -518,7 +518,7 @@ class TestTaskAPI:
     async def test_get_task_executions(self, test_client, monkeypatch):
         from types import SimpleNamespace
 
-        from src.domains.task import services as task_service_module
+        from src.tasks import bootstrap as task_service_module
 
         def _fake_push(**_kwargs):
             return SimpleNamespace(task_id="queue-exec-1")

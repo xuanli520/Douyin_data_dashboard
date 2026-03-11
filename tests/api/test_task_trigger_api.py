@@ -10,6 +10,7 @@ from src.domains.task.schemas import TaskDefinitionCreate
 from src.domains.task.services import TaskService
 from src.main import app
 from src.shared.errors import ErrorCode
+from src.tasks.bootstrap import build_task_dispatcher_registry
 
 
 class MockCaptchaService:
@@ -161,7 +162,10 @@ async def test_run_task_forbidden_without_execute_permission(
     api_client, no_execute_permission_data, test_db
 ):
     async with test_db() as session:
-        service = TaskService(session)
+        service = TaskService(
+            session=session,
+            dispatcher_registry=build_task_dispatcher_registry(),
+        )
         task = await service.create_task(
             TaskDefinitionCreate(name="orders", task_type=TaskType.ETL_ORDERS),
             created_by_id=no_execute_permission_data.id,
@@ -207,10 +211,13 @@ async def test_run_task_push_and_audit(
 ):
     from types import SimpleNamespace
 
-    from src.domains.task import services as task_service_module
+    from src.tasks import bootstrap as task_service_module
 
     async with test_db() as session:
-        service = TaskService(session)
+        service = TaskService(
+            session=session,
+            dispatcher_registry=build_task_dispatcher_registry(),
+        )
         task = await service.create_task(
             TaskDefinitionCreate(name="orders", task_type=TaskType.ETL_ORDERS),
             created_by_id=permission_data.id,
@@ -282,10 +289,13 @@ async def test_run_task_uses_task_type_dispatch(
 ):
     from types import SimpleNamespace
 
-    from src.domains.task import services as task_service_module
+    from src.tasks import bootstrap as task_service_module
 
     async with test_db() as session:
-        service = TaskService(session)
+        service = TaskService(
+            session=session,
+            dispatcher_registry=build_task_dispatcher_registry(),
+        )
         task = await service.create_task(
             TaskDefinitionCreate(name="products", task_type=TaskType.ETL_PRODUCTS),
             created_by_id=permission_data.id,
@@ -318,10 +328,13 @@ async def test_run_task_uses_task_type_dispatch(
 async def test_run_task_missing_queue_task_id_returns_business_error(
     api_client, permission_data, test_db, monkeypatch
 ):
-    from src.domains.task import services as task_service_module
+    from src.tasks import bootstrap as task_service_module
 
     async with test_db() as session:
-        service = TaskService(session)
+        service = TaskService(
+            session=session,
+            dispatcher_registry=build_task_dispatcher_registry(),
+        )
         task = await service.create_task(
             TaskDefinitionCreate(name="orders", task_type=TaskType.ETL_ORDERS),
             created_by_id=permission_data.id,

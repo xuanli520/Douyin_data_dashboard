@@ -14,8 +14,8 @@ from src.domains.collection_job.models import CollectionJob
 from src.domains.collection_job.schemas import ScheduleConfig
 from src.domains.collection_job.services import CollectionJobService
 from src.domains.task.enums import TaskType
-from src.domains.task.schemas import SHOP_DASHBOARD_OVERRIDE_KEYS
 from src.tasks.bootstrap import (
+    SHOP_DASHBOARD_OVERRIDE_KEYS,
     TASK_TYPE_QUEUE_NAME_MAPPING,
     TASK_TYPE_TASK_FUNC_MAPPING,
 )

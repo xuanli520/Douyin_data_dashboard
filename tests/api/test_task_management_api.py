@@ -121,7 +121,10 @@ async def test_list_tasks_supports_pagination_and_filters(
     test_db,
 ):
     async with test_db() as session:
-        service = TaskService(session)
+        service = TaskService(
+            session=session,
+            dispatcher_registry=build_task_dispatcher_registry(),
+        )
         await service.create_task(
             TaskDefinitionCreate(
                 name="orders-active",
@@ -205,10 +208,13 @@ async def test_run_task_and_list_executions(
     test_db,
     monkeypatch,
 ):
-    from src.domains.task import services as module
+    from src.tasks import bootstrap as module
 
     async with test_db() as session:
-        service = TaskService(session)
+        service = TaskService(
+            session=session,
+            dispatcher_registry=build_task_dispatcher_registry(),
+        )
         task = await service.create_task(
             TaskDefinitionCreate(name="orders", task_type=TaskType.ETL_ORDERS),
             created_by_id=permission_data.id,
@@ -254,12 +260,15 @@ async def test_run_shop_dashboard_task_persists_payload_and_dispatches_overrides
     test_db,
     monkeypatch,
 ):
-    from src.domains.task import services as module
+    from src.tasks import bootstrap as module
 
     captured: dict[str, object] = {}
 
     async with test_db() as session:
-        service = TaskService(session)
+        service = TaskService(
+            session=session,
+            dispatcher_registry=build_task_dispatcher_registry(),
+        )
         task = await service.create_task(
             TaskDefinitionCreate(
                 name="shop-dashboard",
@@ -328,7 +337,10 @@ async def test_cancel_task(
     test_db,
 ):
     async with test_db() as session:
-        service = TaskService(session)
+        service = TaskService(
+            session=session,
+            dispatcher_registry=build_task_dispatcher_registry(),
+        )
         task = await service.create_task(
             TaskDefinitionCreate(name="products", task_type=TaskType.ETL_PRODUCTS),
             created_by_id=permission_data.id,
@@ -356,7 +368,10 @@ async def test_run_task_rejects_cancelled_task(
     test_db,
 ):
     async with test_db() as session:
-        service = TaskService(session)
+        service = TaskService(
+            session=session,
+            dispatcher_registry=build_task_dispatcher_registry(),
+        )
         task = await service.create_task(
             TaskDefinitionCreate(
                 name="orders-cancelled",
@@ -390,7 +405,10 @@ async def test_run_shop_dashboard_task_requires_positive_ids(
     test_db,
 ):
     async with test_db() as session:
-        service = TaskService(session)
+        service = TaskService(
+            session=session,
+            dispatcher_registry=build_task_dispatcher_registry(),
+        )
         task = await service.create_task(
             TaskDefinitionCreate(
                 name="shop-dashboard-invalid-payload",

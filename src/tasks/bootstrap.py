@@ -5,10 +5,31 @@ from typing import Any
 
 from src.domains.task.dispatch import TaskDispatcherRegistry
 from src.domains.task.enums import TaskType
-from src.domains.task.schemas import SHOP_DASHBOARD_OVERRIDE_KEYS
 from src.tasks.collection.douyin_shop_dashboard import sync_shop_dashboard
 from src.tasks.etl.orders import process_orders
 from src.tasks.etl.products import process_products
+
+SHOP_DASHBOARD_OVERRIDE_KEYS: tuple[str, ...] = (
+    "shop_id",
+    "shop_ids",
+    "all",
+    "granularity",
+    "timezone",
+    "time_range",
+    "incremental_mode",
+    "backfill_last_n_days",
+    "data_latency",
+    "filters",
+    "dimensions",
+    "metrics",
+    "dedupe_key",
+    "rate_limit",
+    "top_n",
+    "sort_by",
+    "include_long_tail",
+    "session_level",
+    "extra_config",
+)
 
 TASK_TYPE_QUEUE_NAME_MAPPING: dict[TaskType, str] = {
     TaskType.ETL_ORDERS: "etl_orders",

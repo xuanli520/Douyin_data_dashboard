@@ -150,14 +150,14 @@ async def test_collection_usecase_should_be_idempotent_by_execution_id(
         test_db,
         raising=False,
     )
-    monkeypatch.setattr(module, "_collect_one_day", _collect_success)
+    monkeypatch.setattr(module, "collect_one_day", _collect_success)
     monkeypatch.setattr(module, "BrowserScraper", lambda: object())
     monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
     monkeypatch.setattr(module, "LockManager", _FakeLockManager)
     monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
     monkeypatch.setattr(
         module,
-        "_materialize_runtime_storage_state",
+        "materialize_runtime_storage_state",
         lambda runtime, _store: runtime,
     )
 

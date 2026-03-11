@@ -839,3 +839,9 @@ def _supports_shared_helpers(collector: Any) -> bool:
         return True
     required = {"lock_manager", "state_store", "login_state_manager"}
     return required.issubset(parameters.keys())
+
+
+collect_one_day = _collect_one_day
+RateLimiter = _RateLimiter
+build_business_key = _build_business_key
+materialize_runtime_storage_state = _materialize_runtime_storage_state

@@ -8,6 +8,7 @@ from src.domains.task.enums import TaskType
 from src.domains.task.schemas import TaskDefinitionCreate, TaskExecutionCreate
 from src.domains.task.services import TaskService
 from src.main import app
+from src.tasks.bootstrap import build_task_dispatcher_registry
 
 
 class MockCaptchaService:
@@ -114,7 +115,10 @@ async def test_task_status_read_from_task_executions(
     api_client, permission_data, test_db
 ):
     async with test_db() as session:
-        service = TaskService(session)
+        service = TaskService(
+            session=session,
+            dispatcher_registry=build_task_dispatcher_registry(),
+        )
         task = await service.create_task(
             TaskDefinitionCreate(name="orders", task_type=TaskType.ETL_ORDERS),
             created_by_id=permission_data.id,

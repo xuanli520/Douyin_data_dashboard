@@ -211,7 +211,7 @@ async def test_collection_usecase_should_map_login_expired_to_task_exception(
     )
     monkeypatch.setattr(
         module,
-        "_collect_one_day",
+        "collect_one_day",
         _raise_login_expired,
     )
     monkeypatch.setattr(module, "BrowserScraper", lambda: object())
@@ -220,7 +220,7 @@ async def test_collection_usecase_should_map_login_expired_to_task_exception(
     monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
     monkeypatch.setattr(
         module,
-        "_materialize_runtime_storage_state",
+        "materialize_runtime_storage_state",
         lambda runtime, _store: runtime,
     )
 

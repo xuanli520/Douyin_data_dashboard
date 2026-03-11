@@ -36,12 +36,6 @@ from src.domains.task.schemas import (
     TaskExecutionCreate,
 )
 from src.session import get_session
-from src.tasks import bootstrap as task_bootstrap
-from src.tasks.bootstrap import build_task_dispatcher_registry
-
-process_orders = task_bootstrap.process_orders
-process_products = task_bootstrap.process_products
-sync_shop_dashboard = task_bootstrap.sync_shop_dashboard
 
 
 class TaskService:
@@ -55,9 +49,9 @@ class TaskService:
         self.session = session
         self.task_repo = task_repo or TaskDefinitionRepository(session)
         self.execution_repo = execution_repo or TaskExecutionRepository(session)
-        self.dispatcher_registry = (
-            dispatcher_registry or build_task_dispatcher_registry()
-        )
+        if dispatcher_registry is None:
+            raise TypeError("dispatcher_registry is required")
+        self.dispatcher_registry = dispatcher_registry
         self._events: list[TaskDomainEvent] = []
 
     @property
@@ -342,6 +336,8 @@ def get_task_dispatcher_registry(request: Request) -> TaskDispatcherRegistry:
     registry = getattr(request.app.state, "task_dispatcher_registry", None)
     if isinstance(registry, TaskDispatcherRegistry):
         return registry
+    from src.tasks.bootstrap import build_task_dispatcher_registry
+
     registry = build_task_dispatcher_registry()
     request.app.state.task_dispatcher_registry = registry
     return registry

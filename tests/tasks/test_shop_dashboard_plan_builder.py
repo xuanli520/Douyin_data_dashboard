@@ -11,7 +11,7 @@ from src.domains.data_source.enums import (
 from src.domains.data_source.models import DataSource
 from src.domains.scraping_rule.models import ScrapingRule
 from src.scrapers.shop_dashboard.rule_config_resolver import resolve_rule_config
-from src.tasks.collection.shop_dashboard_plan_builder import (
+from src.application.collection.plan_builder_impl import (
     _shift_month,
     build_collection_plan,
 )
