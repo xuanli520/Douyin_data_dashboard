@@ -38,6 +38,7 @@ class TaskExecution(SQLModel, TimestampMixin, table=True):
     __table_args__ = (
         Index("idx_task_executions_task_id_created_at", "task_id", "created_at"),
         Index("ux_task_executions_queue_task_id", "queue_task_id", unique=True),
+        Index("ux_task_executions_idempotency_key", "idempotency_key", unique=True),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -47,9 +48,12 @@ class TaskExecution(SQLModel, TimestampMixin, table=True):
         ondelete="CASCADE",
     )
     queue_task_id: str | None = Field(default=None, max_length=100)
+    idempotency_key: str | None = Field(default=None, max_length=160)
     status: TaskExecutionStatus = Field(default=TaskExecutionStatus.QUEUED, index=True)
     trigger_mode: TaskTriggerMode = Field(default=TaskTriggerMode.MANUAL)
     payload: dict | None = Field(default=None, sa_type=JSON)
+    rule_version: int | None = Field(default=None)
+    effective_config_snapshot: dict | None = Field(default=None, sa_type=JSON)
     started_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     completed_at: datetime | None = Field(
         default=None,

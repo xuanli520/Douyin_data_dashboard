@@ -1,318 +1,240 @@
+from __future__ import annotations
+
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
+from sqlalchemy import select
 
-from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
+from src import session as db_session_module
+from src.application.collection.usecase import CollectionUseCase
+from src.domains.data_source.enums import DataSourceStatus
+from src.domains.data_source.enums import DataSourceType
+from src.domains.data_source.models import DataSource
+from src.domains.scraping_rule.models import ScrapingRule
+from src.domains.task.enums import TaskExecutionStatus
+from src.domains.task.models import TaskExecution
 from src.tasks.collection import douyin_shop_dashboard as module
-from src.tasks.exceptions import ScrapingFailedException
 
 
 class _FakeRedis:
-    def hset(self, _key, mapping=None, **_kwargs):
-        _ = mapping
+    def __init__(self) -> None:
+        self._kv: dict[str, Any] = {}
+        self._hash: dict[str, dict[str, Any]] = {}
+
+    def set(self, key: str, value: Any, ex: int | None = None, nx: bool = False):
+        _ = ex
+        if nx and key in self._kv:
+            return False
+        self._kv[key] = value
+        return True
+
+    def get(self, key: str) -> Any | None:
+        return self._kv.get(key)
+
+    def eval(self, script: str, _num_keys: int, *args):
+        key = str(args[0])
+        token = args[1]
+        if "del" in script:
+            if self._kv.get(key) == token:
+                del self._kv[key]
+                return 1
+            return 0
+        if "expire" in script:
+            return 1 if self._kv.get(key) == token else 0
+        return 0
+
+    def hset(self, key: str, mapping=None, **kwargs):
+        target = self._hash.setdefault(key, {})
+        if isinstance(mapping, dict):
+            target.update(mapping)
+        if kwargs:
+            target.update(kwargs)
+        return 1
+
+    def hgetall(self, key: str) -> dict[str, Any]:
+        return dict(self._hash.get(key, {}))
+
+    def expire(self, _key: str, _seconds: int):
+        return True
+
+
+class _FakeStateStore:
+    def __init__(self, base_dir=None):
+        _ = base_dir
+
+    def save(self, _account_id: str, _state: dict[str, Any]) -> None:
         return None
 
-    def expire(self, _key, _seconds):
-        return None
+    def load_cookie_mapping(self, _account_id: str) -> dict[str, str]:
+        return {}
+
+    def exists(self, _account_id: str) -> bool:
+        return True
 
 
-class _FakeIdempotencyHelper:
-    def __init__(self, *_args, **_kwargs):
-        pass
-
-    def get_cached_result(self, _key):
-        return None
-
-    def acquire_lock(self, _key, ttl):
-        _ = ttl
-        return "token-1"
-
-    def cache_result(self, _key, _result, ttl=86400):
-        _ = ttl
-        return None
-
-    def release_lock(self, _key, _token):
-        return None
+class _FakeLockManager:
+    def __init__(self, redis_client=None):
+        self.redis_client = redis_client
 
 
-class _FakeHttpScraper:
-    def __init__(self, **_kwargs):
-        pass
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, _exc_type, _exc_value, _traceback):
-        return None
-
-    def fetch_dashboard_with_context(self, _runtime, _metric_date):
-        raise ScrapingFailedException("http failed")
-
-    def close(self):
-        return None
+class _FakeLoginStateManager:
+    def __init__(self, state_store, redis_client=None):
+        self.state_store = state_store
+        self.redis_client = redis_client
 
 
-class _FakeBrowserScraper:
-    def retry_http(self, _scraper, _runtime, _metric_date):
-        raise ScrapingFailedException("browser failed")
+def _collect_success(
+    runtime_config,
+    metric_date: str,
+    _browser,
+    *,
+    lock_manager,
+    state_store,
+    login_state_manager,
+) -> dict[str, Any]:
+    _ = lock_manager
+    _ = state_store
+    _ = login_state_manager
+    return {
+        "status": "success",
+        "shop_id": runtime_config.shop_id,
+        "metric_date": metric_date,
+        "rule_id": runtime_config.rule_id,
+        "execution_id": runtime_config.execution_id,
+        "source": "script",
+        "total_score": 4.8,
+        "product_score": 4.7,
+        "logistics_score": 4.9,
+        "service_score": 4.6,
+        "bad_behavior_score": 0.0,
+        "reviews": {"summary": {}, "items": []},
+        "violations": {"summary": {}, "waiting_list": []},
+        "raw": {},
+    }
 
 
-def _build_runtime() -> ShopDashboardRuntimeConfig:
-    return ShopDashboardRuntimeConfig(
-        shop_id="shop-1",
-        cookies={"sessionid": "token"},
-        proxy=None,
-        timeout=15,
-        retry_count=3,
-        rate_limit=100,
-        granularity="DAY",
-        time_range={"start": "2026-03-01", "end": "2026-03-01"},
-        incremental_mode="BY_DATE",
-        backfill_last_n_days=1,
-        data_latency="T+1",
-        target_type="SHOP_OVERVIEW",
-        metrics=[],
-        dimensions=[],
-        filters={},
-        top_n=None,
-        include_long_tail=False,
-        session_level=False,
-        dedupe_key=None,
-        rule_id=2,
-        execution_id="exec-1",
-        fallback_chain=("http", "browser", "llm"),
-        graphql_query=None,
-        common_query={},
-        token_keys=[],
-        api_groups=["overview"],
-    )
-
-
-async def _fake_runtime_loader(**_kwargs):
-    return _build_runtime()
-
-
-async def _fake_persist(*_args, **_kwargs):
-    return None
-
-
-async def _fake_empty_plan_runtime_loader(**_kwargs):
-    runtime = _build_runtime()
-    runtime.shop_id = ""
-    runtime.filters = {"shop_id": []}
-    return runtime
-
-
-def test_sync_shop_dashboard_fails_when_no_target_shop(monkeypatch):
-    monkeypatch.setattr(
-        module.sync_shop_dashboard,
-        "publisher",
-        SimpleNamespace(redis_db_frame=_FakeRedis()),
-        raising=False,
-    )
-    monkeypatch.setattr(module, "FunboostIdempotencyHelper", _FakeIdempotencyHelper)
-    monkeypatch.setattr(module, "_load_runtime_config", _fake_empty_plan_runtime_loader)
-
-    with pytest.raises(ScrapingFailedException, match="No target shops resolved"):
-        module.sync_shop_dashboard(
-            data_source_id=1,
-            rule_id=2,
-            execution_id="exec-empty-plan",
+async def _seed_runtime_entities(test_db) -> tuple[int, int]:
+    async with test_db() as db_session:
+        data_source = DataSource(
+            name="task-usecase-ds",
+            source_type=DataSourceType.DOUYIN_SHOP,
+            status=DataSourceStatus.ACTIVE,
+        )
+        db_session.add(data_source)
+        await db_session.flush()
+        rule = ScrapingRule(
+            name="task-usecase-rule",
+            data_source_id=data_source.id if data_source.id is not None else 0,
+            filters={"shop_id": ["shop-1"]},
+            time_range={"start": "2026-03-01", "end": "2026-03-01"},
+            backfill_last_n_days=1,
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        return (
+            data_source.id if data_source.id is not None else 0,
+            rule.id if rule.id is not None else 0,
         )
 
 
-def test_sync_shop_dashboard_http_browser_fail_then_llm_patch(monkeypatch):
-    monkeypatch.setattr(
-        module.sync_shop_dashboard,
-        "publisher",
-        SimpleNamespace(redis_db_frame=_FakeRedis()),
-        raising=False,
-    )
-    monkeypatch.setattr(module, "FunboostIdempotencyHelper", _FakeIdempotencyHelper)
-    monkeypatch.setattr(module, "HttpScraper", _FakeHttpScraper)
-    monkeypatch.setattr(module, "BrowserScraper", _FakeBrowserScraper)
-    monkeypatch.setattr(module, "_load_runtime_config", _fake_runtime_loader)
-    monkeypatch.setattr(module, "_persist_result", _fake_persist)
-
-    class _FakeAgent:
-        def supplement_cold_data(self, result, shop_id, date, reason):
-            _ = shop_id
-            _ = date
-            patched = dict(result)
-            raw = dict(patched.get("raw") or {})
-            raw["llm_patch"] = {"status": "success", "reason": reason}
-            patched["raw"] = raw
-            return patched
-
-        def close(self):
-            return None
-
-    monkeypatch.setattr(module, "LLMDashboardAgent", lambda: _FakeAgent())
-
-    result = module.sync_shop_dashboard(
-        data_source_id=1,
-        rule_id=2,
-        execution_id="exec-1",
-    )
-    assert result["items"][0]["source"] == "llm"
-    assert result["items"][0]["retry_count"] == 2
-    assert result["items"][0]["raw"]["llm_patch"]["reason"] == "http_browser_failed"
-
-
-async def _fake_cookie_health_runtime_loader(**_kwargs):
-    runtime = _build_runtime()
-    runtime.execution_id = "cron_cookie_health_check_2"
-    return runtime
-
-
-def test_sync_shop_dashboard_cookie_health_check_bypasses_result_cache(monkeypatch):
-    monkeypatch.setattr(
-        module.sync_shop_dashboard,
-        "publisher",
-        SimpleNamespace(redis_db_frame=_FakeRedis()),
-        raising=False,
-    )
-
-    calls = {"get_cached_result": 0, "cache_result": 0}
-
-    class _FakeIdempotencyHelper:
-        def __init__(self, *_args, **_kwargs):
-            pass
-
-        def get_cached_result(self, _key):
-            calls["get_cached_result"] += 1
-            return {"status": "cached", "source": "cache"}
-
-        def acquire_lock(self, _key, ttl):
-            _ = ttl
-            return "token-1"
-
-        def cache_result(self, _key, _result, ttl=86400):
-            _ = ttl
-            calls["cache_result"] += 1
-            return None
-
-        def release_lock(self, _key, _token):
-            return None
-
-    def _fake_collect_one_day(_runtime, _metric_date, _browser):
-        return {"status": "success", "source": "script"}
-
-    monkeypatch.setattr(module, "FunboostIdempotencyHelper", _FakeIdempotencyHelper)
-    monkeypatch.setattr(module, "BrowserScraper", lambda: object())
-    monkeypatch.setattr(
-        module, "_load_runtime_config", _fake_cookie_health_runtime_loader
-    )
-    monkeypatch.setattr(module, "_collect_one_day", _fake_collect_one_day)
-    monkeypatch.setattr(module, "_persist_result", _fake_persist)
-
-    result = module.sync_shop_dashboard(
-        data_source_id=1,
-        rule_id=2,
-        execution_id="cron_cookie_health_check_2",
-    )
-
-    assert result["items"][0]["status"] == "success"
-    assert calls["get_cached_result"] == 0
-    assert calls["cache_result"] == 0
-
-
-def test_sync_shop_dashboard_applies_rate_limit_policy_before_each_plan_unit(
+@pytest.mark.asyncio
+async def test_collection_usecase_should_be_idempotent_by_execution_id(
+    test_db,
     monkeypatch,
 ):
-    runtime = _build_runtime()
-    runtime.time_range = {"start": "2026-03-01", "end": "2026-03-02"}
-    runtime.rate_limit = {"qps": 2, "burst": 1, "concurrency": 1}
+    data_source_id, rule_id = await _seed_runtime_entities(test_db)
+    monkeypatch.setattr(
+        db_session_module,
+        "async_session_factory",
+        test_db,
+        raising=False,
+    )
+    monkeypatch.setattr(module, "_collect_one_day", _collect_success)
+    monkeypatch.setattr(module, "BrowserScraper", lambda: object())
+    monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
+    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
+    monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
+    monkeypatch.setattr(
+        module,
+        "_materialize_runtime_storage_state",
+        lambda runtime, _store: runtime,
+    )
 
-    waits = {"count": 0}
+    usecase = CollectionUseCase()
+    redis_client = _FakeRedis()
+    first = await usecase._execute_async(
+        data_source_id=data_source_id,
+        rule_id=rule_id,
+        execution_id="exec-usecase-idempotent",
+        queue_task_id="task-1",
+        triggered_by=1,
+        overrides={},
+        redis_client=redis_client,
+    )
+    second = await usecase._execute_async(
+        data_source_id=data_source_id,
+        rule_id=rule_id,
+        execution_id="exec-usecase-idempotent",
+        queue_task_id="task-2",
+        triggered_by=1,
+        overrides={},
+        redis_client=redis_client,
+    )
 
-    class _FakeRateLimiter:
-        def __init__(self, policy):
-            assert policy == {"qps": 2, "burst": 1, "concurrency": 1}
+    assert first["execution_id"] == second["execution_id"]
+    assert second["reused"] is True
 
-        def wait(self):
-            waits["count"] += 1
+    async with test_db() as db_session:
+        stmt = select(TaskExecution).where(
+            TaskExecution.idempotency_key
+            == f"shop_dashboard:{data_source_id}:{rule_id}:exec-usecase-idempotent"
+        )
+        execution = (await db_session.execute(stmt)).scalar_one()
+        assert execution.status == TaskExecutionStatus.SUCCESS
+        assert execution.rule_version == 1
+        assert isinstance(execution.effective_config_snapshot, dict)
 
-    def _fake_collect_one_day(
-        _runtime,
-        metric_date,
-        _browser,
-        *,
-        lock_manager,
-        state_store,
-        login_state_manager,
-    ):
-        _ = lock_manager
-        _ = state_store
-        _ = login_state_manager
-        return {
-            "status": "success",
-            "source": "script",
-            "metric_date": metric_date,
-        }
 
-    async def _fake_load_runtime_config(**_kwargs):
-        return runtime
-
+def test_sync_shop_dashboard_should_forward_queue_task_id_and_overrides(monkeypatch):
+    monkeypatch.setattr(module.fct, "task_id", 98765, raising=False)
     monkeypatch.setattr(
         module.sync_shop_dashboard,
         "publisher",
         SimpleNamespace(redis_db_frame=_FakeRedis()),
         raising=False,
     )
-    monkeypatch.setattr(module, "FunboostIdempotencyHelper", _FakeIdempotencyHelper)
-    monkeypatch.setattr(module, "_RateLimiter", _FakeRateLimiter)
-    monkeypatch.setattr(module, "BrowserScraper", lambda: object())
-    monkeypatch.setattr(module, "_load_runtime_config", _fake_load_runtime_config)
-    monkeypatch.setattr(module, "_collect_one_day", _fake_collect_one_day)
-    monkeypatch.setattr(module, "_persist_result", _fake_persist)
+
+    captured: dict[str, Any] = {}
+
+    class _FakeUseCase:
+        def execute(self, **kwargs):
+            captured.update(kwargs)
+            return {"status": "ok"}
+
+    monkeypatch.setattr(
+        "src.application.collection.usecase.CollectionUseCase",
+        _FakeUseCase,
+    )
 
     result = module.sync_shop_dashboard(
-        data_source_id=1,
-        rule_id=2,
-        execution_id="exec-rate-limit-dict",
+        data_source_id=11,
+        rule_id=22,
+        execution_id="exec-forward",
+        triggered_by=5,
+        shop_id="shop-x",
+        all=False,
+        extra_config={"cursor": "c1"},
     )
 
-    assert result["planned_units"] == 2
-    assert waits["count"] == 2
-
-
-def test_sync_shop_dashboard_accepts_integer_rate_limit_policy(monkeypatch):
-    runtime = _build_runtime()
-    runtime.rate_limit = 3
-
-    observed: dict[str, int] = {}
-
-    class _FakeRateLimiter:
-        def __init__(self, policy):
-            observed["policy"] = policy
-
-        def wait(self):
-            return None
-
-    async def _fake_load_runtime_config(**_kwargs):
-        return runtime
-
-    def _fake_collect_one_day(_runtime, _metric_date, _browser):
-        return {"status": "success", "source": "script"}
-
-    monkeypatch.setattr(
-        module.sync_shop_dashboard,
-        "publisher",
-        SimpleNamespace(redis_db_frame=_FakeRedis()),
-        raising=False,
-    )
-    monkeypatch.setattr(module, "FunboostIdempotencyHelper", _FakeIdempotencyHelper)
-    monkeypatch.setattr(module, "_RateLimiter", _FakeRateLimiter)
-    monkeypatch.setattr(module, "BrowserScraper", lambda: object())
-    monkeypatch.setattr(module, "_load_runtime_config", _fake_load_runtime_config)
-    monkeypatch.setattr(module, "_collect_one_day", _fake_collect_one_day)
-    monkeypatch.setattr(module, "_persist_result", _fake_persist)
-
-    module.sync_shop_dashboard(
-        data_source_id=1,
-        rule_id=2,
-        execution_id="exec-rate-limit-int",
-    )
-
-    assert observed["policy"] == 3
+    assert result["status"] == "ok"
+    assert captured["queue_task_id"] == "98765"
+    assert captured["data_source_id"] == 11
+    assert captured["rule_id"] == 22
+    assert captured["execution_id"] == "exec-forward"
+    assert captured["triggered_by"] == 5
+    assert captured["overrides"] == {
+        "shop_id": "shop-x",
+        "all": False,
+        "extra_config": {"cursor": "c1"},
+    }

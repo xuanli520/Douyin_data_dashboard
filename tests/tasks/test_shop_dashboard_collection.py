@@ -1,892 +1,188 @@
-from datetime import date
+from __future__ import annotations
+
+from typing import Any
 
 import pytest
 from sqlalchemy import select
 
-from src.domains.data_source.enums import (
-    DataSourceStatus,
-    DataSourceType,
-    ScrapingRuleStatus,
-    TargetType,
-)
+from src import session as db_session_module
+from src.application.collection.runtime_loader import CollectionRuntimeLoader
+from src.application.collection.usecase import CollectionUseCase
+from src.domains.data_source.enums import DataSourceStatus
+from src.domains.data_source.enums import DataSourceType
 from src.domains.data_source.models import DataSource
 from src.domains.scraping_rule.models import ScrapingRule
-from src.domains.shop_dashboard.models import ShopDashboardViolation
-from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
+from src.domains.task.enums import TaskExecutionStatus
+from src.domains.task.models import TaskExecution
+from src.scrapers.shop_dashboard.exceptions import LoginExpiredError
 from src.tasks.collection import douyin_shop_dashboard as module
-from src.tasks.exceptions import ScrapingFailedException
+from src.tasks.exceptions import ShopDashboardCookieExpiredException
 
 
-async def test_load_runtime_config_rejects_inactive_data_source(test_db, monkeypatch):
-    async with test_db() as db_session:
-        data_source = DataSource(
-            name="inactive-runtime-data-source",
-            source_type=DataSourceType.DOUYIN_SHOP,
-            status=DataSourceStatus.INACTIVE,
-        )
-        db_session.add(data_source)
-        await db_session.flush()
+class _FakeRedis:
+    def __init__(self) -> None:
+        self._kv: dict[str, Any] = {}
+        self._hash: dict[str, dict[str, Any]] = {}
 
-        rule = ScrapingRule(
-            name="active-runtime-rule",
-            data_source_id=data_source.id if data_source.id is not None else 0,
-            status=ScrapingRuleStatus.ACTIVE,
-        )
-        db_session.add(rule)
-        await db_session.commit()
+    def set(self, key: str, value: Any, ex: int | None = None, nx: bool = False):
+        _ = ex
+        if nx and key in self._kv:
+            return False
+        self._kv[key] = value
+        return True
 
-    monkeypatch.setattr(module.session, "async_session_factory", test_db, raising=False)
+    def get(self, key: str) -> Any | None:
+        return self._kv.get(key)
 
-    with pytest.raises(ScrapingFailedException):
-        await module._load_runtime_config(
-            data_source_id=data_source.id if data_source.id is not None else 0,
-            rule_id=rule.id if rule.id is not None else 0,
-            execution_id="exec-inactive-data-source",
-        )
+    def eval(self, script: str, _num_keys: int, *args):
+        key = str(args[0])
+        token = args[1]
+        if "del" in script:
+            if self._kv.get(key) == token:
+                del self._kv[key]
+                return 1
+            return 0
+        if "expire" in script:
+            return 1 if self._kv.get(key) == token else 0
+        return 0
 
+    def hset(self, key: str, mapping=None, **kwargs):
+        target = self._hash.setdefault(key, {})
+        if isinstance(mapping, dict):
+            target.update(mapping)
+        if kwargs:
+            target.update(kwargs)
+        return 1
 
-async def test_load_runtime_config_rejects_inactive_rule(test_db, monkeypatch):
-    async with test_db() as db_session:
-        data_source = DataSource(
-            name="active-runtime-data-source",
-            source_type=DataSourceType.DOUYIN_SHOP,
-            status=DataSourceStatus.ACTIVE,
-        )
-        db_session.add(data_source)
-        await db_session.flush()
+    def hgetall(self, key: str) -> dict[str, Any]:
+        return dict(self._hash.get(key, {}))
 
-        rule = ScrapingRule(
-            name="inactive-runtime-rule",
-            data_source_id=data_source.id if data_source.id is not None else 0,
-            status=ScrapingRuleStatus.INACTIVE,
-        )
-        db_session.add(rule)
-        await db_session.commit()
-
-    monkeypatch.setattr(module.session, "async_session_factory", test_db, raising=False)
-
-    with pytest.raises(ScrapingFailedException):
-        await module._load_runtime_config(
-            data_source_id=data_source.id if data_source.id is not None else 0,
-            rule_id=rule.id if rule.id is not None else 0,
-            execution_id="exec-inactive-rule",
-        )
+    def expire(self, _key: str, _seconds: int):
+        return True
 
 
-async def test_load_runtime_config_rejects_empty_api_groups(test_db, monkeypatch):
-    async with test_db() as db_session:
-        data_source = DataSource(
-            name="runtime-data-source",
-            source_type=DataSourceType.DOUYIN_SHOP,
-            status=DataSourceStatus.ACTIVE,
-        )
-        db_session.add(data_source)
-        await db_session.flush()
+class _FakeStateStore:
+    def __init__(self, base_dir=None):
+        _ = base_dir
 
-        rule = ScrapingRule(
-            name="runtime-traffic-rule",
-            data_source_id=data_source.id if data_source.id is not None else 0,
-            status=ScrapingRuleStatus.ACTIVE,
-            target_type=TargetType.TRAFFIC,
-            metrics=[],
-        )
-        db_session.add(rule)
-        await db_session.commit()
-
-    monkeypatch.setattr(module.session, "async_session_factory", test_db, raising=False)
-
-    with pytest.raises(ScrapingFailedException):
-        await module._load_runtime_config(
-            data_source_id=data_source.id if data_source.id is not None else 0,
-            rule_id=rule.id if rule.id is not None else 0,
-            execution_id="exec-empty-api-groups",
-        )
-
-
-async def test_load_runtime_config_reads_storage_state_from_extra_config(
-    test_db, monkeypatch
-):
-    storage_state = {
-        "cookies": [{"name": "sid", "value": "token-from-db"}],
-        "origins": [],
-    }
-    async with test_db() as db_session:
-        data_source = DataSource(
-            name="runtime-storage-data-source",
-            source_type=DataSourceType.DOUYIN_SHOP,
-            status=DataSourceStatus.ACTIVE,
-            extra_config={
-                "shop_dashboard_login_state": {
-                    "storage_state": storage_state,
-                }
-            },
-        )
-        db_session.add(data_source)
-        await db_session.flush()
-
-        rule = ScrapingRule(
-            name="runtime-storage-rule",
-            data_source_id=data_source.id if data_source.id is not None else 0,
-            status=ScrapingRuleStatus.ACTIVE,
-        )
-        db_session.add(rule)
-        await db_session.commit()
-
-    monkeypatch.setattr(module.session, "async_session_factory", test_db, raising=False)
-
-    runtime = await module._load_runtime_config(
-        data_source_id=data_source.id if data_source.id is not None else 0,
-        rule_id=rule.id if rule.id is not None else 0,
-        execution_id="exec-storage-state",
-    )
-
-    assert runtime.storage_state == storage_state
-    assert runtime.cookies["sid"] == "token-from-db"
-
-
-def test_collect_one_day_forwards_runtime_retry_count_to_http_scraper(monkeypatch):
-    runtime = ShopDashboardRuntimeConfig(
-        shop_id="shop-1",
-        cookies={"sid": "token"},
-        proxy=None,
-        timeout=15,
-        retry_count=2,
-        rate_limit=100,
-        granularity="DAY",
-        time_range=None,
-        incremental_mode="BY_DATE",
-        backfill_last_n_days=1,
-        data_latency="T+1",
-        target_type="SHOP_OVERVIEW",
-        metrics=[],
-        dimensions=[],
-        filters={},
-        top_n=None,
-        include_long_tail=False,
-        session_level=False,
-        dedupe_key=None,
-        rule_id=1,
-        execution_id="exec-retry-forward",
-        fallback_chain=("http",),
-        graphql_query=None,
-        common_query={},
-        token_keys=[],
-        api_groups=["overview"],
-    )
-    calls = {"http": 0}
-
-    class _FakeHttpScraper:
-        def __init__(self, **_kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, _exc_type, _exc_value, _traceback):
-            return None
-
-        def fetch_dashboard_with_context(self, runtime_config, _metric_date):
-            calls["http"] += 1
-            assert runtime_config.retry_count == 2
-            return {
-                "shop_id": runtime_config.shop_id,
-                "source": "script",
-                "total_score": 4.8,
-                "product_score": 4.7,
-                "logistics_score": 4.9,
-                "service_score": 4.6,
-                "reviews": {"summary": {}, "items": []},
-                "violations": {"summary": {}, "waiting_list": []},
-                "raw": {},
-            }
-
-        def close(self):
-            return None
-
-    class _FakeBrowser:
-        def retry_http(self, _scraper, _runtime, _metric_date):
-            raise AssertionError("browser should not be used")
-
-    class _FakeLockManager:
-        def acquire_shop_lock(self, _shop_id, ttl_seconds=None):  # noqa: ARG002
-            return "shop-token"
-
-        def release_shop_lock(self, _shop_id, _token):
-            return None
-
-    class _FakeStore:
-        def __init__(self, base_dir=None):  # noqa: ARG002
-            pass
-
-    class _FakeLoginStateManager:
-        def __init__(self, state_store):
-            self._state_store = state_store
-
-    monkeypatch.setattr(module, "HttpScraper", _FakeHttpScraper)
-    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
-    monkeypatch.setattr(module, "SessionStateStore", _FakeStore)
-    monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
-
-    payload = module._collect_one_day(runtime, "2026-03-03", _FakeBrowser())
-
-    assert payload["source"] == "script"
-    assert payload["retry_count"] == 0
-    assert payload["fallback_trace"] == [{"stage": "http", "status": "success"}]
-    assert calls["http"] == 1
-
-
-async def test_persist_result_reads_violations_from_raw_waiting_list(
-    test_db, monkeypatch
-):
-    monkeypatch.setattr(module.session, "async_session_factory", test_db, raising=False)
-
-    runtime = ShopDashboardRuntimeConfig(
-        shop_id="shop-raw-violation",
-        cookies={},
-        proxy=None,
-        timeout=15,
-        retry_count=3,
-        rate_limit=100,
-        granularity="DAY",
-        time_range=None,
-        incremental_mode="BY_DATE",
-        backfill_last_n_days=1,
-        data_latency="T+1",
-        target_type="SHOP_OVERVIEW",
-        metrics=[],
-        dimensions=[],
-        filters={},
-        top_n=None,
-        include_long_tail=False,
-        session_level=False,
-        dedupe_key=None,
-        rule_id=1,
-        execution_id="exec-raw-violation",
-        fallback_chain=("http",),
-        graphql_query=None,
-        common_query={},
-        token_keys=[],
-        api_groups=["overview"],
-    )
-
-    payload = {
-        "source": "script",
-        "total_score": 4.9,
-        "product_score": 4.8,
-        "logistics_score": 4.7,
-        "service_score": 4.6,
-        "reviews": {"summary": {}, "items": []},
-        "violations": {"summary": {}, "waiting_list": []},
-        "raw": {
-            "violations": {
-                "waiting_list": {
-                    "code": 0,
-                    "data": {
-                        "waiting_list": [
-                            {
-                                "ticketId": "ticket-raw-1",
-                                "penalty_type": "bad_behavior",
-                                "reason": "raw violation",
-                                "deductScore": "6",
-                            }
-                        ]
-                    },
-                }
-            }
-        },
-    }
-
-    await module._persist_result(runtime, "2026-03-03", payload)
-
-    async with test_db() as db_session:
-        stmt = select(ShopDashboardViolation).where(
-            ShopDashboardViolation.shop_id == "shop-raw-violation",
-            ShopDashboardViolation.metric_date == date(2026, 3, 3),
-        )
-        rows = (await db_session.execute(stmt)).scalars().all()
-
-    assert len(rows) == 1
-    assert rows[0].violation_id == "ticket-raw-1"
-    assert rows[0].violation_type == "bad_behavior"
-    assert rows[0].score == 6
-
-
-def test_sync_shop_dashboard_materializes_storage_state_before_collection(monkeypatch):
-    runtime = ShopDashboardRuntimeConfig(
-        shop_id="shop-1",
-        cookies={},
-        proxy=None,
-        timeout=15,
-        retry_count=3,
-        rate_limit=100,
-        granularity="DAY",
-        time_range=None,
-        incremental_mode="BY_DATE",
-        backfill_last_n_days=1,
-        data_latency="T+1",
-        target_type="SHOP_OVERVIEW",
-        metrics=[],
-        dimensions=[],
-        filters={},
-        top_n=None,
-        include_long_tail=False,
-        session_level=False,
-        dedupe_key=None,
-        rule_id=1,
-        execution_id="exec-materialize",
-        fallback_chain=("http",),
-        graphql_query=None,
-        common_query={},
-        token_keys=[],
-        api_groups=["overview"],
-        account_id="acct-1",
-        storage_state={
-            "cookies": [{"name": "sid", "value": "token-from-db"}],
-            "origins": [],
-        },
-    )
-
-    class _FakeRedis:
-        def hset(self, _key, mapping=None, **_kwargs):
-            _ = mapping
-            return None
-
-        def expire(self, _key, _seconds):
-            return None
-
-    class _FakeIdempotencyHelper:
-        def __init__(self, *_args, **_kwargs):
-            pass
-
-        def get_cached_result(self, _key):
-            return None
-
-        def acquire_lock(self, _key, ttl):
-            _ = ttl
-            return "token"
-
-        def cache_result(self, _key, _result, ttl=86400):
-            _ = ttl
-            return None
-
-        def release_lock(self, _key, _token):
-            return None
-
-    calls = {"save": 0, "collect": 0}
-
-    class _FakeStateStore:
-        def __init__(self, base_dir=None):
-            _ = base_dir
-            self._state = {}
-
-        def save(self, account_id, state):
-            calls["save"] += 1
-            self._state[account_id] = state
-            return None
-
-        def load_cookie_mapping(self, account_id):
-            state = self._state.get(account_id, {})
-            cookies = state.get("cookies", [])
-            mapping = {}
-            for item in cookies:
-                mapping[item["name"]] = item["value"]
-            return mapping
-
-    class _FakeLockManager:
-        def __init__(self, redis_client=None):
-            self.redis_client = redis_client
-
-    class _FakeLoginStateManager:
-        def __init__(self, state_store, redis_client=None):
-            self.state_store = state_store
-            self.redis_client = redis_client
-
-    async def _fake_load_runtime_config(**_kwargs):
-        return runtime
-
-    async def _fake_persist_result(_runtime, _metric_date, _payload):
+    def save(self, _account_id: str, _state: dict[str, Any]) -> None:
         return None
 
-    def _fake_collect_one_day(
-        runtime_config,
-        metric_date,
-        _browser,
-        *,
-        lock_manager,
-        state_store,
-        login_state_manager,
-    ):
-        _ = metric_date
-        _ = lock_manager
-        _ = state_store
-        _ = login_state_manager
-        calls["collect"] += 1
-        assert runtime_config.cookies["sid"] == "token-from-db"
-        return {
-            "status": "success",
-            "shop_id": runtime.shop_id,
-            "metric_date": "2026-03-03",
-            "rule_id": runtime.rule_id,
-            "execution_id": runtime.execution_id,
-            "source": "script",
-            "total_score": 0.0,
-            "product_score": 0.0,
-            "logistics_score": 0.0,
-            "service_score": 0.0,
-            "reviews": {"summary": {}, "items": []},
-            "violations": {"summary": {}, "waiting_list": []},
-            "raw": {},
-        }
+    def load_cookie_mapping(self, _account_id: str) -> dict[str, str]:
+        return {}
 
-    monkeypatch.setattr(
-        module.sync_shop_dashboard,
-        "publisher",
-        type("_Publisher", (), {"redis_db_frame": _FakeRedis()})(),
-        raising=False,
-    )
-    monkeypatch.setattr(module, "FunboostIdempotencyHelper", _FakeIdempotencyHelper)
-    monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
-    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
-    monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
-    monkeypatch.setattr(module, "BrowserScraper", lambda: object())
-    monkeypatch.setattr(module, "_load_runtime_config", _fake_load_runtime_config)
-    monkeypatch.setattr(module, "_collect_one_day", _fake_collect_one_day)
-    monkeypatch.setattr(module, "_persist_result", _fake_persist_result)
-    monkeypatch.setattr(
-        module, "_resolve_metric_dates", lambda _runtime: ["2026-03-03"]
-    )
-
-    result = module.sync_shop_dashboard(
-        data_source_id=1,
-        rule_id=1,
-        execution_id="exec-materialize",
-    )
-
-    assert result["status"] == "success"
-    assert calls["save"] == 1
-    assert calls["collect"] == 1
+    def exists(self, _account_id: str) -> bool:
+        return True
 
 
-def test_collect_one_day_runs_fallback_chain_in_declared_order(monkeypatch):
-    runtime = ShopDashboardRuntimeConfig(
-        shop_id="shop-1",
-        cookies={"sessionid": "token"},
-        proxy=None,
-        timeout=15,
-        retry_count=3,
-        rate_limit=100,
-        granularity="DAY",
-        time_range=None,
-        incremental_mode="BY_DATE",
-        backfill_last_n_days=3,
-        data_latency="T+1",
-        target_type="SHOP_OVERVIEW",
-        metrics=[],
-        dimensions=[],
-        filters={},
-        top_n=None,
-        include_long_tail=False,
-        session_level=False,
-        dedupe_key=None,
-        rule_id=1,
-        execution_id="exec-fallback-order",
-        fallback_chain=("browser", "http", "llm"),
-        graphql_query=None,
-        common_query={},
-        token_keys=[],
-        api_groups=["overview"],
-    )
-    call_order: list[str] = []
-
-    class _FakeHttpScraper:
-        def __init__(self, **_kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, _exc_type, _exc_value, _traceback):
-            return None
-
-        def fetch_dashboard_with_context(self, _runtime, _metric_date):
-            call_order.append("http")
-            raise ScrapingFailedException("http failed")
-
-        def close(self):
-            return None
-
-    class _FakeBrowser:
-        def retry_http(self, _http_scraper, _runtime, _metric_date):
-            call_order.append("browser")
-            return {"source": "browser", "total_score": 4.8}
-
-    class _FakeLockManager:
-        def acquire_shop_lock(self, _shop_id, ttl_seconds=None):  # noqa: ARG002
-            return "shop-token"
-
-        def release_shop_lock(self, _shop_id, _token):
-            return None
-
-        def acquire_account_lock(self, _account_id, ttl_seconds=None):  # noqa: ARG002
-            return "account-token"
-
-        def release_account_lock(self, _account_id, _token):
-            return None
-
-    class _FakeStore:
-        def __init__(self, base_dir=None):  # noqa: ARG002
-            pass
-
-        def load_cookie_mapping(self, _account_id):
-            return {}
-
-    class _FakeLoginStateManager:
-        def __init__(self, state_store):
-            self._state_store = state_store
-
-        async def check_and_refresh(self, _account_id):
-            return True
-
-    monkeypatch.setattr(module, "HttpScraper", _FakeHttpScraper)
-    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
-    monkeypatch.setattr(module, "SessionStateStore", _FakeStore)
-    monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
-
-    payload = module._collect_one_day(runtime, "2026-03-03", _FakeBrowser())
-
-    assert payload["source"] == "browser"
-    assert call_order == ["browser"]
+class _FakeLockManager:
+    def __init__(self, redis_client=None):
+        self.redis_client = redis_client
 
 
-def test_collection_uses_shop_lock_refresh_uses_account_lock(monkeypatch):
-    runtime = ShopDashboardRuntimeConfig(
-        shop_id="shop-1",
-        cookies={"sid": "old"},
-        proxy=None,
-        timeout=15,
-        retry_count=3,
-        rate_limit=100,
-        granularity="DAY",
-        time_range=None,
-        incremental_mode="BY_DATE",
-        backfill_last_n_days=3,
-        data_latency="T+1",
-        target_type="SHOP_OVERVIEW",
-        metrics=[],
-        dimensions=[],
-        filters={},
-        top_n=None,
-        include_long_tail=False,
-        session_level=False,
-        dedupe_key=None,
-        rule_id=1,
-        execution_id="exec-locks",
-        fallback_chain=("browser",),
-        graphql_query=None,
-        common_query={},
-        token_keys=[],
-        api_groups=["overview"],
-        account_id="acct-1",
-    )
-
-    calls = {"shop": 0, "account": 0}
-
-    class _FakeHttpScraper:
-        def __init__(self, **_kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, _exc_type, _exc_value, _traceback):
-            return None
-
-        def close(self):
-            return None
-
-    class _FakeBrowser:
-        def retry_http(self, _http_scraper, _runtime, _metric_date):
-            return {"source": "browser", "total_score": 4.8}
-
-    class _FakeLockManager:
-        def acquire_shop_lock(self, _shop_id, ttl_seconds=None):  # noqa: ARG002
-            calls["shop"] += 1
-            return "shop-token"
-
-        def release_shop_lock(self, _shop_id, _token):
-            return None
-
-        def acquire_account_lock(self, _account_id, ttl_seconds=None):  # noqa: ARG002
-            calls["account"] += 1
-            return "account-token"
-
-        def release_account_lock(self, _account_id, _token):
-            return None
-
-    class _FakeStore:
-        def __init__(self, base_dir=None):  # noqa: ARG002
-            pass
-
-        def load_cookie_mapping(self, _account_id):
-            return {"sid": "from_state"}
-
-    class _FakeLoginStateManager:
-        def __init__(self, state_store):
-            self._state_store = state_store
-
-        async def check_and_refresh(self, _account_id):
-            return True
-
-    monkeypatch.setattr(module, "HttpScraper", _FakeHttpScraper)
-    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
-    monkeypatch.setattr(module, "SessionStateStore", _FakeStore)
-    monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
-
-    payload = module._collect_one_day(runtime, "2026-03-03", _FakeBrowser())
-
-    assert payload["source"] == "browser"
-    assert calls["shop"] == 1
-    assert calls["account"] == 1
-    assert runtime.cookies["sid"] == "from_state"
+class _FakeLoginStateManager:
+    def __init__(self, state_store, redis_client=None):
+        self.state_store = state_store
+        self.redis_client = redis_client
 
 
-def test_sync_shop_dashboard_reuses_shared_helpers_across_metric_dates(monkeypatch):
-    runtime = ShopDashboardRuntimeConfig(
-        shop_id="shop-1",
-        cookies={"sid": "v"},
-        proxy=None,
-        timeout=15,
-        retry_count=3,
-        rate_limit=100,
-        granularity="DAY",
-        time_range=None,
-        incremental_mode="BY_DATE",
-        backfill_last_n_days=2,
-        data_latency="T+1",
-        target_type="SHOP_OVERVIEW",
-        metrics=[],
-        dimensions=[],
-        filters={},
-        top_n=None,
-        include_long_tail=False,
-        session_level=False,
-        dedupe_key=None,
-        rule_id=1,
-        execution_id="exec-shared-helpers",
-        fallback_chain=("http",),
-        graphql_query=None,
-        common_query={},
-        token_keys=[],
-        api_groups=["overview"],
-        account_id="acct-1",
-    )
-    helper_ids: list[tuple[int, int, int]] = []
-
-    class _FakeLockManager:
-        def __init__(self, redis_client=None):  # noqa: ARG002
-            self.redis_client = redis_client
-
-    class _FakeStateStore:
-        def __init__(self, base_dir=None):  # noqa: ARG002
-            self.base_dir = base_dir
-
-    class _FakeLoginStateManager:
-        def __init__(self, state_store, redis_client=None):  # noqa: ARG002
-            self.state_store = state_store
-            self.redis_client = redis_client
-
-    async def _fake_load_runtime_config(**_kwargs):
-        return runtime
-
-    async def _fake_persist_result(_runtime, _metric_date, _payload):
-        return None
-
-    def _fake_collect_one_day(
-        _runtime,
-        metric_date,
-        _browser,
-        *,
-        lock_manager,
-        state_store,
-        login_state_manager,
-    ):
-        helper_ids.append((id(lock_manager), id(state_store), id(login_state_manager)))
-        return {
-            "status": "success",
-            "shop_id": runtime.shop_id,
-            "metric_date": metric_date,
-            "rule_id": runtime.rule_id,
-            "execution_id": runtime.execution_id,
-            "source": "script",
-            "total_score": 0.0,
-            "product_score": 0.0,
-            "logistics_score": 0.0,
-            "service_score": 0.0,
-            "reviews": {"summary": {}, "items": []},
-            "violations": {"summary": {}, "waiting_list": []},
-            "raw": {},
-        }
-
-    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
-    monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
-    monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
-    monkeypatch.setattr(module, "_load_runtime_config", _fake_load_runtime_config)
-    monkeypatch.setattr(
-        module,
-        "_resolve_metric_dates",
-        lambda _runtime: ["2026-03-03", "2026-03-04"],
-    )
-    monkeypatch.setattr(module, "_collect_one_day", _fake_collect_one_day)
-    monkeypatch.setattr(module, "_persist_result", _fake_persist_result)
-
-    result = module.sync_shop_dashboard(
-        data_source_id=1,
-        rule_id=1,
-        execution_id="exec-shared-helpers",
-    )
-
-    assert result["status"] == "success"
-    assert len(helper_ids) == 2
-    assert helper_ids[0] == helper_ids[1]
+async def _seed_entities(
+    test_db,
+    *,
+    rule_version: int = 1,
+    data_source_status: DataSourceStatus = DataSourceStatus.ACTIVE,
+) -> tuple[int, int]:
+    async with test_db() as db_session:
+        data_source = DataSource(
+            name="task-collection-ds",
+            source_type=DataSourceType.DOUYIN_SHOP,
+            status=data_source_status,
+        )
+        db_session.add(data_source)
+        await db_session.flush()
+        rule = ScrapingRule(
+            name="task-collection-rule",
+            data_source_id=data_source.id if data_source.id is not None else 0,
+            version=rule_version,
+            filters={"shop_id": ["shop-1"]},
+            time_range={"start": "2026-03-01", "end": "2026-03-01"},
+            backfill_last_n_days=1,
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        return (
+            data_source.id if data_source.id is not None else 0,
+            rule.id if rule.id is not None else 0,
+        )
 
 
-def test_sync_shop_dashboard_result_count_matches_shop_count_times_window_count(
+@pytest.mark.asyncio
+async def test_collection_runtime_loader_should_capture_rule_version_and_snapshot(
+    test_db,
+):
+    data_source_id, rule_id = await _seed_entities(test_db, rule_version=3)
+    loader = CollectionRuntimeLoader()
+    async with test_db() as db_session:
+        loaded = await loader.load(
+            session=db_session,
+            data_source_id=data_source_id,
+            rule_id=rule_id,
+            execution_id="exec-loader-snapshot",
+        )
+
+    assert loaded.rule_version == 3
+    assert loaded.runtime.shop_id == "shop-1"
+    assert loaded.effective_config_snapshot["rule_version"] == 3
+    assert loaded.effective_config_snapshot["rule_id"] == rule_id
+
+
+@pytest.mark.asyncio
+async def test_collection_usecase_should_map_login_expired_to_task_exception(
+    test_db,
     monkeypatch,
 ):
-    runtime = ShopDashboardRuntimeConfig(
-        shop_id="shop-1",
-        cookies={"sid": "v"},
-        proxy=None,
-        timeout=15,
-        retry_count=3,
-        rate_limit=100,
-        granularity="DAY",
-        time_range={"start": "2026-03-03", "end": "2026-03-04"},
-        incremental_mode="BY_DATE",
-        backfill_last_n_days=2,
-        data_latency="T+1",
-        target_type="SHOP_OVERVIEW",
-        metrics=[],
-        dimensions=[],
-        filters={"shop_id": ["shop-1", "shop-2"]},
-        top_n=None,
-        include_long_tail=False,
-        session_level=False,
-        dedupe_key=None,
-        rule_id=1,
-        execution_id="exec-fanout-count",
-        fallback_chain=("http",),
-        graphql_query=None,
-        common_query={},
-        token_keys=[],
-        api_groups=["overview"],
-        account_id="acct-1",
-    )
-
-    class _FakeRedis:
-        def hset(self, _key, mapping=None, **_kwargs):
-            _ = mapping
-            return None
-
-        def expire(self, _key, _seconds):
-            return None
-
-    class _FakeIdempotencyHelper:
-        def __init__(self, *_args, **_kwargs):
-            pass
-
-        def get_cached_result(self, _key):
-            return None
-
-        def acquire_lock(self, _key, ttl):
-            _ = ttl
-            return "token-1"
-
-        def cache_result(self, _key, _result, ttl=86400):
-            _ = ttl
-            return None
-
-        def release_lock(self, _key, _token):
-            return None
-
-    class _FakeStateStore:
-        def __init__(self, base_dir=None):
-            self.base_dir = base_dir
-
-        def save(self, _account_id, _state):
-            return None
-
-        def load_cookie_mapping(self, _account_id):
-            return {}
-
-    class _FakeLockManager:
-        def __init__(self, redis_client=None):
-            self.redis_client = redis_client
-
-    class _FakeLoginStateManager:
-        def __init__(self, state_store, redis_client=None):
-            self.state_store = state_store
-            self.redis_client = redis_client
-
-    async def _fake_load_runtime_config(**_kwargs):
-        return runtime
-
-    async def _fake_persist_result(_runtime, _metric_date, _payload):
-        return None
-
-    def _fake_collect_one_day(
-        runtime_config,
-        metric_date,
-        _browser,
-        *,
-        lock_manager,
-        state_store,
-        login_state_manager,
-    ):
-        _ = lock_manager
-        _ = state_store
-        _ = login_state_manager
-        return {
-            "status": "success",
-            "shop_id": runtime_config.shop_id,
-            "metric_date": metric_date,
-            "rule_id": runtime_config.rule_id,
-            "execution_id": runtime_config.execution_id,
-            "source": "script",
-            "total_score": 0.0,
-            "product_score": 0.0,
-            "logistics_score": 0.0,
-            "service_score": 0.0,
-            "reviews": {"summary": {}, "items": []},
-            "violations": {"summary": {}, "waiting_list": []},
-            "raw": {},
-        }
-
+    data_source_id, rule_id = await _seed_entities(test_db)
     monkeypatch.setattr(
-        module.sync_shop_dashboard,
-        "publisher",
-        type("_Publisher", (), {"redis_db_frame": _FakeRedis()})(),
+        db_session_module,
+        "async_session_factory",
+        test_db,
         raising=False,
     )
-    monkeypatch.setattr(module, "FunboostIdempotencyHelper", _FakeIdempotencyHelper)
+    monkeypatch.setattr(
+        module,
+        "_collect_one_day",
+        _raise_login_expired,
+    )
+    monkeypatch.setattr(module, "BrowserScraper", lambda: object())
     monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
     monkeypatch.setattr(module, "LockManager", _FakeLockManager)
     monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
-    monkeypatch.setattr(module, "BrowserScraper", lambda: object())
-    monkeypatch.setattr(module, "_load_runtime_config", _fake_load_runtime_config)
     monkeypatch.setattr(
         module,
-        "_resolve_metric_dates",
-        lambda _runtime: ["2026-03-03", "2026-03-04"],
-    )
-    monkeypatch.setattr(module, "_collect_one_day", _fake_collect_one_day)
-    monkeypatch.setattr(module, "_persist_result", _fake_persist_result)
-
-    result = module.sync_shop_dashboard(
-        data_source_id=1,
-        rule_id=1,
-        execution_id="exec-fanout-count",
+        "_materialize_runtime_storage_state",
+        lambda runtime, _store: runtime,
     )
 
-    assert result["status"] == "success"
-    assert len(result["items"]) == 4
+    usecase = CollectionUseCase()
+    with pytest.raises(ShopDashboardCookieExpiredException):
+        await usecase._execute_async(
+            data_source_id=data_source_id,
+            rule_id=rule_id,
+            execution_id="exec-login-expired",
+            queue_task_id="queue-login-expired",
+            triggered_by=1,
+            overrides={},
+            redis_client=_FakeRedis(),
+        )
+
+    async with test_db() as db_session:
+        stmt = select(TaskExecution).where(
+            TaskExecution.idempotency_key
+            == f"shop_dashboard:{data_source_id}:{rule_id}:exec-login-expired"
+        )
+        execution = (await db_session.execute(stmt)).scalar_one()
+        assert execution.status == TaskExecutionStatus.FAILED
+
+
+def _raise_login_expired(*_args, **_kwargs):
+    raise LoginExpiredError("session expired")

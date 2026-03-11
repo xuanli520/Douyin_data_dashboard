@@ -90,6 +90,14 @@ class TaskExecutionRepository(BaseRepository):
         stmt = select(TaskExecution).where(TaskExecution.queue_task_id == queue_task_id)
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def get_by_idempotency_key(
+        self, idempotency_key: str
+    ) -> TaskExecution | None:
+        stmt = select(TaskExecution).where(
+            TaskExecution.idempotency_key == idempotency_key
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
     async def list_by_task_id(self, task_id: int) -> list[TaskExecution]:
         stmt = (
             select(TaskExecution)

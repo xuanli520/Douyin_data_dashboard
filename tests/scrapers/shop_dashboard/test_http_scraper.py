@@ -5,7 +5,8 @@ import httpx
 import pytest
 
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
-from src.tasks.exceptions import ScrapingFailedException
+from src.scrapers.shop_dashboard.exceptions import LoginExpiredError
+from src.scrapers.shop_dashboard.exceptions import ShopDashboardScraperError
 
 
 def _build_runtime(
@@ -183,7 +184,7 @@ def test_http_scraper_raises_when_login_expired():
         transport=transport, base_url="https://fxg.jinritemai.com"
     ) as client:
         scraper = HttpScraper(client=client, graphql_query="query X { __typename }")
-        with pytest.raises(ScrapingFailedException):
+        with pytest.raises(LoginExpiredError):
             scraper.fetch_dashboard("shop-1", "2026-03-03")
 
 
@@ -270,7 +271,7 @@ def test_http_scraper_rejects_empty_api_groups():
     ) as client:
         scraper = HttpScraper(client=client)
         runtime = _build_runtime(api_groups=[])
-        with pytest.raises(ScrapingFailedException):
+        with pytest.raises(ShopDashboardScraperError):
             scraper.fetch_dashboard_with_context(runtime, "2026-03-03")
 
 

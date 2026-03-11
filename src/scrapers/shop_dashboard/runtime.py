@@ -1,10 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from src.domains.data_source.models import DataSource
-from src.domains.scraping_rule.models import ScrapingRule
 from src.scrapers.shop_dashboard.rule_config_resolver import (
     ResolvedRuleConfig,
     resolve_rule_config,
@@ -48,8 +47,8 @@ class ShopDashboardRuntimeConfig:
 
 
 def build_runtime_config(
-    data_source: DataSource,
-    rule: ScrapingRule,
+    data_source: Any,
+    rule: Any,
     execution_id: str,
     overrides: dict[str, Any] | None = None,
 ) -> ShopDashboardRuntimeConfig:
@@ -67,9 +66,9 @@ def build_runtime_config(
         shop_id="",
         cookies={},
         proxy=None,
-        timeout=int(data_source.timeout or 30),
-        retry_count=int(data_source.retry_count or 3),
-        rate_limit=data_source.rate_limit,
+        timeout=int(_read_source_value(data_source, "timeout", 30) or 30),
+        retry_count=int(_read_source_value(data_source, "retry_count", 3) or 3),
+        rate_limit=_read_source_value(data_source, "rate_limit", None),
         granularity="DAY",
         time_range=None,
         incremental_mode="BY_DATE",
@@ -83,7 +82,7 @@ def build_runtime_config(
         include_long_tail=False,
         session_level=False,
         dedupe_key=None,
-        rule_id=int(rule.id or 0),
+        rule_id=int(_read_source_value(rule, "id", 0) or 0),
         execution_id=execution_id,
         fallback_chain=("http", "browser", "agent"),
         graphql_query=None,
@@ -94,8 +93,8 @@ def build_runtime_config(
 
 
 def build_runtime_configs(
-    data_source: DataSource,
-    rule: ScrapingRule,
+    data_source: Any,
+    rule: Any,
     execution_id: str,
     overrides: dict[str, Any] | None = None,
 ) -> list[ShopDashboardRuntimeConfig]:
@@ -113,6 +112,12 @@ def build_runtime_configs(
     if not shop_ids:
         return []
     return [_build_runtime_from_resolved(resolved, shop_id) for shop_id in shop_ids]
+
+
+def _read_source_value(source: Any, key: str, default: Any) -> Any:
+    if isinstance(source, Mapping):
+        return source.get(key, default)
+    return getattr(source, key, default)
 
 
 def _build_runtime_from_resolved(

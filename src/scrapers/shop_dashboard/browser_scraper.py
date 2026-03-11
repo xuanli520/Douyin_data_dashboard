@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import inspect
+import threading
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
@@ -8,10 +9,11 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse
 
 from src.config import get_settings
+from src.scrapers.shop_dashboard.exceptions import LoginExpiredError
+from src.scrapers.shop_dashboard.exceptions import ShopDashboardScraperError
 from src.scrapers.shop_dashboard.login_state import check_login_status
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
-from src.tasks.exceptions import ScrapingFailedException
 
 
 class BrowserScraper:
@@ -70,10 +72,39 @@ class BrowserScraper:
     def retry_http(
         self, http_scraper, runtime_config: ShopDashboardRuntimeConfig, date: str
     ) -> dict[str, Any]:
-        refreshed_config = asyncio.run(self.refresh_runtime_context(runtime_config))
+        refreshed_config = self._refresh_runtime_context_sync(runtime_config)
         payload = http_scraper.fetch_dashboard_with_context(refreshed_config, date)
         payload["source"] = "browser"
         return payload
+
+    def _refresh_runtime_context_sync(
+        self, runtime_config: ShopDashboardRuntimeConfig
+    ) -> ShopDashboardRuntimeConfig:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.refresh_runtime_context(runtime_config))
+
+        result: ShopDashboardRuntimeConfig | None = None
+        error: BaseException | None = None
+
+        def _runner() -> None:
+            nonlocal result, error
+            try:
+                result = asyncio.run(self.refresh_runtime_context(runtime_config))
+            except BaseException as exc:
+                error = exc
+
+        thread = threading.Thread(target=_runner, name="shop-dashboard-browser-refresh")
+        thread.start()
+        thread.join()
+        if error is not None:
+            raise error
+        if result is None:
+            raise ShopDashboardScraperError(
+                "Browser runtime refresh returned empty result"
+            )
+        return result
 
     async def scrape_dashboard(
         self, runtime_config: ShopDashboardRuntimeConfig, date: str
@@ -104,7 +135,7 @@ class BrowserScraper:
         try:
             from playwright.async_api import async_playwright
         except ImportError as exc:
-            raise ScrapingFailedException("Playwright is not installed") from exc
+            raise ShopDashboardScraperError("Playwright is not installed") from exc
 
         browser, context = None, None
         account_id = self._resolve_account_id(runtime_config)
@@ -130,10 +161,10 @@ class BrowserScraper:
                     "raw": {"html": page_html},
                     "storage_state": storage_state,
                 }
-        except ScrapingFailedException:
+        except ShopDashboardScraperError:
             raise
         except Exception as exc:
-            raise ScrapingFailedException("Browser scraping failed") from exc
+            raise ShopDashboardScraperError("Browser scraping failed") from exc
         finally:
             await self._close_browser(browser, context)
 
@@ -185,7 +216,7 @@ class BrowserScraper:
             "networkidle", timeout=self._settings.browser_timeout_seconds * 1000
         )
         if not await check_login_status(page):
-            raise ScrapingFailedException("Browser login session expired")
+            raise LoginExpiredError("Browser login session expired")
         return page
 
     async def _close_browser(self, browser, context) -> None:

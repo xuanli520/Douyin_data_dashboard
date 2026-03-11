@@ -1,12 +1,10 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from http.cookies import CookieError, SimpleCookie
 from typing import Any
-
-from src.domains.data_source.models import DataSource
-from src.domains.scraping_rule.models import ScrapingRule
 
 DEFAULT_GROUPS_BY_TARGET: dict[str, list[str]] = {
     "SHOP_OVERVIEW": [
@@ -101,13 +99,13 @@ class ResolvedRuleConfig:
 
 def resolve_rule_config(
     *,
-    data_source: DataSource,
-    rule: ScrapingRule,
+    data_source: Any,
+    rule: Any,
     execution_id: str,
     overrides: dict[str, Any] | None = None,
 ) -> ResolvedRuleConfig:
-    ds_extra = _as_dict(data_source.extra_config)
-    rule_extra = _as_dict(rule.extra_config)
+    ds_extra = _as_dict(_read_attr(data_source, "extra_config"))
+    rule_extra = _as_dict(_read_attr(rule, "extra_config"))
     payload = _as_dict(overrides)
     payload_extra = _as_dict(payload.get("extra_config"))
 
@@ -132,12 +130,12 @@ def resolve_rule_config(
             return ds_value
         return default
 
-    rule_id = int(rule.id or 0)
+    rule_id = int(_read_attr(rule, "id", 0) or 0)
 
     target_type = _normalize_text(
         pick(
             "target_type",
-            rule_value=_enum_value(rule.target_type),
+            rule_value=_enum_value(_read_attr(rule, "target_type")),
             default="SHOP_OVERVIEW",
         ),
         field="target_type",
@@ -147,7 +145,7 @@ def resolve_rule_config(
     granularity = _normalize_granularity(
         pick(
             "granularity",
-            rule_value=_enum_value(rule.granularity),
+            rule_value=_enum_value(_read_attr(rule, "granularity")),
             default="DAY",
         ),
         rule_id=rule_id,
@@ -155,7 +153,7 @@ def resolve_rule_config(
     timezone = _normalize_text(
         pick(
             "timezone",
-            rule_value=rule.timezone,
+            rule_value=_read_attr(rule, "timezone"),
             default="Asia/Shanghai",
         ),
         field="timezone",
@@ -163,14 +161,14 @@ def resolve_rule_config(
         fallback="Asia/Shanghai",
     )
     time_range = _normalize_optional_dict(
-        pick("time_range", rule_value=rule.time_range, default=None),
+        pick("time_range", rule_value=_read_attr(rule, "time_range"), default=None),
         field="time_range",
         rule_id=rule_id,
     )
     incremental_mode = _normalize_incremental_mode(
         pick(
             "incremental_mode",
-            rule_value=_enum_value(rule.incremental_mode),
+            rule_value=_enum_value(_read_attr(rule, "incremental_mode")),
             default="BY_DATE",
         ),
         rule_id=rule_id,
@@ -178,7 +176,7 @@ def resolve_rule_config(
     backfill_last_n_days = _normalize_non_negative_int(
         pick(
             "backfill_last_n_days",
-            rule_value=rule.backfill_last_n_days,
+            rule_value=_read_attr(rule, "backfill_last_n_days"),
             default=3,
         ),
         field="backfill_last_n_days",
@@ -187,69 +185,81 @@ def resolve_rule_config(
     data_latency = _normalize_data_latency(
         pick(
             "data_latency",
-            rule_value=_enum_value(rule.data_latency),
+            rule_value=_enum_value(_read_attr(rule, "data_latency")),
             default="T+1",
         ),
         rule_id=rule_id,
     )
     proxy = _normalize_nullable_text(pick("proxy", default=None))
     timeout = _normalize_non_negative_int(
-        pick("timeout", ds_value=data_source.timeout, default=30),
+        pick("timeout", ds_value=_read_attr(data_source, "timeout"), default=30),
         field="timeout",
         rule_id=rule_id,
     )
     retry_count = _normalize_non_negative_int(
-        pick("retry_count", ds_value=data_source.retry_count, default=3),
+        pick(
+            "retry_count",
+            ds_value=_read_attr(data_source, "retry_count"),
+            default=3,
+        ),
         field="retry_count",
         rule_id=rule_id,
     )
 
     filters = (
         _normalize_optional_dict(
-            pick("filters", rule_value=rule.filters, default={}),
+            pick("filters", rule_value=_read_attr(rule, "filters"), default={}),
             field="filters",
             rule_id=rule_id,
         )
         or {}
     )
     dimensions = _normalize_string_list(
-        pick("dimensions", rule_value=rule.dimensions, default=[]),
+        pick("dimensions", rule_value=_read_attr(rule, "dimensions"), default=[]),
         field="dimensions",
         rule_id=rule_id,
     )
     metrics = _normalize_string_list(
-        pick("metrics", rule_value=rule.metrics, default=[]),
+        pick("metrics", rule_value=_read_attr(rule, "metrics"), default=[]),
         field="metrics",
         rule_id=rule_id,
     )
 
     dedupe_key = _normalize_nullable_text(
-        pick("dedupe_key", rule_value=rule.dedupe_key, default=None)
+        pick("dedupe_key", rule_value=_read_attr(rule, "dedupe_key"), default=None)
     )
     rate_limit = _normalize_rate_limit(
         pick(
             "rate_limit",
-            rule_value=rule.rate_limit,
-            ds_value=data_source.rate_limit,
+            rule_value=_read_attr(rule, "rate_limit"),
+            ds_value=_read_attr(data_source, "rate_limit"),
             default=100,
         ),
         rule_id=rule_id,
     )
     top_n = _normalize_optional_int(
-        pick("top_n", rule_value=rule.top_n, default=None),
+        pick("top_n", rule_value=_read_attr(rule, "top_n"), default=None),
         field="top_n",
         rule_id=rule_id,
     )
     sort_by = _normalize_nullable_text(
-        pick("sort_by", rule_value=rule.sort_by, default=None)
+        pick("sort_by", rule_value=_read_attr(rule, "sort_by"), default=None)
     )
     include_long_tail = _normalize_bool(
-        pick("include_long_tail", rule_value=rule.include_long_tail, default=False),
+        pick(
+            "include_long_tail",
+            rule_value=_read_attr(rule, "include_long_tail"),
+            default=False,
+        ),
         field="include_long_tail",
         rule_id=rule_id,
     )
     session_level = _normalize_bool(
-        pick("session_level", rule_value=rule.session_level, default=False),
+        pick(
+            "session_level",
+            rule_value=_read_attr(rule, "session_level"),
+            default=False,
+        ),
         field="session_level",
         rule_id=rule_id,
     )
@@ -272,15 +282,20 @@ def resolve_rule_config(
     if any(_is_all_shop_marker(shop) for shop in shop_ids):
         all_shops = True
         shop_ids = [shop for shop in shop_ids if not _is_all_shop_marker(shop)]
+    if all_shops and explicit_shop_id and explicit_shop_id not in shop_ids:
+        shop_ids.insert(0, explicit_shop_id)
+    if all_shops and not shop_ids:
+        source_shop_id = _normalize_nullable_text(_read_attr(data_source, "shop_id"))
+        if source_shop_id and not _is_all_shop_marker(source_shop_id):
+            shop_ids = [source_shop_id]
     if all_shops:
         explicit_shop_id = None
-        shop_ids = []
     if not shop_ids and explicit_shop_id:
         shop_ids = [explicit_shop_id]
     shop_id = explicit_shop_id or (shop_ids[0] if shop_ids else "")
     if all_shops:
         filters["all"] = True
-        filters["shop_id"] = []
+        filters["shop_id"] = list(shop_ids)
     elif shop_ids:
         filters["shop_id"] = list(shop_ids)
     elif "shop_id" in filters:
@@ -548,8 +563,21 @@ def _normalize_shop_ids(value: Any, *, rule_id: int) -> list[str]:
         return []
     items: list[Any]
     if isinstance(value, str):
-        cleaned = value.replace(";", ",")
-        items = [part for chunk in cleaned.split(",") for part in chunk.split("|")]
+        text = value.strip()
+        if not text:
+            return []
+        if text.startswith("["):
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                _invalid_field("filters.shop_id", value, rule_id=rule_id)
+            if isinstance(parsed, Iterable) and not isinstance(parsed, Mapping | str):
+                items = list(parsed)
+            else:
+                _invalid_field("filters.shop_id", value, rule_id=rule_id)
+        else:
+            cleaned = text.replace(";", ",")
+            items = [part for chunk in cleaned.split(",") for part in chunk.split("|")]
     elif isinstance(value, Iterable) and not isinstance(value, Mapping):
         items = list(value)
     else:
@@ -625,6 +653,12 @@ def _invalid_field(field: str, value: Any, *, rule_id: int) -> None:
 
 def _enum_value(value: Any) -> Any:
     return value.value if hasattr(value, "value") else value
+
+
+def _read_attr(source: Any, key: str, default: Any = None) -> Any:
+    if isinstance(source, Mapping):
+        return source.get(key, default)
+    return getattr(source, key, default)
 
 
 def _as_dict(value: Any) -> dict[str, Any]:

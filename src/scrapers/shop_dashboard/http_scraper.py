@@ -19,12 +19,12 @@ from src.scrapers.shop_dashboard.parsers import (
     parse_violation_details,
     parse_violation_summary,
 )
+from src.scrapers.shop_dashboard.exceptions import ShopDashboardScraperError
 from src.scrapers.shop_dashboard.query_builder import (
     EndpointQueryContext,
     build_endpoint_query_context,
 )
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
-from src.tasks.exceptions import ScrapingFailedException
 
 
 logger = logging.getLogger(__name__)
@@ -228,7 +228,7 @@ class HttpScraper:
     ) -> dict[str, Any]:
         groups = set(api_groups)
         if not groups:
-            raise ScrapingFailedException(
+            raise ShopDashboardScraperError(
                 "No API groups configured",
                 error_data={"target_groups": api_groups, "shop_id": shop_id},
             )
@@ -290,7 +290,7 @@ class HttpScraper:
                     cookie_mapping=cookie_mapping,
                     max_retries=max_retries,
                 )
-            except ScrapingFailedException as exc:
+            except ShopDashboardScraperError as exc:
                 if group_name in CORE_REQUIRED_GROUPS:
                     raise
                 payloads[group_name] = self._build_default_payload()
@@ -391,7 +391,7 @@ class HttpScraper:
                 path,
                 request_url,
             )
-            raise ScrapingFailedException(
+            raise ShopDashboardScraperError(
                 "HTTP request timeout",
                 error_data={
                     "method": method,
@@ -412,7 +412,7 @@ class HttpScraper:
                 path,
                 status_code,
             )
-            raise ScrapingFailedException(
+            raise ShopDashboardScraperError(
                 "HTTP status error",
                 error_data={
                     "method": method,
@@ -432,7 +432,7 @@ class HttpScraper:
                 path,
                 resolved_url,
             )
-            raise ScrapingFailedException(
+            raise ShopDashboardScraperError(
                 "HTTP request failed",
                 error_data={
                     "method": method,
@@ -451,7 +451,7 @@ class HttpScraper:
                 path,
                 response_snippet,
             )
-            raise ScrapingFailedException(
+            raise ShopDashboardScraperError(
                 "Invalid JSON response",
                 error_data={
                     "path": path,
@@ -460,7 +460,7 @@ class HttpScraper:
                 },
             ) from exc
         if not isinstance(payload, dict):
-            raise ScrapingFailedException(
+            raise ShopDashboardScraperError(
                 "Unexpected response type",
                 error_data={"path": path, "method": method},
             )
@@ -541,7 +541,7 @@ class HttpScraper:
                     reason=str(exc),
                 )
                 self._sleep_before_retry(attempt)
-        raise ScrapingFailedException(
+        raise ShopDashboardScraperError(
             "HTTP request failed",
             error_data={"method": method, "path": url},
         )
@@ -692,7 +692,7 @@ class HttpScraper:
         )
 
     @staticmethod
-    def _extract_group_error(exc: ScrapingFailedException) -> dict[str, str]:
+    def _extract_group_error(exc: ShopDashboardScraperError) -> dict[str, str]:
         code = ""
         message = str(exc)
         error_data = getattr(exc, "error_data", {})

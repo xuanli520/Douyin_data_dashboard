@@ -3,7 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from src.tasks.exceptions import ScrapingFailedException
+from src.scrapers.shop_dashboard.exceptions import LoginExpiredError
+from src.scrapers.shop_dashboard.exceptions import ShopDashboardScraperError
 
 LOGIN_EXPIRED_CODE = "10008"
 
@@ -21,11 +22,11 @@ def ensure_payload_success(payload: Mapping[str, Any]) -> None:
         return
     message = str(payload.get("message", payload.get("msg", "scraping failed")))
     if code_str == LOGIN_EXPIRED_CODE:
-        raise ScrapingFailedException(
+        raise LoginExpiredError(
             "Login session expired",
             error_data={"code": code_str, "message": message},
         )
-    raise ScrapingFailedException(
+    raise ShopDashboardScraperError(
         message,
         error_data={"code": code_str, "message": message},
     )
@@ -193,7 +194,7 @@ def _extract_data(payload: Mapping[str, Any]) -> Mapping[str, Any]:
 def _safe_extract_data(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     try:
         ensure_payload_success(payload)
-    except ScrapingFailedException:
+    except ShopDashboardScraperError:
         return {}
     return _extract_data(payload)
 

@@ -17,22 +17,20 @@ from src.domains.data_source.enums import DataSourceStatus, ScrapingRuleStatus
 from src.domains.data_source.repository import DataSourceRepository
 from src.domains.scraping_rule.repository import ScrapingRuleRepository
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
-from src.middleware.monitor import observe_shop_dashboard_collection
 from src.scrapers.shop_dashboard.browser_scraper import BrowserScraper
 from src.scrapers.shop_dashboard.http_scraper import HttpScraper
 from src.scrapers.shop_dashboard.lock_manager import LockManager
 from src.scrapers.shop_dashboard.login_state_manager import LoginStateManager
+from src.scrapers.shop_dashboard.exceptions import ShopDashboardScraperError
 from src.scrapers.shop_dashboard.runtime import (
     ShopDashboardRuntimeConfig,
     build_runtime_config,
 )
 from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
 from src import session
-from src.tasks.collection.shop_dashboard_plan_builder import build_collection_plan
 from src.tasks.base import TaskStatusMixin
 from src.tasks.exceptions import ScrapingFailedException
 from src.tasks.funboost_compat import boost, fct
-from src.tasks.idempotency import FunboostIdempotencyHelper
 from src.tasks.params import CollectionTaskParams
 from src.tasks.status_store import write_started_task_status
 
@@ -130,9 +128,6 @@ def sync_shop_dashboard(
 ) -> dict[str, Any]:
     _write_started_status(sync_shop_dashboard, "sync_shop_dashboard", triggered_by)
     redis_client = sync_shop_dashboard.publisher.redis_db_frame
-    helper = FunboostIdempotencyHelper(
-        redis_client=redis_client, task_name="sync_shop_dashboard"
-    )
     runtime_overrides = {
         key: value
         for key, value in {
@@ -158,150 +153,18 @@ def sync_shop_dashboard(
         }.items()
         if value is not None
     }
-    runtime = _run_async(
-        _load_runtime_config(
-            data_source_id=data_source_id,
-            rule_id=rule_id,
-            execution_id=execution_id,
-            overrides=runtime_overrides,
-        )
-    )
-    plan_units = build_collection_plan(runtime)
-    if not plan_units:
-        raise ScrapingFailedException(
-            "No target shops resolved",
-            error_data={
-                "data_source_id": data_source_id,
-                "rule_id": rule_id,
-                "execution_id": execution_id,
-                "reason": "empty_target_shops",
-            },
-        )
+    from src.application.collection.usecase import CollectionUseCase
 
-    state_store = SessionStateStore(base_dir=Path(".runtime") / "shop_dashboard_state")
-    runtime = _materialize_runtime_storage_state(runtime, state_store)
-    runtimes_by_shop: dict[str, ShopDashboardRuntimeConfig] = {
-        runtime.shop_id: runtime,
-    }
-    for plan_unit in plan_units:
-        if plan_unit.shop_id in runtimes_by_shop:
-            continue
-        runtimes_by_shop[plan_unit.shop_id] = replace(
-            runtime, shop_id=plan_unit.shop_id
-        )
-
-    browser = BrowserScraper()
-    lock_manager = LockManager(redis_client=redis_client)
-    login_state_manager = LoginStateManager(
-        state_store=state_store,
+    usecase = CollectionUseCase()
+    return usecase.execute(
+        data_source_id=data_source_id,
+        rule_id=rule_id,
+        execution_id=execution_id,
+        queue_task_id=str(getattr(fct, "task_id", "") or ""),
+        triggered_by=triggered_by,
+        overrides=runtime_overrides,
         redis_client=redis_client,
     )
-    collector_supports_shared_helpers = _supports_shared_helpers(_collect_one_day)
-    rate_limiter = _RateLimiter(runtime.rate_limit)
-    items: list[dict[str, Any]] = []
-    for plan_unit in plan_units:
-        rate_limiter.wait()
-        unit_runtime = runtimes_by_shop[plan_unit.shop_id]
-        business_key = _build_business_key(
-            unit_runtime,
-            plan_unit.metric_date,
-            plan_unit=plan_unit,
-        )
-        cache_enabled = _is_result_cache_enabled(runtime.execution_id)
-        cached = helper.get_cached_result(business_key) if cache_enabled else None
-        if cached:
-            items.append(cached)
-            observe_shop_dashboard_collection(
-                source=str(cached.get("source", "cache")),
-                status=str(cached.get("status", "success")),
-                duration_seconds=0.0,
-            )
-            continue
-
-        token = helper.acquire_lock(
-            business_key, ttl=get_settings().shop_dashboard.lock_ttl_seconds
-        )
-        if not token:
-            skipped_result = {
-                "status": "skipped",
-                "reason": "running",
-                "metric_date": plan_unit.metric_date,
-                "shop_id": unit_runtime.shop_id,
-                "rule_id": unit_runtime.rule_id,
-                "execution_id": unit_runtime.execution_id,
-                "retry_count": 0,
-                "fallback_trace": [],
-            }
-            items.append(skipped_result)
-            observe_shop_dashboard_collection(
-                source="lock",
-                status="skipped",
-                duration_seconds=0.0,
-            )
-            continue
-
-        started_at = time.perf_counter()
-        source = "unknown"
-        status = "failed"
-        try:
-            if collector_supports_shared_helpers:
-                collected = _collect_one_day(
-                    unit_runtime,
-                    plan_unit.metric_date,
-                    browser,
-                    lock_manager=lock_manager,
-                    state_store=state_store,
-                    login_state_manager=login_state_manager,
-                )
-            else:
-                collected = _collect_one_day(
-                    unit_runtime,
-                    plan_unit.metric_date,
-                    browser,
-                )
-            _run_async(
-                _persist_result(
-                    unit_runtime,
-                    plan_unit.metric_date,
-                    collected,
-                )
-            )
-            if cache_enabled:
-                helper.cache_result(business_key, collected)
-            items.append(collected)
-            source = str(collected.get("source", "unknown"))
-            status = str(collected.get("status", "success"))
-        except Exception:
-            observe_shop_dashboard_collection(
-                source=source,
-                status=status,
-                duration_seconds=time.perf_counter() - started_at,
-            )
-            raise
-        else:
-            observe_shop_dashboard_collection(
-                source=source,
-                status=status,
-                duration_seconds=time.perf_counter() - started_at,
-            )
-        finally:
-            helper.release_lock(business_key, token)
-
-    return {
-        "status": "success",
-        "data_source_id": data_source_id,
-        "rule_id": rule_id,
-        "execution_id": execution_id,
-        "shop_count": len({plan_unit.shop_id for plan_unit in plan_units}),
-        "planned_units": len(plan_units),
-        "completed_units": sum(
-            1 for item in items if str(item.get("status", "success")) == "success"
-        ),
-        "failed_units": sum(
-            1 for item in items if str(item.get("status", "success")) != "success"
-        ),
-        "items": items,
-    }
 
 
 @boost(
@@ -405,9 +268,9 @@ def _collect_one_day(
     explicit_account_id = str(getattr(runtime, "account_id", "") or "").strip()
     account_id = explicit_account_id or f"shop_{runtime.shop_id}"
     shop_lock_id = _resolve_shop_lock_id(runtime.shop_id, account_id)
-    last_error: ScrapingFailedException | None = None
-    http_error: ScrapingFailedException | None = None
-    browser_error: ScrapingFailedException | None = None
+    last_error: Exception | None = None
+    http_error: Exception | None = None
+    browser_error: Exception | None = None
     retry_count = 0
     fallback_trace: list[dict[str, Any]] = []
     with _acquire_shop_lock(
@@ -446,7 +309,7 @@ def _collect_one_day(
                             retry_count=retry_count,
                             fallback_trace=fallback_trace,
                         )
-                    except ScrapingFailedException as exc:
+                    except (ScrapingFailedException, ShopDashboardScraperError) as exc:
                         retry_count += 1
                         last_error = exc
                         http_error = exc
@@ -498,7 +361,7 @@ def _collect_one_day(
                                 retry_count=retry_count,
                                 fallback_trace=fallback_trace,
                             )
-                    except ScrapingFailedException as exc:
+                    except (ScrapingFailedException, ShopDashboardScraperError) as exc:
                         retry_count += 1
                         last_error = exc
                         browser_error = exc
@@ -549,7 +412,7 @@ def _collect_one_day(
             )
 
 
-def _is_login_expired_exception(exc: ScrapingFailedException) -> bool:
+def _is_login_expired_exception(exc: Exception) -> bool:
     error_data = getattr(exc, "error_data", {})
     if isinstance(error_data, dict):
         reason = str(error_data.get("reason", "")).strip().lower()
@@ -620,8 +483,8 @@ def _normalize_task_result(
 
 
 def _resolve_agent_reason(
-    http_error: ScrapingFailedException | None,
-    browser_error: ScrapingFailedException | None,
+    http_error: Exception | None,
+    browser_error: Exception | None,
 ) -> str:
     if http_error is not None and browser_error is not None:
         return "http_browser_failed"
@@ -636,8 +499,8 @@ def _build_agent_fallback_result(
     runtime: ShopDashboardRuntimeConfig,
     metric_date: str,
     *,
-    http_error: ScrapingFailedException | None = None,
-    browser_error: ScrapingFailedException | None = None,
+    http_error: Exception | None = None,
+    browser_error: Exception | None = None,
     retry_count: int = 0,
     fallback_trace: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
