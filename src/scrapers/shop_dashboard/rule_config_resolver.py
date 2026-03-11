@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from http.cookies import CookieError, SimpleCookie
 from typing import Any
 
-from src.domains.data_source.models import DataSource, ScrapingRule
+from src.domains.data_source.models import DataSource
+from src.domains.scraping_rule.models import ScrapingRule
 
 DEFAULT_GROUPS_BY_TARGET: dict[str, list[str]] = {
     "SHOP_OVERVIEW": [
@@ -68,7 +69,6 @@ class ResolvedRuleConfig:
     granularity: str
     timezone: str
     time_range: dict[str, Any] | None
-    schedule: dict[str, Any] | None
     incremental_mode: str
     backfill_last_n_days: int
     data_latency: str
@@ -161,11 +161,6 @@ def resolve_rule_config(
         field="timezone",
         rule_id=rule_id,
         fallback="Asia/Shanghai",
-    )
-    schedule = _normalize_optional_dict(
-        pick("schedule", rule_value=rule.schedule, default=None),
-        field="schedule",
-        rule_id=rule_id,
     )
     time_range = _normalize_optional_dict(
         pick("time_range", rule_value=rule.time_range, default=None),
@@ -335,7 +330,6 @@ def resolve_rule_config(
         granularity=granularity,
         timezone=timezone,
         time_range=time_range,
-        schedule=schedule,
         incremental_mode=incremental_mode,
         backfill_last_n_days=backfill_last_n_days,
         data_latency=data_latency,

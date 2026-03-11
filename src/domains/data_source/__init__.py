@@ -1,4 +1,4 @@
-from src.domains.data_source.models import DataSource, ScrapingRule
+from src.domains.data_source.models import DataSource
 from src.domains.data_source.enums import (
     DataSourceStatus,
     DataSourceType,
@@ -11,7 +11,6 @@ from src.domains.data_source.enums import (
 
 __all__ = [
     "DataSource",
-    "ScrapingRule",
     "DataSourceStatus",
     "DataSourceType",
     "ScrapingRuleStatus",

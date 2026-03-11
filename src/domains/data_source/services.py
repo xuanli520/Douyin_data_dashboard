@@ -1,7 +1,5 @@
 from collections.abc import AsyncGenerator
-from datetime import datetime, timezone
 from typing import Any, Callable
-from uuid import uuid4
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,15 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.domains.data_source.enums import (
     DataSourceStatus as ModelDataSourceStatus,
     DataSourceType as ModelDataSourceType,
-    ScrapingRuleStatus,
-    TargetType,
 )
-from src.domains.data_source.models import DataSource, ScrapingRule
-from src.domains.data_source.repository import (
-    DataSourceRepository,
-    ScrapingRuleRepository,
-)
-from src.domains.data_source.config_mapper import ScrapingRuleConfigMapper
+from src.domains.data_source.models import DataSource
+from src.domains.data_source.repository import DataSourceRepository
 from src.domains.data_source.login_state import (
     build_login_state_meta,
     normalize_login_state,
@@ -28,10 +20,6 @@ from src.domains.data_source.schemas import (
     DataSourceStatus,
     DataSourceType,
     DataSourceUpdate,
-    ScrapingRuleCreate,
-    ScrapingRuleListItem,
-    ScrapingRuleResponse,
-    ScrapingRuleUpdate,
 )
 from src.exceptions import BusinessException
 from src.session import get_session
@@ -342,11 +330,9 @@ class DataSourceService:
     def __init__(
         self,
         ds_repo: DataSourceRepository,
-        rule_repo: ScrapingRuleRepository,
         session: AsyncSession,
     ):
         self.ds_repo = ds_repo
-        self.rule_repo = rule_repo
         self.session = session
 
     async def create(self, data: DataSourceCreate, user_id: int) -> DataSourceResponse:
@@ -604,231 +590,12 @@ class DataSourceService:
                 raise
             return {"valid": False, "message": message}
 
-    async def create_scraping_rule(
-        self, ds_id: int, data: ScrapingRuleCreate
-    ) -> ScrapingRuleResponse:
-        ds = await self.ds_repo.get_by_id(ds_id)
-        if not ds:
-            raise BusinessException(
-                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
-            )
-
-        if ds.status != ModelDataSourceStatus.ACTIVE:
-            raise BusinessException(
-                ErrorCode.DATA_VALIDATION_FAILED,
-                "Cannot create rule for inactive data source",
-            )
-
-        rule_data = {
-            "data_source_id": ds_id,
-            "name": data.name,
-            "target_type": data.target_type,
-            "description": data.description,
-            "schedule": {"cron": data.schedule} if data.schedule else None,
-        }
-        rule_data.update(ScrapingRuleConfigMapper.map_to_model_fields(data.config))
-
-        rule = await self.rule_repo.create(rule_data)
-        try:
-            await self.session.commit()
-        except Exception:
-            await self.session.rollback()
-            raise
-        return self._build_scraping_rule_response(rule)
-
-    async def list_scraping_rules(self, ds_id: int) -> list[ScrapingRuleResponse]:
-        ds = await self.ds_repo.get_by_id(ds_id)
-        if not ds:
-            raise BusinessException(
-                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
-            )
-
-        rules = await self.rule_repo.get_by_data_source(ds_id)
-        return [self._build_scraping_rule_response(r) for r in rules]
-
-    async def list_scraping_rules_paginated(
-        self,
-        page: int,
-        size: int,
-        name: str | None = None,
-        target_type: TargetType | None = None,
-        status: ScrapingRuleStatus | None = None,
-        data_source_id: int | None = None,
-    ) -> tuple[list[ScrapingRuleListItem], int]:
-        rules, total = await self.rule_repo.get_paginated(
-            page=page,
-            size=size,
-            name=name,
-            rule_type=target_type,
-            status=ScrapingRuleStatus(status.value.upper()) if status else None,
-            data_source_id=data_source_id,
-        )
-
-        return [self._build_scraping_rule_list_item(r) for r in rules], total
-
-    def _build_scraping_rule_list_item(
-        self, rule: ScrapingRule
-    ) -> ScrapingRuleListItem:
-        return ScrapingRuleListItem(
-            id=rule.id if rule.id is not None else 0,
-            data_source_id=rule.data_source_id
-            if rule.data_source_id is not None
-            else 0,
-            name=rule.name,
-            target_type=rule.target_type,
-            config=ScrapingRuleConfigMapper.build_config_from_model(rule),
-            schedule=rule.schedule.get("cron") if rule.schedule else None,
-            is_active=rule.status == ScrapingRuleStatus.ACTIVE,
-            description=rule.description,
-            created_at=rule.created_at,
-            updated_at=rule.updated_at,
-            data_source_name=rule.data_source.name if rule.data_source else None,
-        )
-
-    async def get_scraping_rule(self, rule_id: int) -> ScrapingRuleResponse:
-        rule = await self.rule_repo.get_by_id(rule_id)
-        if not rule:
-            raise BusinessException(
-                ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
-            )
-        return self._build_scraping_rule_response(rule)
-
-    async def update_scraping_rule(
-        self, rule_id: int, data: ScrapingRuleUpdate
-    ) -> ScrapingRuleResponse:
-        rule = await self.rule_repo.get_by_id(rule_id)
-        if not rule:
-            raise BusinessException(
-                ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
-            )
-
-        update_data: dict[str, Any] = {}
-        if data.name is not None:
-            update_data["name"] = data.name
-        if data.description is not None:
-            update_data["description"] = data.description
-        if data.schedule is not None:
-            update_data["schedule"] = {"cron": data.schedule}
-        if data.is_active is not None:
-            update_data["status"] = (
-                ScrapingRuleStatus.ACTIVE
-                if data.is_active
-                else ScrapingRuleStatus.INACTIVE
-            )
-        if data.config is not None:
-            update_data.update(
-                ScrapingRuleConfigMapper.map_to_model_fields(data.config)
-            )
-
-        rule = await self.rule_repo.update(rule_id, update_data)
-        try:
-            await self.session.commit()
-        except Exception:
-            await self.session.rollback()
-            raise
-        return self._build_scraping_rule_response(rule)
-
-    async def delete_scraping_rule(self, rule_id: int) -> None:
-        await self.rule_repo.delete(rule_id)
-        try:
-            await self.session.commit()
-        except Exception:
-            await self.session.rollback()
-            raise
-
-    async def trigger_collection(
-        self, ds_id: int, rule_id: int | None = None
-    ) -> dict[str, Any]:
-        ds = await self.ds_repo.get_by_id(ds_id, include_rules=True)
-        if not ds:
-            raise BusinessException(
-                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
-            )
-
-        if ds.status != ModelDataSourceStatus.ACTIVE:
-            raise BusinessException(
-                ErrorCode.DATA_VALIDATION_FAILED,
-                "Cannot trigger collection for inactive data source",
-            )
-
-        rules = (
-            ds.scraping_rules
-            if rule_id is None
-            else [r for r in ds.scraping_rules if r.id == rule_id]
-        )
-        if rule_id and not rules:
-            raise BusinessException(
-                ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
-            )
-
-        triggered = []
-        for rule in rules:
-            execution_id = f"exec_{uuid4().hex}"
-            task_result = await self._push_shop_dashboard_task(
-                data_source_id=ds_id,
-                rule_id=rule.id if rule.id is not None else 0,
-                execution_id=execution_id,
-                triggered_by=None,
-            )
-            await self.rule_repo.update(
-                rule.id if rule.id is not None else 0,
-                {
-                    "last_execution_id": execution_id,
-                    "last_executed_at": datetime.now(timezone.utc),
-                },
-            )
-            triggered.append(
-                {
-                    "rule_id": rule.id,
-                    "rule_name": rule.name,
-                    "execution_id": execution_id,
-                    "task_id": str(getattr(task_result, "task_id", "")),
-                    "status": "queued",
-                }
-            )
-        try:
-            await self.session.commit()
-        except Exception:
-            await self.session.rollback()
-            raise
-
-        return {
-            "data_source_id": ds_id,
-            "triggered_rules": triggered,
-            "total": len(triggered),
-        }
-
     def _ensure_shop_dashboard_source_type(self, ds: DataSource) -> None:
         if ds.source_type != ModelDataSourceType.DOUYIN_SHOP:
             raise BusinessException(
                 ErrorCode.DATASOURCE_UNSUPPORTED_TYPE,
                 "Shop dashboard login state is only supported for DOUYIN_SHOP",
             )
-
-    async def _push_shop_dashboard_task(
-        self,
-        *,
-        data_source_id: int,
-        rule_id: int,
-        execution_id: str,
-        triggered_by: int | None,
-    ) -> Any:
-        from types import SimpleNamespace
-
-        from src.domains.task.enums import TaskType
-        from src.domains.task.services import TaskService
-
-        execution = await TaskService(session=self.session).run_task_by_type(
-            task_type=TaskType.SHOP_DASHBOARD_COLLECTION,
-            payload={
-                "data_source_id": data_source_id,
-                "rule_id": rule_id,
-                "execution_id": execution_id,
-            },
-            triggered_by=triggered_by,
-            task_name="shop-dashboard-collection",
-        )
-        return SimpleNamespace(task_id=execution.queue_task_id or "")
 
     def _map_schema_type_to_model_type(
         self, schema_type: DataSourceType | None
@@ -865,26 +632,9 @@ class DataSourceService:
             updated_at=ds.updated_at,
         )
 
-    def _build_scraping_rule_response(self, rule: ScrapingRule) -> ScrapingRuleResponse:
-        return ScrapingRuleResponse(
-            id=rule.id if rule.id is not None else 0,
-            data_source_id=rule.data_source_id
-            if rule.data_source_id is not None
-            else 0,
-            name=rule.name,
-            target_type=rule.target_type,
-            config=ScrapingRuleConfigMapper.build_config_from_model(rule),
-            schedule=rule.schedule.get("cron") if rule.schedule else None,
-            is_active=rule.status == ScrapingRuleStatus.ACTIVE,
-            description=rule.description,
-            created_at=rule.created_at,
-            updated_at=rule.updated_at,
-        )
-
 
 async def get_data_source_service(
     session: AsyncSession = Depends(get_session),
 ) -> AsyncGenerator[DataSourceService, None]:
     ds_repo = DataSourceRepository(session=session)
-    rule_repo = ScrapingRuleRepository(session=session)
-    yield DataSourceService(ds_repo=ds_repo, rule_repo=rule_repo, session=session)
+    yield DataSourceService(ds_repo=ds_repo, session=session)

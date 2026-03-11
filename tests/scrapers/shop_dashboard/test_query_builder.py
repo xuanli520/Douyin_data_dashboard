@@ -6,7 +6,8 @@ from src.domains.data_source.enums import (
     IncrementalMode,
     TargetType,
 )
-from src.domains.data_source.models import DataSource, ScrapingRule
+from src.domains.data_source.models import DataSource
+from src.domains.scraping_rule.models import ScrapingRule
 from src.scrapers.shop_dashboard.query_builder import build_endpoint_query_context
 from src.scrapers.shop_dashboard.rule_config_resolver import resolve_rule_config
 from src.tasks.collection.shop_dashboard_plan_builder import CollectionPlanUnit

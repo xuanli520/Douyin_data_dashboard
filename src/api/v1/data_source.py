@@ -16,15 +16,21 @@ from src.domains.data_source.schemas import (
     DataSourceStatus,
     DataSourceType,
     DataSourceUpdate,
-    ScrapingRuleCreate,
-    ScrapingRuleListItem,
-    ScrapingRuleResponse,
-    ScrapingRuleUpdate,
 )
 from src.domains.data_source.enums import ScrapingRuleStatus, TargetType
 from src.domains.data_source.services import (
     DataSourceService,
     get_data_source_service,
+)
+from src.domains.scraping_rule.schemas import (
+    ScrapingRuleCreate,
+    ScrapingRuleListItem,
+    ScrapingRuleResponse,
+    ScrapingRuleUpdate,
+)
+from src.domains.scraping_rule.services import (
+    ScrapingRuleService,
+    get_scraping_rule_service,
 )
 from src.responses.base import Response
 from src.exceptions import BusinessException
@@ -328,22 +334,22 @@ async def validate_connection(
 @router.get("/{ds_id}/scraping-rules", response_model=Response[list[Any]])
 async def list_scraping_rules_by_datasource(
     ds_id: int,
-    service: DataSourceService = Depends(get_data_source_service),
+    service: ScrapingRuleService = Depends(get_scraping_rule_service),
     user: User = Depends(current_user),
     _=Depends(require_permissions(DataSourcePermission.VIEW, bypass_superuser=True)),
 ) -> Response[list[Any]]:
-    rules = await service.list_scraping_rules(ds_id)
+    rules = await service.list_rules_by_data_source(ds_id)
     return Response.success(data=rules)
 
 
 @scraping_rule_router.post("", response_model=Response[ScrapingRuleResponse])
 async def create_scraping_rule(
     data: ScrapingRuleCreate,
-    service: DataSourceService = Depends(get_data_source_service),
+    service: ScrapingRuleService = Depends(get_scraping_rule_service),
     user: User = Depends(current_user),
     _=Depends(require_permissions(DataSourcePermission.CREATE, bypass_superuser=True)),
 ) -> Response[ScrapingRuleResponse]:
-    rule = await service.create_scraping_rule(data.data_source_id, data)
+    rule = await service.create(data)
     return Response.success(data=rule)
 
 
@@ -354,11 +360,11 @@ async def list_scraping_rules(
     target_type: TargetType | None = Query(None),
     status: ScrapingRuleStatus | None = Query(None),
     data_source_id: int | None = Query(None, ge=1),
-    service: DataSourceService = Depends(get_data_source_service),
+    service: ScrapingRuleService = Depends(get_scraping_rule_service),
     user: User = Depends(current_user),
     _=Depends(require_permissions(DataSourcePermission.VIEW, bypass_superuser=True)),
 ) -> PaginatedData[ScrapingRuleListItem]:
-    rules, total = await service.list_scraping_rules_paginated(
+    rules, total = await service.list_rules_paginated(
         page=pagination.page,
         size=pagination.size,
         name=name,
@@ -375,31 +381,31 @@ async def list_scraping_rules(
 async def update_scraping_rule(
     rule_id: int,
     data: ScrapingRuleUpdate,
-    service: DataSourceService = Depends(get_data_source_service),
+    service: ScrapingRuleService = Depends(get_scraping_rule_service),
     user: User = Depends(current_user),
     _=Depends(require_permissions(DataSourcePermission.UPDATE, bypass_superuser=True)),
 ) -> Response[ScrapingRuleResponse]:
-    rule = await service.update_scraping_rule(rule_id, data)
+    rule = await service.update_rule(rule_id, data)
     return Response.success(data=rule)
 
 
 @scraping_rule_router.get("/{rule_id}", response_model=Response[ScrapingRuleResponse])
 async def get_scraping_rule(
     rule_id: int,
-    service: DataSourceService = Depends(get_data_source_service),
+    service: ScrapingRuleService = Depends(get_scraping_rule_service),
     user: User = Depends(current_user),
     _=Depends(require_permissions(DataSourcePermission.VIEW, bypass_superuser=True)),
 ) -> Response[ScrapingRuleResponse]:
-    rule = await service.get_scraping_rule(rule_id)
+    rule = await service.get_rule(rule_id)
     return Response.success(data=rule)
 
 
 @scraping_rule_router.delete("/{rule_id}", response_model=Response[None])
 async def delete_scraping_rule(
     rule_id: int,
-    service: DataSourceService = Depends(get_data_source_service),
+    service: ScrapingRuleService = Depends(get_scraping_rule_service),
     user: User = Depends(current_user),
     _=Depends(require_permissions(DataSourcePermission.DELETE, bypass_superuser=True)),
 ) -> Response[None]:
-    await service.delete_scraping_rule(rule_id)
+    await service.delete_rule(rule_id)
     return Response.success()

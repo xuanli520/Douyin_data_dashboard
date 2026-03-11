@@ -5,10 +5,8 @@ from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 from src.domains.data_source.enums import DataSourceStatus, DataSourceType
 from src.domains.data_source.models import DataSource
-from src.domains.data_source.repository import (
-    DataSourceRepository,
-    ScrapingRuleRepository,
-)
+from src.domains.data_source.repository import DataSourceRepository
+from src.domains.scraping_rule.repository import ScrapingRuleRepository
 from src.exceptions import BusinessException
 from src.shared.errors import ErrorCode
 

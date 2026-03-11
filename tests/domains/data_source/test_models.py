@@ -1,6 +1,7 @@
 from sqlalchemy import select
 
-from src.domains.data_source.models import DataSource, ScrapingRule
+from src.domains.data_source.models import DataSource
+from src.domains.scraping_rule.models import ScrapingRule
 from src.domains.data_source.enums import (
     DataSourceStatus,
     DataSourceType,
@@ -83,7 +84,6 @@ class TestScrapingRuleModel:
                 granularity=Granularity.DAY,
                 timezone="Asia/Shanghai",
                 time_range={"type": "relative_days", "days": 30},
-                schedule={"freq": "daily", "run_at": "02:30"},
                 incremental_mode=IncrementalMode.BY_DATE,
                 backfill_last_n_days=3,
                 dimensions=["date"],
@@ -114,7 +114,6 @@ class TestScrapingRuleModel:
             assert rule.granularity == Granularity.DAY
             assert rule.timezone == "Asia/Shanghai"
             assert rule.time_range["type"] == "relative_days"
-            assert rule.schedule["freq"] == "daily"
             assert rule.backfill_last_n_days == 3
 
     async def test_create_scraping_rule_traffic(self, test_db):

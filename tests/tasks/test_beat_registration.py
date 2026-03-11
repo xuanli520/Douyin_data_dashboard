@@ -18,15 +18,24 @@ def test_register_jobs_uses_fixed_ids(monkeypatch):
             {
                 "rule_id": 99,
                 "data_source_id": 11,
-                "schedule": {"cron": "0 3 * * *"},
+                "shop_id": "shop-1",
+                "timezone": "Asia/Shanghai",
+                "granularity": "DAY",
+                "incremental_mode": "BY_DATE",
+                "data_latency": "T+1",
             }
         ],
         raising=False,
     )
+
     module.register_jobs()
 
     add_ids = [item[1] for item in calls if item[0] == "add"]
-    assert "scraping_rule_99_collection_shop_dashboard_sync" in add_ids
+    assert "shop_dashboard_full_sync" in add_ids
+    assert "shop_dashboard_incremental_sync" in add_ids
+    assert "shop_dashboard_cookie_health_check" in add_ids
+    assert "shop_dashboard_agent_backfill" in add_ids
+    assert "scraping_rule_99_collection_shop_dashboard_sync" not in add_ids
 
 
 def test_main_initializes_db_before_register_jobs(monkeypatch):
@@ -57,7 +66,8 @@ async def test_load_active_shop_dashboard_rules_excludes_inactive_data_source(
         DataSourceType,
         ScrapingRuleStatus,
     )
-    from src.domains.data_source.models import DataSource, ScrapingRule
+    from src.domains.data_source.models import DataSource
+    from src.domains.scraping_rule.models import ScrapingRule
     from src.tasks import beat as module
 
     async with test_db() as db_session:
@@ -80,13 +90,11 @@ async def test_load_active_shop_dashboard_rules_excludes_inactive_data_source(
             name="active-shop-dashboard-rule",
             data_source_id=active_source.id if active_source.id is not None else 0,
             status=ScrapingRuleStatus.ACTIVE,
-            schedule={"cron": "0 3 * * *"},
         )
         inactive_source_rule = ScrapingRule(
             name="inactive-source-shop-dashboard-rule",
             data_source_id=inactive_source.id if inactive_source.id is not None else 0,
             status=ScrapingRuleStatus.ACTIVE,
-            schedule={"cron": "0 4 * * *"},
         )
         db_session.add(active_rule)
         db_session.add(inactive_source_rule)
@@ -100,3 +108,4 @@ async def test_load_active_shop_dashboard_rules_excludes_inactive_data_source(
     assert inactive_source_rule.id not in rule_ids
     active_rule_row = next(item for item in rules if item["rule_id"] == active_rule.id)
     assert active_rule_row["shop_id"] == "shop-1"
+    assert "schedule" not in active_rule_row

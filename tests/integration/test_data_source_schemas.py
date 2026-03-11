@@ -10,6 +10,8 @@ from src.domains.data_source.schemas import (
     DataSourceStatus,
     DataSourceType,
     DataSourceUpdate,
+)
+from src.domains.scraping_rule.schemas import (
     ScrapingRuleCreate,
     ScrapingRuleUpdate,
 )
@@ -334,7 +336,6 @@ class TestScrapingRuleCreateSchema:
             name="Order Collection Rule",
             target_type=TargetType.ORDER_FULFILLMENT,
             config={"batch_size": 100},
-            schedule="0 */6 * * *",
             description="Collect orders every 6 hours",
         )
         response = await test_client.post(
@@ -361,7 +362,7 @@ class TestScrapingRuleCreateSchema:
 
 
 class TestScrapingRuleUpdateSchema:
-    async def test_update_scraping_rule_schedule(self, test_client):
+    async def test_update_scraping_rule_config(self, test_client):
         ds_payload = DataSourceCreate(
             name="Test DS",
             type=DataSourceType.DOUYIN_SHOP,
@@ -377,7 +378,6 @@ class TestScrapingRuleUpdateSchema:
             data_source_id=ds_id,
             name="Test Rule",
             target_type=TargetType.ORDER_FULFILLMENT,
-            schedule="0 0 * * *",
         )
         rule_response = await test_client.post(
             "/api/v1/scraping-rules",
@@ -385,13 +385,13 @@ class TestScrapingRuleUpdateSchema:
         )
         rule_id = rule_response.json()["data"]["id"]
 
-        update_payload = ScrapingRuleUpdate(schedule="0 */12 * * *")
+        update_payload = ScrapingRuleUpdate(config={"batch_size": 200})
         response = await test_client.put(
             f"/api/v1/scraping-rules/{rule_id}",
             json=update_payload.model_dump(exclude_none=True),
         )
         assert response.status_code == 200
-        assert response.json()["data"]["schedule"] == "0 */12 * * *"
+        assert response.json()["data"]["config"]["batch_size"] == 200
 
     async def test_update_scraping_rule_deactivation(self, test_client):
         ds_payload = DataSourceCreate(
@@ -467,7 +467,6 @@ class TestSchemaResponseStructure:
             name="Field Test Rule",
             target_type=TargetType.CUSTOMER,
             config={"limit": 1000},
-            schedule="0 0 * * 0",
             is_active=True,
             description="Testing all response fields",
         )
@@ -484,8 +483,9 @@ class TestSchemaResponseStructure:
             "name",
             "target_type",
             "config",
-            "schedule",
             "is_active",
+            "status",
+            "version",
             "description",
             "created_at",
             "updated_at",

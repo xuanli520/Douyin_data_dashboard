@@ -1,19 +1,16 @@
-import pytest
 from datetime import datetime, timezone
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
+
 from src.domains.data_source.enums import (
-    DataSourceType as ModelDataSourceType,
     DataSourceStatus,
-    TargetType,
+    DataSourceType as ModelDataSourceType,
 )
 from src.domains.data_source.schemas import (
     DataSourceCreate,
-    DataSourceUpdate,
     DataSourceType,
-    ScrapingRuleCreate,
-    ScrapingRuleUpdate,
+    DataSourceUpdate,
 )
 from src.domains.data_source.services import DataSourceService
 from src.exceptions import BusinessException
@@ -31,7 +28,6 @@ class MockDataSource:
         self.status = kwargs.get("status", DataSourceStatus.ACTIVE)
         self.description = kwargs.get("description", None)
         self.extra_config = kwargs.get("extra_config", {})
-        # Response schema fields
         self.type = kwargs.get("type", DataSourceType.DOUYIN_SHOP)
         self.config = kwargs.get("config", {})
         self.shop_id = kwargs.get("shop_id", None)
@@ -45,48 +41,12 @@ class MockDataSource:
         self.updated_by_id = kwargs.get("updated_by_id", 1)
         self.created_at = kwargs.get("created_at", now)
         self.updated_at = kwargs.get("updated_at", now)
-        self.scraping_rules = kwargs.get("scraping_rules", [])
-
-
-class MockScrapingRule:
-    def __init__(self, **kwargs):
-        now = datetime.now(timezone.utc)
-        self.id = kwargs.get("id", 1)
-        self.data_source_id = kwargs.get("data_source_id", 1)
-        self.name = kwargs.get("name", "Test Rule")
-        self.target_type = kwargs.get("target_type", TargetType.ORDER_FULFILLMENT)
-        self.description = kwargs.get("description", None)
-        self.schedule = kwargs.get("schedule", None)
-        self.dimensions = kwargs.get("dimensions", None)
-        self.metrics = kwargs.get("metrics", None)
-        self.filters = kwargs.get("filters", None)
-        self.granularity = kwargs.get("granularity", "DAY")
-        self.timezone = kwargs.get("timezone", "Asia/Shanghai")
-        self.incremental_mode = kwargs.get("incremental_mode", "BY_DATE")
-        self.backfill_last_n_days = kwargs.get("backfill_last_n_days", 3)
-        self.data_latency = kwargs.get("data_latency", "T+1")
-        self.dedupe_key = kwargs.get("dedupe_key", None)
-        self.top_n = kwargs.get("top_n", None)
-        self.sort_by = kwargs.get("sort_by", None)
-        self.include_long_tail = kwargs.get("include_long_tail", False)
-        self.session_level = kwargs.get("session_level", False)
-        self.status = kwargs.get("status", "ACTIVE")
-        # Response schema fields
-        self.rule_type = kwargs.get("rule_type", TargetType.ORDER_FULFILLMENT)
-        self.config = kwargs.get("config", {})
-        self.is_active = kwargs.get("is_active", True)
-        self.last_executed_at = kwargs.get("last_executed_at", None)
-        self.last_execution_id = kwargs.get("last_execution_id", None)
-        self.created_at = kwargs.get("created_at", now)
-        self.updated_at = kwargs.get("updated_at", now)
 
 
 @pytest.mark.asyncio
 class TestDataSourceServiceUnit:
     async def test_create_data_source_success(self):
         mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
-
         mock_ds_repo.create.return_value = MockDataSource(
             id=1,
             name="Test DS",
@@ -96,7 +56,7 @@ class TestDataSourceServiceUnit:
             extra_config={"api_key": "test_key"},
         )
 
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+        service = DataSourceService(mock_ds_repo, mock_session)
         data = DataSourceCreate(
             name="Test DS",
             type=DataSourceType.DOUYIN_SHOP,
@@ -111,8 +71,7 @@ class TestDataSourceServiceUnit:
 
     async def test_create_data_source_without_api_credentials(self):
         mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+        service = DataSourceService(mock_ds_repo, mock_session)
 
         data = DataSourceCreate(
             name="Test DS",
@@ -136,15 +95,12 @@ class TestDataSourceServiceUnit:
 
     async def test_get_by_id_success(self):
         mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
-
         mock_ds_repo.get_by_id.return_value = MockDataSource(
             id=1,
             name="Test DS",
-            scraping_rules=[],
         )
 
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+        service = DataSourceService(mock_ds_repo, mock_session)
         result = await service.get_by_id(1)
 
         assert result.id == 1
@@ -152,10 +108,9 @@ class TestDataSourceServiceUnit:
 
     async def test_get_by_id_not_found(self):
         mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
         mock_ds_repo.get_by_id.return_value = None
 
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+        service = DataSourceService(mock_ds_repo, mock_session)
 
         with pytest.raises(BusinessException) as exc_info:
             await service.get_by_id(999)
@@ -163,14 +118,12 @@ class TestDataSourceServiceUnit:
 
     async def test_list_paginated(self):
         mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
-
         mock_ds_repo.get_paginated.return_value = (
             [MockDataSource(id=1, name="Test DS")],
             1,
         )
 
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+        service = DataSourceService(mock_ds_repo, mock_session)
         result, total = await service.list_paginated(page=1, size=10)
 
         assert len(result) == 1
@@ -179,21 +132,18 @@ class TestDataSourceServiceUnit:
 
     async def test_update_success(self):
         mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
-
         mock_ds_repo.get_by_id.return_value = MockDataSource(
             id=1,
             name="Original Name",
             description="Original Desc",
         )
-
         mock_ds_repo.update.return_value = MockDataSource(
             id=1,
             name="Updated Name",
             description="Updated Desc",
         )
 
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+        service = DataSourceService(mock_ds_repo, mock_session)
         data = DataSourceUpdate(name="Updated Name", description="Updated Desc")
         result = await service.update(1, data, user_id=1)
 
@@ -201,10 +151,9 @@ class TestDataSourceServiceUnit:
 
     async def test_update_not_found(self):
         mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
         mock_ds_repo.get_by_id.return_value = None
 
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+        service = DataSourceService(mock_ds_repo, mock_session)
 
         with pytest.raises(BusinessException) as exc_info:
             await service.update(999, DataSourceUpdate(name="New Name"), user_id=1)
@@ -212,7 +161,6 @@ class TestDataSourceServiceUnit:
 
     async def test_update_shop_dashboard_login_state_returns_masked_response(self):
         mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
 
         mock_ds_repo.get_by_id.return_value = MockDataSource(
             id=1,
@@ -249,7 +197,7 @@ class TestDataSourceServiceUnit:
             },
         )
 
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+        service = DataSourceService(mock_ds_repo, mock_session)
         result = await service.update_shop_dashboard_login_state(
             1,
             account_id="acct-1",
@@ -271,7 +219,6 @@ class TestDataSourceServiceUnit:
 
     async def test_clear_shop_dashboard_login_state_removes_raw_and_meta(self):
         mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
 
         mock_ds_repo.get_by_id.return_value = MockDataSource(
             id=1,
@@ -291,7 +238,7 @@ class TestDataSourceServiceUnit:
             extra_config={},
         )
 
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+        service = DataSourceService(mock_ds_repo, mock_session)
         result = await service.clear_shop_dashboard_login_state(1, user_id=1)
 
         assert "shop_dashboard_login_state" not in result.config
@@ -299,14 +246,13 @@ class TestDataSourceServiceUnit:
 
     async def test_update_shop_dashboard_login_state_rejects_non_shop_source(self):
         mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
         mock_ds_repo.get_by_id.return_value = MockDataSource(
             id=1,
             source_type=ModelDataSourceType.FILE_UPLOAD,
             extra_config={},
         )
 
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+        service = DataSourceService(mock_ds_repo, mock_session)
 
         with pytest.raises(BusinessException) as exc_info:
             await service.update_shop_dashboard_login_state(
@@ -320,14 +266,13 @@ class TestDataSourceServiceUnit:
 
     async def test_clear_shop_dashboard_login_state_rejects_non_shop_source(self):
         mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
         mock_ds_repo.get_by_id.return_value = MockDataSource(
             id=1,
             source_type=ModelDataSourceType.FILE_UPLOAD,
             extra_config={},
         )
 
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+        service = DataSourceService(mock_ds_repo, mock_session)
 
         with pytest.raises(BusinessException) as exc_info:
             await service.clear_shop_dashboard_login_state(1, user_id=1)
@@ -336,16 +281,13 @@ class TestDataSourceServiceUnit:
 
     async def test_delete_success(self):
         mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
-
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+        service = DataSourceService(mock_ds_repo, mock_session)
         await service.delete(1)
 
         mock_ds_repo.delete.assert_called_once_with(1)
 
     async def test_activate_success(self):
         mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
 
         mock_ds_repo.get_by_id.return_value = MockDataSource(
             id=1,
@@ -357,20 +299,19 @@ class TestDataSourceServiceUnit:
             status=DataSourceStatus.ACTIVE,
         )
 
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+        service = DataSourceService(mock_ds_repo, mock_session)
         result = await service.activate(1, user_id=1)
 
         assert result.status == DataSourceStatus.ACTIVE
 
     async def test_activate_already_active(self):
         mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
 
         mock_ds_repo.get_by_id.return_value = MockDataSource(
             status=DataSourceStatus.ACTIVE,
         )
 
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+        service = DataSourceService(mock_ds_repo, mock_session)
 
         with pytest.raises(BusinessException) as exc_info:
             await service.activate(1, user_id=1)
@@ -378,7 +319,6 @@ class TestDataSourceServiceUnit:
 
     async def test_deactivate_success(self):
         mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
 
         mock_ds_repo.get_by_id.return_value = MockDataSource(
             id=1,
@@ -390,20 +330,19 @@ class TestDataSourceServiceUnit:
             status=DataSourceStatus.INACTIVE,
         )
 
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+        service = DataSourceService(mock_ds_repo, mock_session)
         result = await service.deactivate(1, user_id=1)
 
         assert result.status == DataSourceStatus.INACTIVE
 
     async def test_deactivate_already_inactive(self):
         mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
 
         mock_ds_repo.get_by_id.return_value = MockDataSource(
             status=DataSourceStatus.INACTIVE,
         )
 
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+        service = DataSourceService(mock_ds_repo, mock_session)
 
         with pytest.raises(BusinessException) as exc_info:
             await service.deactivate(1, user_id=1)
@@ -411,7 +350,6 @@ class TestDataSourceServiceUnit:
 
     async def test_validate_connection_success(self):
         mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
 
         mock_ds_repo.get_by_id.return_value = MockDataSource(
             id=1,
@@ -426,7 +364,7 @@ class TestDataSourceServiceUnit:
             },
         )
 
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+        service = DataSourceService(mock_ds_repo, mock_session)
         result = await service.validate_connection(1)
 
         assert result["valid"] is True
@@ -434,7 +372,6 @@ class TestDataSourceServiceUnit:
 
     async def test_validate_connection_failure(self):
         mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
 
         mock_ds_repo.get_by_id.return_value = MockDataSource(
             id=1,
@@ -442,182 +379,9 @@ class TestDataSourceServiceUnit:
             extra_config={},
         )
 
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
+        service = DataSourceService(mock_ds_repo, mock_session)
         result = await service.validate_connection(1)
 
         assert result["valid"] is False
         assert result["message"] == "Missing shop dashboard login state cookies"
         mock_ds_repo.record_error.assert_called_once()
-
-    async def test_create_scraping_rule_success(self):
-        mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
-
-        mock_ds_repo.get_by_id.return_value = MockDataSource(
-            id=1,
-            status=DataSourceStatus.ACTIVE,
-        )
-
-        mock_rule_repo.create.return_value = MockScrapingRule(
-            id=1,
-            data_source_id=1,
-            name="Test Rule",
-            target_type=TargetType.ORDER_FULFILLMENT,
-        )
-
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
-        data = ScrapingRuleCreate(
-            data_source_id=1,
-            name="Test Rule",
-            target_type=TargetType.ORDER_FULFILLMENT,
-        )
-        result = await service.create_scraping_rule(1, data)
-
-        assert result.name == "Test Rule"
-
-    async def test_create_scraping_rule_inactive_source(self):
-        mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
-
-        mock_ds_repo.get_by_id.return_value = MockDataSource(
-            status=DataSourceStatus.INACTIVE,
-        )
-
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
-        data = ScrapingRuleCreate(
-            data_source_id=1,
-            name="Test Rule",
-            target_type=TargetType.ORDER_FULFILLMENT,
-        )
-
-        with pytest.raises(BusinessException) as exc_info:
-            await service.create_scraping_rule(1, data)
-        assert exc_info.value.code == ErrorCode.DATA_VALIDATION_FAILED
-
-    async def test_list_scraping_rules(self):
-        mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
-
-        mock_ds_repo.get_by_id.return_value = MockDataSource(id=1)
-
-        mock_rule_repo.get_by_data_source.return_value = [
-            MockScrapingRule(
-                id=1,
-                data_source_id=1,
-                name="Rule 1",
-                target_type=TargetType.ORDER_FULFILLMENT,
-            )
-        ]
-
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
-        result = await service.list_scraping_rules(1)
-
-        assert len(result) == 1
-        assert result[0].name == "Rule 1"
-
-    async def test_update_scraping_rule_success(self):
-        mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
-
-        mock_rule_repo.get_by_id.return_value = MockScrapingRule(
-            id=1,
-            data_source_id=1,
-            name="Updated Rule",
-            target_type=TargetType.ORDER_FULFILLMENT,
-        )
-        mock_rule_repo.update.return_value = MockScrapingRule(
-            id=1,
-            data_source_id=1,
-            name="Updated Rule",
-            target_type=TargetType.ORDER_FULFILLMENT,
-        )
-
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
-        data = ScrapingRuleUpdate(name="Updated Rule")
-        result = await service.update_scraping_rule(1, data)
-
-        assert result.name == "Updated Rule"
-
-    async def test_delete_scraping_rule(self):
-        mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
-
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
-        await service.delete_scraping_rule(1)
-
-        mock_rule_repo.delete.assert_called_once_with(1)
-
-    async def test_trigger_collection_success(self):
-        mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
-
-        mock_ds_repo.get_by_id.return_value = MockDataSource(
-            id=1,
-            status=DataSourceStatus.ACTIVE,
-            scraping_rules=[MockScrapingRule(id=1, name="Test Rule")],
-        )
-
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
-        service._push_shop_dashboard_task = AsyncMock(
-            return_value=SimpleNamespace(task_id="task-1")
-        )
-        result = await service.trigger_collection(1)
-
-        assert result["total"] == 1
-        assert len(result["triggered_rules"]) == 1
-        assert result["triggered_rules"][0]["task_id"] == "task-1"
-        assert result["triggered_rules"][0]["status"] == "queued"
-        mock_rule_repo.update.assert_awaited()
-
-    async def test_trigger_collection_inactive_source(self):
-        mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
-
-        mock_ds_repo.get_by_id.return_value = MockDataSource(
-            status=DataSourceStatus.INACTIVE,
-        )
-
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
-
-        with pytest.raises(BusinessException) as exc_info:
-            await service.trigger_collection(1)
-        assert exc_info.value.code == ErrorCode.DATA_VALIDATION_FAILED
-
-    async def test_trigger_collection_specific_rule(self):
-        mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
-
-        mock_ds_repo.get_by_id.return_value = MockDataSource(
-            id=1,
-            status=DataSourceStatus.ACTIVE,
-            scraping_rules=[
-                MockScrapingRule(id=1, name="Rule 1"),
-                MockScrapingRule(id=2, name="Rule 2"),
-            ],
-        )
-
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
-        service._push_shop_dashboard_task = AsyncMock(
-            return_value=SimpleNamespace(task_id="task-1")
-        )
-        result = await service.trigger_collection(1, rule_id=1)
-
-        assert result["total"] == 1
-        assert result["triggered_rules"][0]["rule_id"] == 1
-        assert result["triggered_rules"][0]["task_id"] == "task-1"
-
-    async def test_trigger_collection_rule_not_found(self):
-        mock_ds_repo = AsyncMock()
-        mock_rule_repo = AsyncMock()
-
-        mock_ds_repo.get_by_id.return_value = MockDataSource(
-            id=1,
-            status=DataSourceStatus.ACTIVE,
-            scraping_rules=[MockScrapingRule(id=1, name="Rule 1")],
-        )
-
-        service = DataSourceService(mock_ds_repo, mock_rule_repo, mock_session)
-
-        with pytest.raises(BusinessException) as exc_info:
-            await service.trigger_collection(1, rule_id=999)
-        assert exc_info.value.code == ErrorCode.SCRAPING_RULE_NOT_FOUND

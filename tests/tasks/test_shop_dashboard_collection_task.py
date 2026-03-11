@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.tasks.collection import douyin_shop_dashboard as module
 from src.tasks.exceptions import ScrapingFailedException
@@ -92,6 +94,31 @@ async def _fake_runtime_loader(**_kwargs):
 
 async def _fake_persist(*_args, **_kwargs):
     return None
+
+
+async def _fake_empty_plan_runtime_loader(**_kwargs):
+    runtime = _build_runtime()
+    runtime.shop_id = ""
+    runtime.filters = {"shop_id": []}
+    return runtime
+
+
+def test_sync_shop_dashboard_fails_when_no_target_shop(monkeypatch):
+    monkeypatch.setattr(
+        module.sync_shop_dashboard,
+        "publisher",
+        SimpleNamespace(redis_db_frame=_FakeRedis()),
+        raising=False,
+    )
+    monkeypatch.setattr(module, "FunboostIdempotencyHelper", _FakeIdempotencyHelper)
+    monkeypatch.setattr(module, "_load_runtime_config", _fake_empty_plan_runtime_loader)
+
+    with pytest.raises(ScrapingFailedException, match="No target shops resolved"):
+        module.sync_shop_dashboard(
+            data_source_id=1,
+            rule_id=2,
+            execution_id="exec-empty-plan",
+        )
 
 
 def test_sync_shop_dashboard_http_browser_fail_then_llm_patch(monkeypatch):

@@ -14,10 +14,8 @@ from typing import Any
 from src.agents import LLMDashboardAgent
 from src.config import get_settings
 from src.domains.data_source.enums import DataSourceStatus, ScrapingRuleStatus
-from src.domains.data_source.repository import (
-    DataSourceRepository,
-    ScrapingRuleRepository,
-)
+from src.domains.data_source.repository import DataSourceRepository
+from src.domains.scraping_rule.repository import ScrapingRuleRepository
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
 from src.middleware.monitor import observe_shop_dashboard_collection
 from src.scrapers.shop_dashboard.browser_scraper import BrowserScraper
@@ -168,17 +166,15 @@ def sync_shop_dashboard(
     )
     plan_units = build_collection_plan(runtime)
     if not plan_units:
-        return {
-            "status": "success",
-            "data_source_id": data_source_id,
-            "rule_id": rule_id,
-            "execution_id": execution_id,
-            "shop_count": 0,
-            "planned_units": 0,
-            "completed_units": 0,
-            "failed_units": 0,
-            "items": [],
-        }
+        raise ScrapingFailedException(
+            "No target shops resolved",
+            error_data={
+                "data_source_id": data_source_id,
+                "rule_id": rule_id,
+                "execution_id": execution_id,
+                "reason": "empty_target_shops",
+            },
+        )
 
     state_store = SessionStateStore(base_dir=Path(".runtime") / "shop_dashboard_state")
     runtime = _materialize_runtime_storage_state(runtime, state_store)

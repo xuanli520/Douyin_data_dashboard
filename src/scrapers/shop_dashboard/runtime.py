@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from src.domains.data_source.models import DataSource, ScrapingRule
+from src.domains.data_source.models import DataSource
+from src.domains.scraping_rule.models import ScrapingRule
 from src.scrapers.shop_dashboard.rule_config_resolver import (
     ResolvedRuleConfig,
     resolve_rule_config,
@@ -39,7 +40,6 @@ class ShopDashboardRuntimeConfig:
     token_keys: list[str]
     api_groups: list[str]
     timezone: str = "Asia/Shanghai"
-    schedule: dict[str, Any] | None = None
     sort_by: str | None = None
     extra_config: dict[str, Any] | None = None
     cursor: str | None = None
@@ -133,7 +133,6 @@ def _build_runtime_from_resolved(
         data_latency=resolved.data_latency,
         target_type=resolved.target_type,
         timezone=resolved.timezone,
-        schedule=dict(resolved.schedule) if resolved.schedule else None,
         metrics=list(resolved.metrics),
         dimensions=list(resolved.dimensions),
         filters=dict(resolved.filters),

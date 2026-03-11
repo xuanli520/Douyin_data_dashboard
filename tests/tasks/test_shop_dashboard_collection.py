@@ -9,7 +9,8 @@ from src.domains.data_source.enums import (
     ScrapingRuleStatus,
     TargetType,
 )
-from src.domains.data_source.models import DataSource, ScrapingRule
+from src.domains.data_source.models import DataSource
+from src.domains.scraping_rule.models import ScrapingRule
 from src.domains.shop_dashboard.models import ShopDashboardViolation
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.tasks.collection import douyin_shop_dashboard as module
@@ -30,7 +31,6 @@ async def test_load_runtime_config_rejects_inactive_data_source(test_db, monkeyp
             name="active-runtime-rule",
             data_source_id=data_source.id if data_source.id is not None else 0,
             status=ScrapingRuleStatus.ACTIVE,
-            schedule={"cron": "0 3 * * *"},
         )
         db_session.add(rule)
         await db_session.commit()
@@ -59,7 +59,6 @@ async def test_load_runtime_config_rejects_inactive_rule(test_db, monkeypatch):
             name="inactive-runtime-rule",
             data_source_id=data_source.id if data_source.id is not None else 0,
             status=ScrapingRuleStatus.INACTIVE,
-            schedule={"cron": "0 3 * * *"},
         )
         db_session.add(rule)
         await db_session.commit()
@@ -90,7 +89,6 @@ async def test_load_runtime_config_rejects_empty_api_groups(test_db, monkeypatch
             status=ScrapingRuleStatus.ACTIVE,
             target_type=TargetType.TRAFFIC,
             metrics=[],
-            schedule={"cron": "0 3 * * *"},
         )
         db_session.add(rule)
         await db_session.commit()
@@ -130,7 +128,6 @@ async def test_load_runtime_config_reads_storage_state_from_extra_config(
             name="runtime-storage-rule",
             data_source_id=data_source.id if data_source.id is not None else 0,
             status=ScrapingRuleStatus.ACTIVE,
-            schedule={"cron": "0 3 * * *"},
         )
         db_session.add(rule)
         await db_session.commit()

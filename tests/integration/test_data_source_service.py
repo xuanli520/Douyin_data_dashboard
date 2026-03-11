@@ -1,16 +1,16 @@
 import pytest
 
 from src.domains.data_source.enums import DataSourceStatus, TargetType
-from src.domains.data_source.repository import (
-    DataSourceRepository,
-    ScrapingRuleRepository,
-)
+from src.domains.data_source.repository import DataSourceRepository
+from src.domains.scraping_rule.repository import ScrapingRuleRepository
 from src.domains.data_source.schemas import (
     DataSourceCreate,
     DataSourceUpdate,
+    DataSourceType as SchemaDataSourceType,
+)
+from src.domains.scraping_rule.schemas import (
     ScrapingRuleCreate,
     ScrapingRuleUpdate,
-    DataSourceType as SchemaDataSourceType,
 )
 from src.domains.data_source.services import DataSourceService
 from src.exceptions import BusinessException

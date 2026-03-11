@@ -1,5 +1,6 @@
 from src.domains.data_source.enums import DataSourceType
-from src.domains.data_source.models import DataSource, ScrapingRule
+from src.domains.data_source.models import DataSource
+from src.domains.scraping_rule.models import ScrapingRule
 from src.scrapers.shop_dashboard.runtime import (
     build_runtime_config,
     build_runtime_configs,
