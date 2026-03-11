@@ -16,8 +16,12 @@ default:
     uvx pre-commit run --all-files
 
 @ci-gate:
+    just arch-check
     uv run --frozen pytest -q
     just check
+
+@arch-check:
+    uv run --frozen pytest -q tests/architecture/test_layer_boundaries.py
 
 # Start development server with auto-reload
 run port=PORT:
