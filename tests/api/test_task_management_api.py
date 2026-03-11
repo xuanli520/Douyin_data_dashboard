@@ -11,6 +11,7 @@ from src.domains.task.schemas import TaskDefinitionCreate
 from src.domains.task.services import TaskService
 from src.main import app
 from src.shared.errors import ErrorCode
+from src.tasks.bootstrap import build_task_dispatcher_registry
 
 
 class MockCaptchaService:
@@ -25,6 +26,7 @@ async def api_client(test_db, local_cache):
 
     app.dependency_overrides[get_cache] = override_get_cache
     app.dependency_overrides[get_captcha_service] = lambda: MockCaptchaService()
+    app.state.task_dispatcher_registry = build_task_dispatcher_registry()
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -287,6 +289,7 @@ async def test_run_shop_dashboard_task_persists_payload_and_dispatches_overrides
                 "data_source_id": 10,
                 "rule_id": 20,
                 "execution_id": "shop-api-exec-1",
+                "all": True,
                 "shop_ids": ["shop-10", "shop-11"],
                 "timezone": "Asia/Shanghai",
                 "granularity": "DAY",
@@ -312,6 +315,7 @@ async def test_run_shop_dashboard_task_persists_payload_and_dispatches_overrides
     assert execution["payload"]["filters"]["region"] == "east"
     assert captured["data_source_id"] == 10
     assert captured["rule_id"] == 20
+    assert captured["all"] is True
     assert captured["shop_ids"] == ["shop-10", "shop-11"]
     assert captured["timezone"] == "Asia/Shanghai"
     assert captured["filters"] == {"shop_id": ["shop-10", "shop-11"], "region": "east"}

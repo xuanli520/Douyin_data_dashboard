@@ -2,125 +2,112 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import defaultdict
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import inspect
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import session
 from src.config import get_settings
-from src.domains.data_source.enums import DataSourceStatus, ScrapingRuleStatus
-from src.domains.data_source.models import DataSource
-from src.domains.scraping_rule.models import ScrapingRule
-from src.tasks.collection.douyin_shop_agent import sync_shop_dashboard_agent
-from src.tasks.collection.douyin_shop_dashboard import sync_shop_dashboard
+from src.domains.collection_job.models import CollectionJob
+from src.domains.collection_job.schemas import ScheduleConfig
+from src.domains.collection_job.services import CollectionJobService
+from src.domains.task.enums import TaskType
+from src.domains.task.schemas import SHOP_DASHBOARD_OVERRIDE_KEYS
+from src.tasks.bootstrap import (
+    TASK_TYPE_QUEUE_NAME_MAPPING,
+    TASK_TYPE_TASK_FUNC_MAPPING,
+)
 from src.tasks.funboost_compat import ApsJobAdder
 
 
 def register_jobs() -> None:
-    dashboard_rules = _load_active_shop_dashboard_rules()
-    fixed_rule = dashboard_rules[0] if dashboard_rules else None
-    if fixed_rule is not None:
-        dashboard_job = ApsJobAdder(sync_shop_dashboard, job_store_kind="redis")
-        dashboard_job.add_push_job(
-            trigger="cron",
-            minute=0,
-            hour=2,
-            kwargs=_build_dashboard_job_kwargs(fixed_rule, execution_tag="full_sync"),
-            id="shop_dashboard_full_sync",
-        )
-        dashboard_job.add_push_job(
-            trigger="cron",
-            minute=0,
-            hour="6,10,14,18",
-            kwargs=_build_dashboard_job_kwargs(
-                fixed_rule,
-                execution_tag="incremental_sync",
-            ),
-            id="shop_dashboard_incremental_sync",
-        )
-        dashboard_job.add_push_job(
-            trigger="cron",
-            minute="*/30",
-            kwargs=_build_dashboard_job_kwargs(
-                fixed_rule,
-                execution_tag="cookie_health_check",
-            ),
-            id="shop_dashboard_cookie_health_check",
-        )
+    collection_jobs = _load_enabled_collection_jobs()
+    jobs_by_task_type: dict[TaskType, list[CollectionJob]] = defaultdict(list)
+    for collection_job in collection_jobs:
+        jobs_by_task_type[collection_job.task_type].append(collection_job)
 
-        shop_id = str(fixed_rule.get("shop_id") or "").strip()
-        if shop_id:
-            agent_job = ApsJobAdder(sync_shop_dashboard_agent, job_store_kind="redis")
-            agent_job.add_push_job(
-                trigger="cron",
-                minute="*/10",
-                kwargs={
-                    "shop_id": shop_id,
-                    "reason": "agent_backfill",
-                    "triggered_by": None,
-                },
-                id="shop_dashboard_agent_backfill",
+    for task_type, jobs in jobs_by_task_type.items():
+        task_func = TASK_TYPE_TASK_FUNC_MAPPING.get(task_type)
+        if task_func is None:
+            continue
+        _assert_task_type_queue_mapping(task_type, task_func)
+        job_adder = ApsJobAdder(task_func, job_store_kind="redis")
+        for collection_job in jobs:
+            schedule = ScheduleConfig.model_validate(collection_job.schedule or {})
+            job_adder.add_push_job(
+                **schedule.to_aps_job_kwargs(),
+                kwargs=_build_dispatch_kwargs(collection_job, schedule),
+                id=f"collection_job_{collection_job.id}",
             )
 
 
-def _build_dashboard_job_kwargs(
-    rule: dict[str, Any], execution_tag: str
+def _assert_task_type_queue_mapping(task_type: TaskType, task_func: Any) -> None:
+    expected_queue_name = TASK_TYPE_QUEUE_NAME_MAPPING.get(task_type)
+    if not expected_queue_name:
+        return
+    actual_queue_name = str(
+        getattr(getattr(task_func, "boost_params", None), "queue_name", "") or ""
+    )
+    if actual_queue_name and actual_queue_name != expected_queue_name:
+        raise ValueError(
+            f"task_type {task_type.value} queue mismatch: {actual_queue_name}"
+        )
+
+
+def _build_dispatch_kwargs(
+    collection_job: CollectionJob,
+    schedule: ScheduleConfig,
 ) -> dict[str, Any]:
+    schedule_kwargs = dict(schedule.kwargs)
+    execution_id = str(schedule_kwargs.pop("execution_id", "") or "").strip()
+    if not execution_id:
+        execution_id = f"cron_collection_job_{collection_job.id}"
+
+    if collection_job.task_type == TaskType.SHOP_DASHBOARD_COLLECTION:
+        kwargs: dict[str, Any] = {
+            "data_source_id": collection_job.data_source_id,
+            "rule_id": collection_job.rule_id,
+            "execution_id": execution_id,
+            "triggered_by": None,
+        }
+        for key in SHOP_DASHBOARD_OVERRIDE_KEYS:
+            if key in schedule_kwargs:
+                kwargs[key] = schedule_kwargs[key]
+        return kwargs
+
     return {
-        "data_source_id": int(rule["data_source_id"]),
-        "rule_id": int(rule["rule_id"]),
-        "execution_id": f"cron_{execution_tag}_{rule['rule_id']}",
         "triggered_by": None,
-        "granularity": rule.get("granularity"),
-        "timezone": str(rule.get("timezone") or "Asia/Shanghai"),
-        "incremental_mode": rule.get("incremental_mode"),
-        "data_latency": rule.get("data_latency"),
+        "execution_id": execution_id,
+        **schedule_kwargs,
     }
 
 
-def _load_active_shop_dashboard_rules() -> list[dict]:
-    return asyncio.run(_load_active_shop_dashboard_rules_async())
+def _load_enabled_collection_jobs() -> list[CollectionJob]:
+    return asyncio.run(_load_enabled_collection_jobs_async())
 
 
-async def _load_active_shop_dashboard_rules_async() -> list[dict]:
+async def _load_enabled_collection_jobs_async() -> list[CollectionJob]:
     session_factory = session.async_session_factory
     if session_factory is None:
         return []
     async with session_factory() as db_session:
-        stmt = (
-            select(ScrapingRule, DataSource.shop_id)
-            .join(DataSource, ScrapingRule.data_source_id == DataSource.id)
-            .where(
-                ScrapingRule.status == ScrapingRuleStatus.ACTIVE,
-                DataSource.status == DataSourceStatus.ACTIVE,
-            )
+        await _ensure_collection_jobs_table_ready(db_session)
+        service = CollectionJobService(session=db_session)
+        return await service.list_enabled_jobs()
+
+
+async def _ensure_collection_jobs_table_ready(db_session: AsyncSession) -> None:
+    has_table = await db_session.run_sync(
+        lambda sync_session: inspect(sync_session.connection()).has_table(
+            "collection_jobs"
         )
-        rows = list((await db_session.execute(stmt)).all())
-        return [
-            {
-                "rule_id": rule.id if rule.id is not None else 0,
-                "data_source_id": rule.data_source_id,
-                "shop_id": shop_id,
-                "timezone": str(rule.timezone or "Asia/Shanghai"),
-                "granularity": str(
-                    rule.granularity.value
-                    if hasattr(rule.granularity, "value")
-                    else rule.granularity
-                ),
-                "incremental_mode": str(
-                    rule.incremental_mode.value
-                    if hasattr(rule.incremental_mode, "value")
-                    else rule.incremental_mode
-                ),
-                "data_latency": str(
-                    rule.data_latency.value
-                    if hasattr(rule.data_latency, "value")
-                    else rule.data_latency
-                ),
-            }
-            for rule, shop_id in rows
-            if rule.id is not None
-        ]
+    )
+    if not has_table:
+        raise RuntimeError(
+            "collection_jobs table is missing; run alembic upgrade f4d5c6b7a8e9 before starting beat"
+        )
 
 
 def _init_scheduler_db() -> None:

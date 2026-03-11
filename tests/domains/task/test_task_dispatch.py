@@ -14,6 +14,13 @@ from src.exceptions import BusinessException
 from src.shared.errors import ErrorCode
 
 
+def test_task_dispatcher_registry_handles_shop_dashboard():
+    from src.tasks.bootstrap import build_task_dispatcher_registry
+
+    registry = build_task_dispatcher_registry()
+    assert registry.has_handler(TaskType.SHOP_DASHBOARD_COLLECTION)
+
+
 @pytest.mark.asyncio
 async def test_run_task_dispatches_by_task_type_and_persists_queued_execution(
     test_db, monkeypatch
@@ -36,6 +43,7 @@ async def test_run_task_dispatches_by_task_type_and_persists_queued_execution(
         called["shop"] += 1
         assert kwargs["data_source_id"] == 10
         assert kwargs["rule_id"] == 20
+        assert kwargs["all"] is True
         assert kwargs["shop_id"] == "shop-10"
         assert kwargs["shop_ids"] == ["shop-10", "shop-11"]
         assert kwargs["granularity"] == "HOUR"
@@ -102,6 +110,7 @@ async def test_run_task_dispatches_by_task_type_and_persists_queued_execution(
                 "data_source_id": 10,
                 "rule_id": 20,
                 "execution_id": "shop-exec-1",
+                "all": True,
                 "shop_id": "shop-10",
                 "shop_ids": ["shop-10", "shop-11"],
                 "granularity": "HOUR",

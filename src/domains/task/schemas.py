@@ -15,6 +15,7 @@ from src.domains.task.enums import (
 SHOP_DASHBOARD_OVERRIDE_KEYS: tuple[str, ...] = (
     "shop_id",
     "shop_ids",
+    "all",
     "granularity",
     "timezone",
     "time_range",

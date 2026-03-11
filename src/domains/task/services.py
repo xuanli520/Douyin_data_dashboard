@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from datetime import date as date_type
 from datetime import datetime
 from typing import Any
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.exceptions import (
@@ -26,20 +25,23 @@ from src.domains.task.events import (
     TaskExecutionTriggeredEvent,
     TaskStatusChangedEvent,
 )
+from src.domains.task.dispatch import TaskDispatcherRegistry
 from src.domains.task.models import TaskDefinition, TaskExecution
 from src.domains.task.repository import (
     TaskDefinitionRepository,
     TaskExecutionRepository,
 )
 from src.domains.task.schemas import (
-    SHOP_DASHBOARD_OVERRIDE_KEYS,
     TaskDefinitionCreate,
     TaskExecutionCreate,
 )
 from src.session import get_session
-from src.tasks.collection.douyin_shop_dashboard import sync_shop_dashboard
-from src.tasks.etl.orders import process_orders
-from src.tasks.etl.products import process_products
+from src.tasks import bootstrap as task_bootstrap
+from src.tasks.bootstrap import build_task_dispatcher_registry
+
+process_orders = task_bootstrap.process_orders
+process_products = task_bootstrap.process_products
+sync_shop_dashboard = task_bootstrap.sync_shop_dashboard
 
 
 class TaskService:
@@ -48,10 +50,14 @@ class TaskService:
         session: AsyncSession,
         task_repo: TaskDefinitionRepository | None = None,
         execution_repo: TaskExecutionRepository | None = None,
+        dispatcher_registry: TaskDispatcherRegistry | None = None,
     ):
         self.session = session
         self.task_repo = task_repo or TaskDefinitionRepository(session)
         self.execution_repo = execution_repo or TaskExecutionRepository(session)
+        self.dispatcher_registry = (
+            dispatcher_registry or build_task_dispatcher_registry()
+        )
         self._events: list[TaskDomainEvent] = []
 
     @property
@@ -291,40 +297,12 @@ class TaskService:
         triggered_by: int | None,
         execution_id: int,
     ) -> Any:
-        if task_type == TaskType.ETL_ORDERS:
-            return process_orders.push(
-                batch_date=self._resolve_batch_date(payload),
-                triggered_by=triggered_by,
-                execution_id=execution_id,
-            )
-        if task_type == TaskType.ETL_PRODUCTS:
-            return process_products.push(
-                batch_date=self._resolve_batch_date(payload),
-                triggered_by=triggered_by,
-                execution_id=execution_id,
-            )
-        if task_type == TaskType.SHOP_DASHBOARD_COLLECTION:
-            dispatch_kwargs: dict[str, Any] = {
-                "data_source_id": payload["data_source_id"],
-                "rule_id": payload["rule_id"],
-                "execution_id": str(
-                    payload.get("execution_id") or f"task-execution-{execution_id}"
-                ),
-                "triggered_by": triggered_by,
-            }
-            for key in SHOP_DASHBOARD_OVERRIDE_KEYS:
-                if key in payload:
-                    dispatch_kwargs[key] = payload[key]
-            return sync_shop_dashboard.push(
-                **dispatch_kwargs,
-            )
-        raise TaskPushFailedException()
-
-    def _resolve_batch_date(self, payload: dict[str, Any]) -> str:
-        raw = payload.get("batch_date")
-        if isinstance(raw, str) and raw.strip():
-            return raw.strip()
-        return date_type.today().isoformat()
+        return self.dispatcher_registry.dispatch(
+            task_type=task_type,
+            payload=payload,
+            triggered_by=triggered_by,
+            execution_id=execution_id,
+        )
 
     def _validate_payload(
         self,
@@ -360,7 +338,17 @@ class TaskService:
         return value
 
 
+def get_task_dispatcher_registry(request: Request) -> TaskDispatcherRegistry:
+    registry = getattr(request.app.state, "task_dispatcher_registry", None)
+    if isinstance(registry, TaskDispatcherRegistry):
+        return registry
+    registry = build_task_dispatcher_registry()
+    request.app.state.task_dispatcher_registry = registry
+    return registry
+
+
 async def get_task_service(
     session: AsyncSession = Depends(get_session),
+    dispatcher_registry: TaskDispatcherRegistry = Depends(get_task_dispatcher_registry),
 ) -> AsyncGenerator[TaskService, None]:
-    yield TaskService(session=session)
+    yield TaskService(session=session, dispatcher_registry=dispatcher_registry)

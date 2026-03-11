@@ -129,3 +129,17 @@ def test_resolve_rule_config_field_priority_overrides_rule_extra_and_data_source
     assert config.session_level is True
     assert config.shop_ids == ["override-shop-1", "override-shop-2"]
     assert config.metrics == ["overview"]
+
+
+def test_resolve_rule_config_should_not_fallback_to_data_source_shop_id():
+    data_source = _build_data_source()
+    rule = _build_rule(filters={})
+
+    config = resolve_rule_config(
+        data_source=data_source,
+        rule=rule,
+        execution_id="exec-no-fallback",
+    )
+
+    assert config.shop_id == ""
+    assert config.shop_ids == []

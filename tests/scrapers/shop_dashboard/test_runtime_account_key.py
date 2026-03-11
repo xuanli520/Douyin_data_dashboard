@@ -17,7 +17,11 @@ def _ds(*, extra_config: dict | None = None, shop_id: str = "shop-1") -> DataSou
 
 
 def _rule() -> ScrapingRule:
-    return ScrapingRule(name="runtime-rule", data_source_id=1)
+    return ScrapingRule(
+        name="runtime-rule",
+        data_source_id=1,
+        filters={"shop_id": ["shop-1"]},
+    )
 
 
 def test_runtime_account_key_priority_account_id_then_phone_then_shop_id():
@@ -35,12 +39,20 @@ def test_runtime_account_key_priority_account_id_then_phone_then_shop_id():
 def test_runtime_account_key_fallback_to_phone_then_shop():
     runtime_with_phone = build_runtime_config(
         data_source=_ds(extra_config={"user_phone": "13800000000"}, shop_id="shop-2"),
-        rule=_rule(),
+        rule=ScrapingRule(
+            name="runtime-rule-phone",
+            data_source_id=1,
+            filters={"shop_id": ["shop-2"]},
+        ),
         execution_id="exec-2",
     )
     runtime_with_shop = build_runtime_config(
         data_source=_ds(extra_config={}, shop_id="shop-3"),
-        rule=_rule(),
+        rule=ScrapingRule(
+            name="runtime-rule-shop",
+            data_source_id=1,
+            filters={"shop_id": ["shop-3"]},
+        ),
         execution_id="exec-3",
     )
 

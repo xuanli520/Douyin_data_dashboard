@@ -254,17 +254,34 @@ def resolve_rule_config(
         rule_id=rule_id,
     )
 
-    explicit_shop_id = _normalize_nullable_text(
-        pick("shop_id", ds_value=data_source.shop_id, default=None)
+    explicit_shop_id = _normalize_nullable_text(pick("shop_id", default=None))
+    all_shops = bool(
+        _normalize_optional_bool(
+            pick("all", default=None),
+            field="all",
+            rule_id=rule_id,
+        )
     )
+    if explicit_shop_id and _is_all_shop_marker(explicit_shop_id):
+        all_shops = True
+        explicit_shop_id = None
     raw_shop_ids = pick("shop_ids", default=None)
     if raw_shop_ids is None:
         raw_shop_ids = filters.get("shop_id")
     shop_ids = _normalize_shop_ids(raw_shop_ids, rule_id=rule_id)
+    if any(_is_all_shop_marker(shop) for shop in shop_ids):
+        all_shops = True
+        shop_ids = [shop for shop in shop_ids if not _is_all_shop_marker(shop)]
+    if all_shops:
+        explicit_shop_id = None
+        shop_ids = []
     if not shop_ids and explicit_shop_id:
         shop_ids = [explicit_shop_id]
     shop_id = explicit_shop_id or (shop_ids[0] if shop_ids else "")
-    if shop_ids:
+    if all_shops:
+        filters["all"] = True
+        filters["shop_id"] = []
+    elif shop_ids:
         filters["shop_id"] = list(shop_ids)
     elif "shop_id" in filters:
         filters["shop_id"] = []
@@ -285,11 +302,14 @@ def resolve_rule_config(
         pick("cookies", default={})
     )
 
+    default_account_id = f"rule_{rule_id}"
+    if shop_id:
+        default_account_id = f"shop_{shop_id}"
     account_id = (
         _normalize_nullable_text(pick("account_id", default=""))
         or _normalize_nullable_text(login_state_meta.get("account_id"))
         or _normalize_nullable_text(pick("user_phone", default=""))
-        or f"shop_{shop_id}"
+        or default_account_id
     )
 
     explicit_groups = pick("api_groups", default=None)
@@ -487,6 +507,19 @@ def _normalize_bool(value: Any, *, field: str, rule_id: int) -> bool:
     _invalid_field(field, value, rule_id=rule_id)
 
 
+def _normalize_optional_bool(
+    value: Any,
+    *,
+    field: str,
+    rule_id: int,
+) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    return _normalize_bool(value, field=field, rule_id=rule_id)
+
+
 def _normalize_optional_dict(
     value: Any,
     *,
@@ -522,6 +555,13 @@ def _normalize_shop_ids(value: Any, *, rule_id: int) -> list[str]:
     else:
         _invalid_field("filters.shop_id", value, rule_id=rule_id)
     return _normalize_string_items(items)
+
+
+def _is_all_shop_marker(value: Any) -> bool:
+    text = _normalize_nullable_text(value)
+    if text is None:
+        return False
+    return text.lower() in {"all", "*"}
 
 
 def _normalize_string_items(items: Iterable[Any]) -> list[str]:

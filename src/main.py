@@ -40,6 +40,7 @@ from src.middleware.cors import get_cors_middleware
 from src.middleware.monitor import MonitorMiddleware
 from src.middleware.rate_limit import RateLimitMiddleware
 from src.responses.middleware import ResponseWrapperMiddleware
+from src.tasks.bootstrap import build_task_dispatcher_registry
 
 from .session import close_db, init_db
 
@@ -67,6 +68,7 @@ async def lifespan(app: FastAPI):
 
     await seed_permissions()
     await seed_admin_role_permissions()
+    app.state.task_dispatcher_registry = build_task_dispatcher_registry()
 
     async def add_redis_to_request(request: Request):
         cache = get_cache()

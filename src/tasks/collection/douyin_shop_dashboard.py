@@ -110,6 +110,7 @@ def sync_shop_dashboard(
     triggered_by: int | None = None,
     shop_id: str | None = None,
     shop_ids: list[str] | str | None = None,
+    all: bool | None = None,
     granularity: str | None = None,
     timezone: str | None = None,
     time_range: dict[str, Any] | None = None,
@@ -137,6 +138,7 @@ def sync_shop_dashboard(
         for key, value in {
             "shop_id": shop_id,
             "shop_ids": shop_ids,
+            "all": all,
             "granularity": granularity,
             "timezone": timezone,
             "time_range": time_range,

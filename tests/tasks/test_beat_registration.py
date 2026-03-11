@@ -1,4 +1,15 @@
-def test_register_jobs_uses_fixed_ids(monkeypatch):
+import pytest
+from sqlalchemy import text
+
+from src.domains.collection_job.enums import CollectionJobStatus
+from src.domains.collection_job.models import CollectionJob
+from src.domains.data_source.enums import DataSourceStatus, DataSourceType, TargetType
+from src.domains.data_source.models import DataSource
+from src.domains.scraping_rule.models import ScrapingRule
+from src.domains.task.enums import TaskType
+
+
+def test_register_jobs_uses_collection_job_ids(monkeypatch):
     from src.tasks import beat as module
 
     calls = []
@@ -13,17 +24,17 @@ def test_register_jobs_uses_fixed_ids(monkeypatch):
     monkeypatch.setattr(module, "ApsJobAdder", _FakeJobAdder)
     monkeypatch.setattr(
         module,
-        "_load_active_shop_dashboard_rules",
+        "_load_enabled_collection_jobs",
         lambda: [
-            {
-                "rule_id": 99,
-                "data_source_id": 11,
-                "shop_id": "shop-1",
-                "timezone": "Asia/Shanghai",
-                "granularity": "DAY",
-                "incremental_mode": "BY_DATE",
-                "data_latency": "T+1",
-            }
+            CollectionJob(
+                id=99,
+                name="beat-registration-job",
+                task_type=TaskType.SHOP_DASHBOARD_COLLECTION,
+                data_source_id=11,
+                rule_id=12,
+                schedule={"cron": "0 2 * * *"},
+                status=CollectionJobStatus.ACTIVE,
+            )
         ],
         raising=False,
     )
@@ -31,11 +42,8 @@ def test_register_jobs_uses_fixed_ids(monkeypatch):
     module.register_jobs()
 
     add_ids = [item[1] for item in calls if item[0] == "add"]
-    assert "shop_dashboard_full_sync" in add_ids
-    assert "shop_dashboard_incremental_sync" in add_ids
-    assert "shop_dashboard_cookie_health_check" in add_ids
-    assert "shop_dashboard_agent_backfill" in add_ids
-    assert "scraping_rule_99_collection_shop_dashboard_sync" not in add_ids
+    assert add_ids == ["collection_job_99"]
+    assert "shop_dashboard_full_sync" not in add_ids
 
 
 def test_main_initializes_db_before_register_jobs(monkeypatch):
@@ -58,54 +66,67 @@ def test_main_initializes_db_before_register_jobs(monkeypatch):
     assert calls[:2] == ["init_db", "register_jobs"]
 
 
-async def test_load_active_shop_dashboard_rules_excludes_inactive_data_source(
+async def test_load_enabled_collection_jobs_async_excludes_inactive_jobs(
     test_db, monkeypatch
 ):
-    from src.domains.data_source.enums import (
-        DataSourceStatus,
-        DataSourceType,
-        ScrapingRuleStatus,
-    )
-    from src.domains.data_source.models import DataSource
-    from src.domains.scraping_rule.models import ScrapingRule
     from src.tasks import beat as module
 
     async with test_db() as db_session:
-        active_source = DataSource(
-            name="active-shop-dashboard-source",
+        data_source = DataSource(
+            name="beat-registration-active-source",
             source_type=DataSourceType.DOUYIN_SHOP,
             status=DataSourceStatus.ACTIVE,
-            shop_id="shop-1",
         )
-        inactive_source = DataSource(
-            name="inactive-shop-dashboard-source",
-            source_type=DataSourceType.DOUYIN_SHOP,
-            status=DataSourceStatus.INACTIVE,
-        )
-        db_session.add(active_source)
-        db_session.add(inactive_source)
+        db_session.add(data_source)
         await db_session.flush()
 
-        active_rule = ScrapingRule(
-            name="active-shop-dashboard-rule",
-            data_source_id=active_source.id if active_source.id is not None else 0,
-            status=ScrapingRuleStatus.ACTIVE,
+        rule = ScrapingRule(
+            name="beat-registration-rule",
+            data_source_id=data_source.id if data_source.id is not None else 0,
+            target_type=TargetType.SHOP_OVERVIEW,
         )
-        inactive_source_rule = ScrapingRule(
-            name="inactive-source-shop-dashboard-rule",
-            data_source_id=inactive_source.id if inactive_source.id is not None else 0,
-            status=ScrapingRuleStatus.ACTIVE,
+        db_session.add(rule)
+        await db_session.flush()
+
+        db_session.add(
+            CollectionJob(
+                name="beat-registration-job-active",
+                task_type=TaskType.SHOP_DASHBOARD_COLLECTION,
+                data_source_id=data_source.id if data_source.id is not None else 0,
+                rule_id=rule.id if rule.id is not None else 0,
+                schedule={"cron": "0 2 * * *"},
+                status=CollectionJobStatus.ACTIVE,
+            )
         )
-        db_session.add(active_rule)
-        db_session.add(inactive_source_rule)
+        db_session.add(
+            CollectionJob(
+                name="beat-registration-job-inactive",
+                task_type=TaskType.SHOP_DASHBOARD_COLLECTION,
+                data_source_id=data_source.id if data_source.id is not None else 0,
+                rule_id=rule.id if rule.id is not None else 0,
+                schedule={"cron": "0 6 * * *"},
+                status=CollectionJobStatus.INACTIVE,
+            )
+        )
         await db_session.commit()
 
     monkeypatch.setattr(module.session, "async_session_factory", test_db, raising=False)
-    rules = await module._load_active_shop_dashboard_rules_async()
+    jobs = await module._load_enabled_collection_jobs_async()
 
-    rule_ids = {item["rule_id"] for item in rules}
-    assert active_rule.id in rule_ids
-    assert inactive_source_rule.id not in rule_ids
-    active_rule_row = next(item for item in rules if item["rule_id"] == active_rule.id)
-    assert active_rule_row["shop_id"] == "shop-1"
-    assert "schedule" not in active_rule_row
+    assert len(jobs) == 1
+    assert jobs[0].name == "beat-registration-job-active"
+
+
+async def test_load_enabled_collection_jobs_async_requires_collection_jobs_table(
+    test_db, monkeypatch
+):
+    from src.tasks import beat as module
+
+    async with test_db() as db_session:
+        await db_session.execute(text("DROP TABLE collection_jobs"))
+        await db_session.commit()
+
+    monkeypatch.setattr(module.session, "async_session_factory", test_db, raising=False)
+
+    with pytest.raises(RuntimeError):
+        await module._load_enabled_collection_jobs_async()

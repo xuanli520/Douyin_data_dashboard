@@ -10,11 +10,13 @@ from src.config import get_settings
 
 from src.auth.models import User  # noqa: F401
 from src.audit.schemas import AuditLog  # noqa: F401
-from src.domains.data_source.models import DataSource, ScrapingRule  # noqa: F401
+from src.domains.collection_job.models import CollectionJob  # noqa: F401
+from src.domains.data_source.models import DataSource  # noqa: F401
 from src.domains.experience.models import (  # noqa: F401
     ExperienceIssueDaily,
     ExperienceMetricDaily,
 )
+from src.domains.scraping_rule.models import ScrapingRule  # noqa: F401
 from src.domains.shop_dashboard.models import (  # noqa: F401
     ShopDashboardColdMetric,
     ShopDashboardReview,
