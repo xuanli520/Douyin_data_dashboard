@@ -7,11 +7,18 @@ import httpx
 
 
 class AccountShopResolver:
-    _LOGIN_PROBE_PATH = "/api/compass/user/info"
-    _SHOP_LIST_PATHS: tuple[str, ...] = (
-        "/api/compass/shop/get_login_subject",
-        "/api/compass/user/get_login_subject",
-        "/api/compass/user/get_login_subject_list",
+    _LOGIN_PROBE_PATH = "/ecomauth/loginv1/get_login_subject_count"
+    _LOGIN_PROBE_PARAMS: dict[str, Any] = {"login_source": "doudian_pc_web"}
+    _SHOP_LIST_SPECS: tuple[tuple[str, dict[str, Any]], ...] = (
+        ("/byteshop/index/getshoplist", {}),
+        (
+            "/byteshop/loginv2/getallshop",
+            {
+                "loginSourceV2": "doudian_pc_v2",
+                "subject_aid": 4966,
+                "loginType": "mobile",
+            },
+        ),
     )
 
     def __init__(
@@ -38,9 +45,8 @@ class AccountShopResolver:
         if not cookie_mapping:
             return configured_shop_ids
 
+        _ = account_id
         params = dict(common_query or {})
-        if account_id and "account_id" not in params:
-            params["account_id"] = account_id
 
         if self._client is not None:
             resolved_shop_ids = await self._resolve_with_client(
@@ -71,11 +77,11 @@ class AccountShopResolver:
     ) -> list[str]:
         if not await self._probe_login(client=client, params=params, cookies=cookies):
             return []
-        for path in self._SHOP_LIST_PATHS:
+        for path, endpoint_params in self._SHOP_LIST_SPECS:
             payload = await self._request_json(
                 client=client,
                 path=path,
-                params=params,
+                params={**dict(params), **endpoint_params},
                 cookies=cookies,
             )
             if not isinstance(payload, Mapping):
@@ -95,7 +101,7 @@ class AccountShopResolver:
         payload = await self._request_json(
             client=client,
             path=self._LOGIN_PROBE_PATH,
-            params=params,
+            params={**dict(params), **self._LOGIN_PROBE_PARAMS},
             cookies=cookies,
         )
         if not isinstance(payload, Mapping):
@@ -146,8 +152,26 @@ class AccountShopResolver:
 
 
 def _extract_shop_ids_from_payload(payload: Any) -> list[str]:
+    byteshop_shop_ids = _extract_shop_ids_from_byteshop_payload(payload)
+    if byteshop_shop_ids:
+        return byteshop_shop_ids
     result: list[str] = []
     _walk_shop_ids(payload, result, parent_key="")
+    return _dedupe_shop_ids(result)
+
+
+def _extract_shop_ids_from_byteshop_payload(payload: Any) -> list[str]:
+    if not isinstance(payload, Mapping):
+        return []
+    data = payload.get("data")
+    if not isinstance(data, list):
+        return []
+    result: list[str] = []
+    for item in data:
+        if not isinstance(item, Mapping):
+            continue
+        for key in ("id", "shop_id", "shopId", "subject_id", "subjectId"):
+            result.extend(_normalize_scalar_to_shop_ids(item.get(key)))
     return _dedupe_shop_ids(result)
 
 

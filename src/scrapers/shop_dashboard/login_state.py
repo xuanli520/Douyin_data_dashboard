@@ -30,7 +30,7 @@ async def check_login_status(
         return False
     try:
         response = await request.get(
-            "https://fxg.jinritemai.com/api/compass/user/info",
+            "https://fxg.jinritemai.com/ecomauth/loginv1/get_login_subject_count?login_source=doudian_pc_web",
             timeout=api_timeout_seconds * 1000,
         )
         payload = response.json()
