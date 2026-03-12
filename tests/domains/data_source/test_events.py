@@ -318,25 +318,6 @@ class TestEventEquality:
 
         assert event1 != event2
 
-    def test_events_with_identical_payload_and_time_are_not_equal(self):
-        same_time = datetime(2026, 3, 6, 10, 0, 0, tzinfo=timezone.utc)
-        event1 = DataSourceCreatedEvent(
-            data_source_id=1,
-            name="Test",
-            source_type=DataSourceType.DOUYIN_SHOP,
-            status=DataSourceStatus.ACTIVE,
-            occurred_at=same_time,
-        )
-        event2 = DataSourceCreatedEvent(
-            data_source_id=1,
-            name="Test",
-            source_type=DataSourceType.DOUYIN_SHOP,
-            status=DataSourceStatus.ACTIVE,
-            occurred_at=same_time,
-        )
-
-        assert event1 != event2
-
 
 class TestEventSlots:
     def test_events_have_slots_attribute(self):

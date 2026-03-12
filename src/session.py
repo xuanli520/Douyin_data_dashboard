@@ -45,7 +45,6 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
             if session.in_transaction():
                 await session.rollback()
             raise
-<<<<<<< feat/phase3-experience-real-cache
 
 
 def bind_worker_loop(loop: asyncio.AbstractEventLoop | None) -> None:
@@ -58,5 +57,3 @@ def run_coro(coro: Coroutine[Any, Any, T]) -> T:
     if loop is None or loop.is_closed():
         return asyncio.run(coro)
     return asyncio.run_coroutine_threadsafe(coro, loop).result()
-=======
->>>>>>> main
