@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from collections.abc import Mapping
 from typing import Any
 
@@ -39,22 +40,24 @@ class AccountShopResolver:
         cookies: Mapping[str, str] | None,
         common_query: Mapping[str, Any] | None = None,
         extra_config: Mapping[str, Any] | None = None,
+        refresh_login_callback: Any | None = None,
     ) -> list[str]:
-        configured_shop_ids = _resolve_shop_ids_from_extra_config(extra_config)
+        _ = extra_config
         cookie_mapping = dict(cookies or {})
         if not cookie_mapping:
-            return configured_shop_ids
+            return []
 
-        _ = account_id
         params = dict(common_query or {})
 
         if self._client is not None:
             resolved_shop_ids = await self._resolve_with_client(
                 client=self._client,
+                account_id=account_id,
                 params=params,
                 cookies=cookie_mapping,
+                refresh_login_callback=refresh_login_callback,
             )
-            return resolved_shop_ids or configured_shop_ids
+            return resolved_shop_ids
 
         async with httpx.AsyncClient(
             base_url=self._base_url,
@@ -63,19 +66,36 @@ class AccountShopResolver:
         ) as client:
             resolved_shop_ids = await self._resolve_with_client(
                 client=client,
+                account_id=account_id,
                 params=params,
                 cookies=cookie_mapping,
+                refresh_login_callback=refresh_login_callback,
             )
-            return resolved_shop_ids or configured_shop_ids
+            return resolved_shop_ids
 
     async def _resolve_with_client(
         self,
         *,
         client: httpx.AsyncClient,
+        account_id: str,
         params: Mapping[str, Any],
         cookies: Mapping[str, str],
+        refresh_login_callback: Any | None = None,
     ) -> list[str]:
-        if not await self._probe_login(client=client, params=params, cookies=cookies):
+        login_ok = await self._probe_login(
+            client=client, params=params, cookies=cookies
+        )
+        if not login_ok and refresh_login_callback is not None:
+            refreshed = refresh_login_callback(account_id)
+            if inspect.isawaitable(refreshed):
+                refreshed = await refreshed
+            if bool(refreshed):
+                login_ok = await self._probe_login(
+                    client=client,
+                    params=params,
+                    cookies=cookies,
+                )
+        if not login_ok:
             return []
         for path, endpoint_params in self._SHOP_LIST_SPECS:
             payload = await self._request_json(
@@ -173,14 +193,6 @@ def _extract_shop_ids_from_byteshop_payload(payload: Any) -> list[str]:
         for key in ("id", "shop_id", "shopId", "subject_id", "subjectId"):
             result.extend(_normalize_scalar_to_shop_ids(item.get(key)))
     return _dedupe_shop_ids(result)
-
-
-def _resolve_shop_ids_from_extra_config(
-    extra_config: Mapping[str, Any] | None,
-) -> list[str]:
-    if not isinstance(extra_config, Mapping):
-        return []
-    return _extract_shop_ids_from_payload(extra_config)
 
 
 def _walk_shop_ids(value: Any, result: list[str], *, parent_key: str) -> None:

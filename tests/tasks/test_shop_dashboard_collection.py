@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
@@ -14,6 +15,7 @@ from src.domains.data_source.models import DataSource
 from src.domains.scraping_rule.models import ScrapingRule
 from src.domains.task.enums import TaskExecutionStatus
 from src.domains.task.models import TaskExecution
+from src.domains.task.exceptions import ShopDashboardNoTargetShopsException
 from src.scrapers.shop_dashboard.exceptions import LoginExpiredError
 from src.tasks.collection import douyin_shop_dashboard as module
 from src.tasks.exceptions import ShopDashboardCookieExpiredException
@@ -64,6 +66,7 @@ class _FakeRedis:
 class _FakeStateStore:
     def __init__(self, base_dir=None):
         _ = base_dir
+        self._bundles: dict[tuple[str, str], dict[str, Any]] = {}
 
     def save(self, _account_id: str, _state: dict[str, Any]) -> None:
         return None
@@ -73,6 +76,15 @@ class _FakeStateStore:
 
     def exists(self, _account_id: str) -> bool:
         return True
+
+    def load_bundle(self, account_id: str, shop_id: str) -> dict[str, Any] | None:
+        return self._bundles.get((account_id, shop_id))
+
+    def save_bundle(self, account_id: str, shop_id: str, bundle: dict[str, Any]):
+        self._bundles[(account_id, shop_id)] = dict(bundle)
+
+    def invalidate_bundle(self, account_id: str, shop_id: str) -> None:
+        self._bundles.pop((account_id, shop_id), None)
 
 
 class _FakeLockManager:
@@ -84,6 +96,48 @@ class _FakeLoginStateManager:
     def __init__(self, state_store, redis_client=None):
         self.state_store = state_store
         self.redis_client = redis_client
+
+
+class _FakeSessionBootstrapper:
+    def __init__(self, state_store, browser_scraper=None):
+        self.state_store = state_store
+        self.browser_scraper = browser_scraper
+
+    async def bootstrap_shops(self, *, runtime, shop_ids, force_serial=None):
+        _ = force_serial
+        results: dict[str, dict[str, Any]] = {}
+        account_id = str(getattr(runtime, "account_id", "") or "").strip() or "acct-1"
+        for shop_id in shop_ids:
+            shop_text = str(shop_id)
+            self.state_store.save_bundle(
+                account_id,
+                shop_text,
+                {
+                    "cookies": dict(getattr(runtime, "cookies", {}) or {}),
+                    "common_query": dict(getattr(runtime, "common_query", {}) or {}),
+                    "validated_shop_id": shop_text,
+                    "validated_at": "2026-03-10T00:00:00+00:00",
+                    "session_version": "1",
+                },
+            )
+            results[shop_text] = {"shop_id": shop_text, "bootstrap_failed": False}
+        return results
+
+    async def bootstrap_shop(self, *, runtime, shop_id):
+        account_id = str(getattr(runtime, "account_id", "") or "").strip() or "acct-1"
+        shop_text = str(shop_id)
+        self.state_store.save_bundle(
+            account_id,
+            shop_text,
+            {
+                "cookies": dict(getattr(runtime, "cookies", {}) or {}),
+                "common_query": dict(getattr(runtime, "common_query", {}) or {}),
+                "validated_shop_id": shop_text,
+                "validated_at": "2026-03-10T00:00:00+00:00",
+                "session_version": "1",
+            },
+        )
+        return {"shop_id": shop_text, "bootstrap_failed": False}
 
 
 async def _seed_entities(
@@ -142,7 +196,7 @@ async def test_collection_runtime_loader_should_capture_rule_version_and_snapsho
 
 
 @pytest.mark.asyncio
-async def test_collection_runtime_loader_should_resolve_all_mode_shop_ids_from_data_source_config(
+async def test_collection_runtime_loader_should_resolve_all_mode_shop_ids_from_catalog_service(
     test_db,
 ):
     data_source_id, rule_id = await _seed_entities(
@@ -150,7 +204,16 @@ async def test_collection_runtime_loader_should_resolve_all_mode_shop_ids_from_d
         ds_extra_config={"shop_ids": ["shop-a", "shop-b"]},
         rule_filters={},
     )
-    loader = CollectionRuntimeLoader()
+
+    class _FakeCatalogService:
+        async def get_shop_catalog(self, **_kwargs):
+            return SimpleNamespace(
+                shop_ids=["shop-a", "shop-b"],
+                catalog_stale=False,
+                resolve_source="live",
+            )
+
+    loader = CollectionRuntimeLoader(account_shop_catalog_service=_FakeCatalogService())
     async with test_db() as db_session:
         loaded = await loader.load(
             session=db_session,
@@ -179,11 +242,15 @@ async def test_collection_runtime_loader_should_resolve_all_mode_shop_ids_from_a
         rule_filters={},
     )
 
-    class _FakeAccountShopResolver:
-        async def resolve_shop_ids(self, **_kwargs) -> list[str]:
-            return ["shop-r1", "shop-r2"]
+    class _FakeCatalogService:
+        async def get_shop_catalog(self, **_kwargs):
+            return SimpleNamespace(
+                shop_ids=["shop-r1", "shop-r2"],
+                catalog_stale=True,
+                resolve_source="cache_stale",
+            )
 
-    loader = CollectionRuntimeLoader(account_shop_resolver=_FakeAccountShopResolver())
+    loader = CollectionRuntimeLoader(account_shop_catalog_service=_FakeCatalogService())
     async with test_db() as db_session:
         loaded = await loader.load(
             session=db_session,
@@ -195,6 +262,27 @@ async def test_collection_runtime_loader_should_resolve_all_mode_shop_ids_from_a
 
     assert loaded.runtime.shop_id == "shop-r1"
     assert loaded.runtime.filters["shop_id"] == ["shop-r1", "shop-r2"]
+    assert loaded.runtime.catalog_stale is True
+
+
+@pytest.mark.asyncio
+async def test_collection_runtime_loader_should_fail_when_exact_mode_has_no_shop_targets(
+    test_db,
+):
+    data_source_id, rule_id = await _seed_entities(
+        test_db,
+        ds_extra_config={},
+        rule_filters={},
+    )
+    loader = CollectionRuntimeLoader()
+    async with test_db() as db_session:
+        with pytest.raises(ShopDashboardNoTargetShopsException):
+            await loader.load(
+                session=db_session,
+                data_source_id=data_source_id,
+                rule_id=rule_id,
+                execution_id="exec-loader-empty-exact",
+            )
 
 
 @pytest.mark.asyncio
@@ -216,6 +304,12 @@ async def test_collection_usecase_should_map_login_expired_to_task_exception(
     )
     monkeypatch.setattr(module, "BrowserScraper", lambda: object())
     monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
+    monkeypatch.setattr(
+        module,
+        "SessionBootstrapper",
+        _FakeSessionBootstrapper,
+        raising=False,
+    )
     monkeypatch.setattr(module, "LockManager", _FakeLockManager)
     monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
     monkeypatch.setattr(

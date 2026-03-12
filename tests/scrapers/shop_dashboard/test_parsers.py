@@ -1,4 +1,5 @@
 from src.scrapers.shop_dashboard.parsers import (
+    extract_actual_shop_id,
     parse_comment_details,
     parse_core_scores,
     parse_violation_summary,
@@ -71,3 +72,13 @@ def test_parse_violation_summary_aggregates_ticket_and_points():
     assert result["a_level_point"] == 2
     assert result["b_level_point"] == 3
     assert result["ticket_count"] == 9
+
+
+def test_extract_actual_shop_id_prefers_analysis_then_overview():
+    analysis_payload = {"code": 0, "data": {"shop_id": "shop-a"}}
+    overview_payload = {"code": 0, "data": {"shop_id": "shop-b"}}
+
+    assert extract_actual_shop_id(analysis_payload, overview_payload) == "shop-a"
+
+    empty_analysis = {"code": 0, "data": {}}
+    assert extract_actual_shop_id(empty_analysis, overview_payload) == "shop-b"

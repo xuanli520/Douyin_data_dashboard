@@ -7,6 +7,9 @@ from src.scrapers.shop_dashboard.exceptions import ShopDashboardScraperError
 
 def _build_runtime(*, retry_count: int = 0) -> ShopDashboardRuntimeConfig:
     return ShopDashboardRuntimeConfig(
+        shop_mode="EXACT",
+        resolved_shop_ids=["shop-1"],
+        catalog_stale=False,
         shop_id="shop-1",
         cookies={"sid": "token"},
         proxy=None,

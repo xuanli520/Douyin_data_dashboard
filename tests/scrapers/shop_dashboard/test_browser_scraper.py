@@ -9,6 +9,9 @@ def _runtime(
     cookies: dict[str, str] | None = None,
 ) -> ShopDashboardRuntimeConfig:
     return ShopDashboardRuntimeConfig(
+        shop_mode="EXACT",
+        resolved_shop_ids=["shop-1"],
+        catalog_stale=False,
         shop_id="shop-1",
         cookies=cookies or {},
         proxy=None,

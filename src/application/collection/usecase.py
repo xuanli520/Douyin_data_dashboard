@@ -17,8 +17,11 @@ from src.application.collection.runtime_loader import CollectionRuntimeLoader
 from src.application.collection.runtime_loader import LoadedCollectionRuntime
 from src.config import get_settings
 from src.domains.task.exceptions import ScrapingFailedException
+from src.domains.task.exceptions import ShopDashboardNoTargetShopsException
 from src.domains.task.exceptions import ShopDashboardCookieExpiredException
 from src.domains.task.exceptions import ShopDashboardDataIncompleteException
+from src.domains.task.exceptions import ShopDashboardShopCircuitBreakException
+from src.domains.task.exceptions import ShopDashboardShopMismatchException
 from src.domains.task.enums import TaskExecutionStatus
 from src.domains.task.enums import TaskTriggerMode
 from src.domains.task.enums import TaskType
@@ -32,7 +35,9 @@ from src.scrapers.shop_dashboard.exceptions import ShopDashboardScraperError
 from src.scrapers.shop_dashboard.lock_manager import LockManager
 from src.scrapers.shop_dashboard.login_state_manager import LoginStateManager
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
+from src.scrapers.shop_dashboard.session_bootstrapper import SessionBootstrapper
 from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
+from src.shared.redis_keys import redis_keys
 from src.shared.idempotency import FunboostIdempotencyHelper
 
 
@@ -347,7 +352,7 @@ class CollectionUseCase:
     ) -> dict[str, Any]:
         plan_units = self.plan_builder.build(runtime)
         if not plan_units:
-            raise ScrapingFailedException(
+            raise ShopDashboardNoTargetShopsException(
                 "No target shops resolved",
                 error_data={
                     "data_source_id": data_source_id,
@@ -398,19 +403,117 @@ class CollectionUseCase:
             "LoginStateManager",
             LoginStateManager,
         )
+        bootstrapper_cls = getattr(
+            task_module,
+            "SessionBootstrapper",
+            SessionBootstrapper,
+        )
         browser = browser_cls()
         lock_manager = lock_manager_cls(redis_client=resolved_redis)
         login_state_manager = login_state_manager_cls(
             state_store=state_store,
             redis_client=resolved_redis,
         )
+        bootstrapper = bootstrapper_cls(
+            state_store=state_store,
+            browser_scraper=browser,
+        )
         collector_supports_shared_helpers = _supports_shared_helpers(collect_one_day)
         rate_limiter = rate_limiter_cls(runtime.rate_limit)
         items: list[dict[str, Any]] = []
+        requested_shop_ids = list(runtime.resolved_shop_ids)
+        if not requested_shop_ids:
+            requested_shop_ids = list({plan_unit.shop_id for plan_unit in plan_units})
+        bootstrap_results = await bootstrapper.bootstrap_shops(
+            runtime=runtime,
+            shop_ids=requested_shop_ids,
+        )
+        bootstrap_rebuild_count = 0
+        shop_mismatch_count = 0
+        shop_circuit_break_count = 0
 
         for plan_unit in plan_units:
             rate_limiter.wait()
             unit_runtime = runtimes_by_shop[plan_unit.shop_id]
+            account_id = str(unit_runtime.account_id or "").strip() or (
+                f"shop_{plan_unit.shop_id}"
+            )
+            if self._is_shop_circuit_open(
+                redis_client=resolved_redis,
+                account_id=account_id,
+                shop_id=plan_unit.shop_id,
+            ):
+                shop_circuit_break_count += 1
+                circuit_item = {
+                    "status": "failed",
+                    "reason": "shop_circuit_break",
+                    "metric_date": plan_unit.metric_date,
+                    "shop_id": unit_runtime.shop_id,
+                    "target_shop_id": plan_unit.shop_id,
+                    "actual_shop_id": None,
+                    "mismatch_status": "circuit_break",
+                    "rule_id": unit_runtime.rule_id,
+                    "execution_id": unit_runtime.execution_id,
+                    "retry_count": 0,
+                    "fallback_trace": [],
+                }
+                items.append(circuit_item)
+                observe_shop_dashboard_collection(
+                    source="circuit_break",
+                    status="failed",
+                    duration_seconds=0.0,
+                    shop_mode=runtime.shop_mode,
+                    shop_resolve_source=runtime.shop_resolve_source,
+                    bootstrap_status="skipped",
+                    circuit_break_status="open",
+                )
+                continue
+            bundle = state_store.load_bundle(account_id, plan_unit.shop_id)
+            if not bundle:
+                bootstrap_result = await bootstrapper.bootstrap_shop(
+                    runtime=unit_runtime,
+                    shop_id=plan_unit.shop_id,
+                )
+                bootstrap_results[plan_unit.shop_id] = bootstrap_result
+                bootstrap_rebuild_count += 1
+                bundle = state_store.load_bundle(account_id, plan_unit.shop_id)
+            if bundle:
+                bundle_cookies = bundle.get("cookies")
+                bundle_common_query = bundle.get("common_query")
+                if isinstance(bundle_cookies, dict):
+                    unit_runtime = replace(unit_runtime, cookies=dict(bundle_cookies))
+                if isinstance(bundle_common_query, dict):
+                    merged_common_query = dict(unit_runtime.common_query)
+                    merged_common_query.update(bundle_common_query)
+                    unit_runtime = replace(
+                        unit_runtime,
+                        common_query=merged_common_query,
+                    )
+            bootstrap_result = bootstrap_results.get(plan_unit.shop_id)
+            if isinstance(bootstrap_result, dict) and bool(
+                bootstrap_result.get("bootstrap_failed")
+            ):
+                failed_item = {
+                    "status": "failed",
+                    "reason": "bootstrap_failed",
+                    "metric_date": plan_unit.metric_date,
+                    "shop_id": unit_runtime.shop_id,
+                    "rule_id": unit_runtime.rule_id,
+                    "execution_id": unit_runtime.execution_id,
+                    "retry_count": 0,
+                    "fallback_trace": [],
+                }
+                items.append(failed_item)
+                observe_shop_dashboard_collection(
+                    source="bootstrap",
+                    status="failed",
+                    duration_seconds=0.0,
+                    shop_mode=runtime.shop_mode,
+                    shop_resolve_source=runtime.shop_resolve_source,
+                    bootstrap_status="failed",
+                    circuit_break_status="closed",
+                )
+                continue
             business_key = build_business_key(
                 unit_runtime,
                 plan_unit.metric_date,
@@ -423,6 +526,10 @@ class CollectionUseCase:
                     source=str(cached.get("source", "cache")),
                     status=str(cached.get("status", "success")),
                     duration_seconds=0.0,
+                    shop_mode=runtime.shop_mode,
+                    shop_resolve_source=runtime.shop_resolve_source,
+                    bootstrap_status="cached",
+                    circuit_break_status="closed",
                 )
                 continue
 
@@ -446,6 +553,10 @@ class CollectionUseCase:
                     source="lock",
                     status="skipped",
                     duration_seconds=0.0,
+                    shop_mode=runtime.shop_mode,
+                    shop_resolve_source=runtime.shop_resolve_source,
+                    bootstrap_status="unknown",
+                    circuit_break_status="closed",
                 )
                 continue
 
@@ -453,21 +564,128 @@ class CollectionUseCase:
             source = "unknown"
             status = "failed"
             try:
-                if collector_supports_shared_helpers:
-                    collected = collect_one_day(
-                        unit_runtime,
-                        plan_unit.metric_date,
-                        browser,
-                        lock_manager=lock_manager,
-                        state_store=state_store,
-                        login_state_manager=login_state_manager,
+                collected = self._collect_one_unit_payload(
+                    collect_one_day=collect_one_day,
+                    collector_supports_shared_helpers=collector_supports_shared_helpers,
+                    runtime=unit_runtime,
+                    metric_date=plan_unit.metric_date,
+                    browser=browser,
+                    lock_manager=lock_manager,
+                    state_store=state_store,
+                    login_state_manager=login_state_manager,
+                )
+                target_shop_id = plan_unit.shop_id
+                actual_shop_id = self._resolve_actual_shop_id(
+                    collected=collected,
+                    fallback_shop_id=target_shop_id,
+                )
+                mismatch_status = (
+                    "matched" if actual_shop_id == target_shop_id else "mismatched"
+                )
+                if mismatch_status == "mismatched":
+                    shop_mismatch_count += 1
+                    state_store.invalidate_bundle(account_id, target_shop_id)
+                    bootstrap_retry = await bootstrapper.bootstrap_shop(
+                        runtime=unit_runtime,
+                        shop_id=target_shop_id,
                     )
-                else:
-                    collected = collect_one_day(
-                        unit_runtime,
-                        plan_unit.metric_date,
-                        browser,
+                    bootstrap_rebuild_count += 1
+                    bootstrap_results[target_shop_id] = bootstrap_retry
+                    if not bool(bootstrap_retry.get("bootstrap_failed")):
+                        bundle = state_store.load_bundle(account_id, target_shop_id)
+                        if bundle:
+                            bundle_cookies = bundle.get("cookies")
+                            bundle_common_query = bundle.get("common_query")
+                            if isinstance(bundle_cookies, dict):
+                                unit_runtime = replace(
+                                    unit_runtime,
+                                    cookies=dict(bundle_cookies),
+                                )
+                            if isinstance(bundle_common_query, dict):
+                                merged_common_query = dict(unit_runtime.common_query)
+                                merged_common_query.update(bundle_common_query)
+                                unit_runtime = replace(
+                                    unit_runtime,
+                                    common_query=merged_common_query,
+                                )
+                        collected = self._collect_one_unit_payload(
+                            collect_one_day=collect_one_day,
+                            collector_supports_shared_helpers=collector_supports_shared_helpers,
+                            runtime=unit_runtime,
+                            metric_date=plan_unit.metric_date,
+                            browser=browser,
+                            lock_manager=lock_manager,
+                            state_store=state_store,
+                            login_state_manager=login_state_manager,
+                        )
+                        actual_shop_id = self._resolve_actual_shop_id(
+                            collected=collected,
+                            fallback_shop_id=target_shop_id,
+                        )
+                        mismatch_status = (
+                            "matched"
+                            if actual_shop_id == target_shop_id
+                            else "mismatched"
+                        )
+                collected["target_shop_id"] = target_shop_id
+                collected["actual_shop_id"] = actual_shop_id
+                collected["mismatch_status"] = mismatch_status
+                collected["catalog_stale"] = bool(runtime.catalog_stale)
+                collected["effective_filters_snapshot"] = dict(
+                    plan_unit.effective_filters
+                )
+                if mismatch_status == "mismatched":
+                    mismatch_state = self._record_shop_mismatch_failure(
+                        redis_client=resolved_redis,
+                        account_id=account_id,
+                        shop_id=target_shop_id,
                     )
+                    if bool(mismatch_state.get("circuit_open")):
+                        shop_circuit_break_count += 1
+                    mismatch_result = {
+                        "status": "failed",
+                        "reason": "shop_mismatch",
+                        "metric_date": plan_unit.metric_date,
+                        "shop_id": target_shop_id,
+                        "target_shop_id": target_shop_id,
+                        "actual_shop_id": actual_shop_id,
+                        "mismatch_status": "mismatched",
+                        "catalog_stale": bool(runtime.catalog_stale),
+                        "effective_filters_snapshot": dict(plan_unit.effective_filters),
+                        "rule_id": unit_runtime.rule_id,
+                        "execution_id": unit_runtime.execution_id,
+                        "retry_count": int(collected.get("retry_count", 0)),
+                        "fallback_trace": list(collected.get("fallback_trace", [])),
+                        "error_data": {
+                            "mismatch_fail_count": mismatch_state.get("count", 0),
+                            "circuit_open": bool(
+                                mismatch_state.get("circuit_open", False)
+                            ),
+                        },
+                    }
+                    items.append(mismatch_result)
+                    source = str(collected.get("source", "unknown"))
+                    status = "failed"
+                    helper.cache_result(business_key, mismatch_result)
+                    observe_shop_dashboard_collection(
+                        source=source,
+                        status=status,
+                        duration_seconds=time.perf_counter() - started_at,
+                        shop_mode=runtime.shop_mode,
+                        shop_resolve_source=runtime.shop_resolve_source,
+                        bootstrap_status="done",
+                        circuit_break_status=(
+                            "open"
+                            if bool(mismatch_state.get("circuit_open", False))
+                            else "closed"
+                        ),
+                    )
+                    continue
+                self._clear_shop_mismatch_failure(
+                    redis_client=resolved_redis,
+                    account_id=account_id,
+                    shop_id=target_shop_id,
+                )
                 async with session_factory() as persist_session:
                     await self.result_persister.persist(
                         session=persist_session,
@@ -484,6 +702,10 @@ class CollectionUseCase:
                     source=source,
                     status=status,
                     duration_seconds=time.perf_counter() - started_at,
+                    shop_mode=runtime.shop_mode,
+                    shop_resolve_source=runtime.shop_resolve_source,
+                    bootstrap_status="done",
+                    circuit_break_status="closed",
                 )
                 raise
             else:
@@ -491,6 +713,10 @@ class CollectionUseCase:
                     source=source,
                     status=status,
                     duration_seconds=time.perf_counter() - started_at,
+                    shop_mode=runtime.shop_mode,
+                    shop_resolve_source=runtime.shop_resolve_source,
+                    bootstrap_status="done",
+                    circuit_break_status="closed",
                 )
             finally:
                 helper.release_lock(business_key, token)
@@ -500,6 +726,12 @@ class CollectionUseCase:
             "data_source_id": data_source_id,
             "rule_id": rule_id,
             "execution_id": execution_id,
+            "requested_shop_count": len(requested_shop_ids),
+            "resolved_shop_count": len({plan_unit.shop_id for plan_unit in plan_units}),
+            "bootstrap_rebuild_count": bootstrap_rebuild_count,
+            "shop_mismatch_count": shop_mismatch_count,
+            "shop_circuit_break_count": shop_circuit_break_count,
+            "catalog_stale": bool(runtime.catalog_stale),
             "shop_count": len({plan_unit.shop_id for plan_unit in plan_units}),
             "planned_units": len(plan_units),
             "completed_units": sum(
@@ -510,6 +742,143 @@ class CollectionUseCase:
             ),
             "items": items,
         }
+
+    def _collect_one_unit_payload(
+        self,
+        *,
+        collect_one_day: Any,
+        collector_supports_shared_helpers: bool,
+        runtime: ShopDashboardRuntimeConfig,
+        metric_date: str,
+        browser: Any,
+        lock_manager: Any,
+        state_store: Any,
+        login_state_manager: Any,
+    ) -> dict[str, Any]:
+        if collector_supports_shared_helpers:
+            return collect_one_day(
+                runtime,
+                metric_date,
+                browser,
+                lock_manager=lock_manager,
+                state_store=state_store,
+                login_state_manager=login_state_manager,
+            )
+        return collect_one_day(
+            runtime,
+            metric_date,
+            browser,
+        )
+
+    def _resolve_actual_shop_id(
+        self,
+        *,
+        collected: dict[str, Any],
+        fallback_shop_id: str,
+    ) -> str:
+        candidate = str(collected.get("actual_shop_id") or "").strip()
+        if candidate:
+            return candidate
+        candidate = str(collected.get("shop_id") or "").strip()
+        if candidate:
+            return candidate
+        return str(fallback_shop_id or "").strip()
+
+    def _is_shop_circuit_open(
+        self,
+        *,
+        redis_client: Any,
+        account_id: str,
+        shop_id: str,
+    ) -> bool:
+        circuit_key = redis_keys.shop_dashboard_shop_mismatch_circuit(
+            account_id=account_id,
+            shop_id=shop_id,
+        )
+        redis_get = getattr(redis_client, "get", None)
+        if callable(redis_get):
+            value = redis_get(circuit_key)
+            return value not in {None, "", "0", 0, False}
+        return False
+
+    def _record_shop_mismatch_failure(
+        self,
+        *,
+        redis_client: Any,
+        account_id: str,
+        shop_id: str,
+    ) -> dict[str, Any]:
+        settings = get_settings().shop_dashboard
+        fail_count_key = redis_keys.shop_dashboard_shop_mismatch_fail_count(
+            account_id=account_id,
+            shop_id=shop_id,
+        )
+        circuit_key = redis_keys.shop_dashboard_shop_mismatch_circuit(
+            account_id=account_id,
+            shop_id=shop_id,
+        )
+        window_seconds = max(int(settings.shop_mismatch_failure_window_seconds), 1)
+        threshold = max(int(settings.shop_mismatch_failure_threshold), 1)
+        circuit_open_seconds = max(int(settings.shop_mismatch_circuit_open_seconds), 1)
+        count = 0
+        redis_incr = getattr(redis_client, "incr", None)
+        redis_expire = getattr(redis_client, "expire", None)
+        redis_get = getattr(redis_client, "get", None)
+        redis_set = getattr(redis_client, "set", None)
+        if callable(redis_incr):
+            try:
+                count = int(redis_incr(fail_count_key))
+            except Exception:
+                count = 0
+        elif callable(redis_get) and callable(redis_set):
+            current = redis_get(fail_count_key)
+            try:
+                count = int(current or 0) + 1
+            except (TypeError, ValueError):
+                count = 1
+            redis_set(fail_count_key, count, ex=window_seconds)
+        if count <= 0 and callable(redis_get):
+            try:
+                count = int(redis_get(fail_count_key) or 0)
+            except (TypeError, ValueError):
+                count = 0
+        if callable(redis_expire):
+            try:
+                redis_expire(fail_count_key, window_seconds)
+            except Exception:
+                pass
+        circuit_open = count >= threshold
+        if circuit_open and callable(redis_set):
+            redis_set(circuit_key, "1", ex=circuit_open_seconds)
+        return {"count": count, "circuit_open": circuit_open}
+
+    def _clear_shop_mismatch_failure(
+        self,
+        *,
+        redis_client: Any,
+        account_id: str,
+        shop_id: str,
+    ) -> None:
+        fail_count_key = redis_keys.shop_dashboard_shop_mismatch_fail_count(
+            account_id=account_id,
+            shop_id=shop_id,
+        )
+        circuit_key = redis_keys.shop_dashboard_shop_mismatch_circuit(
+            account_id=account_id,
+            shop_id=shop_id,
+        )
+        redis_delete = getattr(redis_client, "delete", None)
+        if callable(redis_delete):
+            try:
+                redis_delete(fail_count_key)
+                redis_delete(circuit_key)
+            except Exception:
+                return
+            return
+        redis_set = getattr(redis_client, "set", None)
+        if callable(redis_set):
+            redis_set(fail_count_key, "0", ex=1)
+            redis_set(circuit_key, "0", ex=1)
 
     def _build_idempotency_key(
         self,
@@ -539,6 +908,12 @@ class CollectionUseCase:
         if isinstance(exc, ShopDashboardCookieExpiredException):
             return exc
         if isinstance(exc, ShopDashboardDataIncompleteException):
+            return exc
+        if isinstance(exc, ShopDashboardNoTargetShopsException):
+            return exc
+        if isinstance(exc, ShopDashboardShopMismatchException):
+            return exc
+        if isinstance(exc, ShopDashboardShopCircuitBreakException):
             return exc
         if isinstance(exc, LoginExpiredError):
             return ShopDashboardCookieExpiredException(

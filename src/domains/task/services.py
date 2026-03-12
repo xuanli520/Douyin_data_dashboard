@@ -35,6 +35,14 @@ from src.domains.task.schemas import (
     TaskDefinitionCreate,
     TaskExecutionCreate,
 )
+from src.application.collection.runtime_loader import CollectionRuntimeLoader
+from src.domains.task.exceptions import ScrapingFailedException
+from src.domains.task.exceptions import ShopDashboardNoTargetShopsException
+from src.scrapers.shop_dashboard.shop_selection_validator import (
+    ensure_explicit_shop_selection_valid,
+    has_explicit_shop_selection,
+    normalize_shop_selection_payload,
+)
 from src.session import get_session
 
 
@@ -191,7 +199,10 @@ class TaskService:
             raise TaskInvalidStatusException(task_id=str(task_id), status=task.status)
 
         task_payload = dict(payload or {})
-        self._validate_payload(task_type=task.task_type, payload=task_payload)
+        task_payload = await self._validate_payload(
+            task_type=task.task_type,
+            payload=task_payload,
+        )
         execution = await self.create_execution(
             task,
             payload=TaskExecutionCreate(
@@ -298,17 +309,58 @@ class TaskService:
             execution_id=execution_id,
         )
 
-    def _validate_payload(
+    async def _validate_payload(
         self,
         *,
         task_type: TaskType,
         payload: dict[str, Any],
-    ) -> None:
+    ) -> dict[str, Any]:
+        validated_payload = dict(payload)
         if task_type == TaskType.SHOP_DASHBOARD_COLLECTION:
-            payload["data_source_id"] = self._require_positive_int(
-                payload, field="data_source_id"
+            validated_payload["data_source_id"] = self._require_positive_int(
+                validated_payload, field="data_source_id"
             )
-            payload["rule_id"] = self._require_positive_int(payload, field="rule_id")
+            validated_payload["rule_id"] = self._require_positive_int(
+                validated_payload, field="rule_id"
+            )
+            validated_payload = normalize_shop_selection_payload(validated_payload)
+            if has_explicit_shop_selection(payload):
+                try:
+                    ensure_explicit_shop_selection_valid(validated_payload)
+                except ValueError as exc:
+                    raise TaskInvalidPayloadException(
+                        message=str(exc),
+                        field="shop_id",
+                    ) from exc
+            await self._validate_shop_dashboard_target_shops(validated_payload)
+        return validated_payload
+
+    async def _validate_shop_dashboard_target_shops(
+        self,
+        payload: dict[str, Any],
+    ) -> None:
+        execution_id = str(payload.get("execution_id") or "").strip()
+        if not execution_id:
+            execution_id = "api-run-task-validation"
+        loader = CollectionRuntimeLoader()
+        try:
+            await loader.load(
+                session=self.session,
+                data_source_id=int(payload["data_source_id"]),
+                rule_id=int(payload["rule_id"]),
+                execution_id=execution_id,
+                overrides=payload,
+            )
+        except ShopDashboardNoTargetShopsException as exc:
+            raise TaskInvalidPayloadException(
+                message=str(exc),
+                field="shop_id",
+            ) from exc
+        except ScrapingFailedException as exc:
+            message = str(exc).lower()
+            if "not found" in message:
+                return
+            raise
 
     def _require_positive_int(self, payload: dict[str, Any], *, field: str) -> int:
         raw = payload.get(field)

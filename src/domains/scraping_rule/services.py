@@ -20,6 +20,11 @@ from src.domains.scraping_rule.schemas import (
     ScrapingRuleUpdate,
 )
 from src.exceptions import BusinessException
+from src.scrapers.shop_dashboard.shop_selection_validator import (
+    ensure_explicit_shop_selection_valid,
+    has_explicit_shop_selection,
+    normalize_shop_selection_payload,
+)
 from src.session import get_session
 from src.shared.errors import ErrorCode
 
@@ -61,7 +66,18 @@ class ScrapingRuleService:
             ),
             "version": 1,
         }
-        rule_data.update(ScrapingRuleConfigMapper.map_to_model_fields(config))
+        normalized_config = normalize_shop_selection_payload(config)
+        if has_explicit_shop_selection(config):
+            try:
+                ensure_explicit_shop_selection_valid(normalized_config)
+            except ValueError as exc:
+                raise BusinessException(
+                    ErrorCode.DATA_VALIDATION_FAILED,
+                    str(exc),
+                ) from exc
+        rule_data.update(
+            ScrapingRuleConfigMapper.map_to_model_fields(normalized_config)
+        )
         rule = await self.rule_repo.create(rule_data)
         try:
             await self.session.commit()
@@ -143,8 +159,17 @@ class ScrapingRuleService:
                 else ScrapingRuleStatus.INACTIVE
             )
         if data.config is not None:
+            normalized_config = normalize_shop_selection_payload(data.config)
+            if has_explicit_shop_selection(data.config):
+                try:
+                    ensure_explicit_shop_selection_valid(normalized_config)
+                except ValueError as exc:
+                    raise BusinessException(
+                        ErrorCode.DATA_VALIDATION_FAILED,
+                        str(exc),
+                    ) from exc
             update_data.update(
-                ScrapingRuleConfigMapper.map_to_model_fields(data.config)
+                ScrapingRuleConfigMapper.map_to_model_fields(normalized_config)
             )
         if update_data:
             update_data["version"] = (rule.version or 1) + 1

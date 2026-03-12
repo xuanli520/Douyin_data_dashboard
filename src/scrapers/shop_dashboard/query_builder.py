@@ -20,7 +20,7 @@ def build_endpoint_query_context(
     metric_date: str | None = None,
     group_name: str | None = None,
 ) -> EndpointQueryContext:
-    filters = _resolve_filters(config)
+    filters = _resolve_filters(config, plan_unit)
     dimensions = _normalize_string_list(getattr(config, "dimensions", []))
     metrics = _normalize_string_list(getattr(config, "metrics", []))
     top_n = _resolve_optional_int(getattr(config, "top_n", None))
@@ -103,7 +103,19 @@ def build_endpoint_query_context(
     )
 
 
-def _resolve_filters(config: Any) -> dict[str, Any]:
+def _resolve_filters(config: Any, plan_unit: Any | None) -> dict[str, Any]:
+    effective_filters = _resolve_effective_filters(config=config, plan_unit=plan_unit)
+    if effective_filters:
+        filters: dict[str, Any] = {}
+        extra_filters = effective_filters.get("extra_filters")
+        if isinstance(extra_filters, dict):
+            filters.update(
+                {str(k): v for k, v in extra_filters.items() if k is not None}
+            )
+        date_range = effective_filters.get("date_range")
+        if isinstance(date_range, dict):
+            filters["date_range"] = dict(date_range)
+        return filters
     raw_filters = getattr(config, "filters", None)
     if not isinstance(raw_filters, dict):
         return {}
@@ -112,22 +124,18 @@ def _resolve_filters(config: Any) -> dict[str, Any]:
 
 def _resolve_shop_id(config: Any, plan_unit: Any | None) -> str:
     if plan_unit is not None:
+        target_shop_id = _resolve_text(getattr(plan_unit, "target_shop_id", None))
+        if target_shop_id:
+            return target_shop_id
         value = _resolve_text(getattr(plan_unit, "shop_id", None))
         if value:
             return value
     value = _resolve_text(getattr(config, "shop_id", None))
     if value:
         return value
-    filters = _resolve_filters(config)
-    filter_shop_id = filters.get("shop_id")
-    if isinstance(filter_shop_id, list) and filter_shop_id:
-        parsed = _resolve_text(filter_shop_id[0])
-        if parsed:
-            return parsed
-    if isinstance(filter_shop_id, str):
-        parsed = _resolve_text(filter_shop_id.split(",")[0])
-        if parsed:
-            return parsed
+    resolved_shop_ids = _normalize_string_list(getattr(config, "resolved_shop_ids", []))
+    if resolved_shop_ids:
+        return resolved_shop_ids[0]
     return ""
 
 
@@ -137,6 +145,11 @@ def _resolve_cursor(
     plan_unit: Any | None,
     filters: dict[str, Any],
 ) -> str | None:
+    effective_filters = _resolve_effective_filters(config=config, plan_unit=plan_unit)
+    if isinstance(effective_filters, dict):
+        effective_cursor = _resolve_text(effective_filters.get("cursor"))
+        if effective_cursor:
+            return effective_cursor
     plan_cursor = _resolve_text(getattr(plan_unit, "cursor", None))
     if plan_cursor:
         return plan_cursor
@@ -156,6 +169,7 @@ def _resolve_unknown_filter_keys(filters: dict[str, Any]) -> list[str]:
         "shop_id",
         "cursor",
         "date",
+        "date_range",
         "region",
         "product_id",
         "category_id",
@@ -167,6 +181,17 @@ def _resolve_unknown_filter_keys(filters: dict[str, Any]) -> list[str]:
     unknown = [key for key in filters if key not in known_filter_keys]
     unknown.sort()
     return unknown
+
+
+def _resolve_effective_filters(config: Any, plan_unit: Any | None) -> dict[str, Any]:
+    if plan_unit is not None:
+        value = getattr(plan_unit, "effective_filters", None)
+        if isinstance(value, dict):
+            return dict(value)
+    value = getattr(config, "effective_filters", None)
+    if isinstance(value, dict):
+        return dict(value)
+    return {}
 
 
 def _normalize_string_list(values: Any) -> list[str]:

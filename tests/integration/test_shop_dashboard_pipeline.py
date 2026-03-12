@@ -219,6 +219,9 @@ class _FakeBrowserScraper:
 
 def _build_runtime() -> ShopDashboardRuntimeConfig:
     return ShopDashboardRuntimeConfig(
+        shop_mode="EXACT",
+        resolved_shop_ids=["shop-1"],
+        catalog_stale=False,
         shop_id="shop-1",
         cookies={"sessionid": "token"},
         proxy=None,
@@ -373,6 +376,9 @@ def test_pipeline_rule_config_fields_flow_into_plan_and_query_context(monkeypatc
     from src.scrapers.shop_dashboard.query_builder import build_endpoint_query_context
 
     runtime = ShopDashboardRuntimeConfig(
+        shop_mode="EXACT",
+        resolved_shop_ids=["shop-1", "shop-2"],
+        catalog_stale=False,
         shop_id="shop-1",
         cookies={"sessionid": "token"},
         proxy=None,
@@ -478,6 +484,7 @@ def test_pipeline_shop_id_fanout_for_rule_8_like_config(monkeypatch):
     runtime.rule_id = 8
     runtime.shop_id = ""
     runtime.filters = {"shop_id": [f"shop-{idx}" for idx in range(13)]}
+    runtime.resolved_shop_ids = [f"shop-{idx}" for idx in range(13)]
     runtime.time_range = {"start": "2026-03-01", "end": "2026-03-01"}
     runtime.backfill_last_n_days = 1
 

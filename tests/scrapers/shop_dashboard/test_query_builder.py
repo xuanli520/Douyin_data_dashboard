@@ -40,12 +40,17 @@ def test_build_endpoint_query_context_applies_filters_dimensions_metrics_and_opt
         execution_id="exec-query",
     )
     unit = CollectionPlanUnit(
-        shop_id="shop-1",
+        target_shop_id="shop-1",
         window_start=datetime.fromisoformat("2026-03-03T00:00:00"),
         window_end=datetime.fromisoformat("2026-03-03T23:59:59"),
         metric_date="2026-03-03",
         granularity="DAY",
-        cursor="cursor-1",
+        effective_filters={
+            "shop_id": "shop-1",
+            "date_range": {"start": "2026-03-03", "end": "2026-03-03"},
+            "cursor": "cursor-1",
+            "extra_filters": {"region": "east"},
+        },
         plan_index=0,
     )
 

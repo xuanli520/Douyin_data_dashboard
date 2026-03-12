@@ -27,6 +27,9 @@ from src.scrapers.shop_dashboard.runtime import (
     build_runtime_config,
 )
 from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
+from src.scrapers.shop_dashboard.shop_selection_validator import (
+    normalize_shop_selection_payload,
+)
 from src import session
 from src.tasks.base import TaskStatusMixin
 from src.tasks.exceptions import ScrapingFailedException
@@ -153,6 +156,7 @@ def sync_shop_dashboard(
         }.items()
         if value is not None
     }
+    runtime_overrides = normalize_shop_selection_payload(runtime_overrides)
     from src.application.collection.usecase import CollectionUseCase
 
     usecase = CollectionUseCase()
@@ -433,6 +437,9 @@ def _build_expired_account_result(
     return {
         "status": "degraded",
         "shop_id": runtime.shop_id,
+        "target_shop_id": runtime.shop_id,
+        "actual_shop_id": runtime.shop_id,
+        "mismatch_status": "matched",
         "metric_date": metric_date,
         "rule_id": runtime.rule_id,
         "execution_id": runtime.execution_id,
@@ -456,9 +463,18 @@ def _normalize_task_result(
     retry_count: int = 0,
     fallback_trace: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    target_shop_id = str(runtime.shop_id or "").strip()
+    actual_shop_id = str(
+        payload.get("actual_shop_id") or payload.get("shop_id") or target_shop_id
+    ).strip()
     result = {
         "status": "success",
         "shop_id": runtime.shop_id,
+        "target_shop_id": target_shop_id,
+        "actual_shop_id": actual_shop_id,
+        "mismatch_status": (
+            "matched" if actual_shop_id == target_shop_id else "mismatched"
+        ),
         "metric_date": metric_date,
         "rule_id": runtime.rule_id,
         "execution_id": runtime.execution_id,
@@ -693,8 +709,18 @@ async def _persist_result(
     async with session_factory() as db_session:
         repo = ShopDashboardRepository(db_session)
         metric_day = date.fromisoformat(metric_date)
+        actual_shop_id = str(
+            payload.get("actual_shop_id") or payload.get("shop_id") or runtime.shop_id
+        ).strip()
+        target_shop_id = (
+            str(payload.get("target_shop_id") or runtime.shop_id).strip()
+            or runtime.shop_id
+        )
+        if actual_shop_id != target_shop_id:
+            return
+        resolved_shop_id = actual_shop_id or runtime.shop_id
         await repo.upsert_score(
-            shop_id=runtime.shop_id,
+            shop_id=resolved_shop_id,
             metric_date=metric_day,
             total_score=float(payload.get("total_score", 0.0)),
             product_score=float(payload.get("product_score", 0.0)),
@@ -716,7 +742,7 @@ async def _persist_result(
                 }
             )
         await repo.replace_reviews(
-            shop_id=runtime.shop_id,
+            shop_id=resolved_shop_id,
             metric_date=metric_day,
             reviews=review_rows,
         )
@@ -753,7 +779,7 @@ async def _persist_result(
                 }
             )
         await repo.replace_violations(
-            shop_id=runtime.shop_id,
+            shop_id=resolved_shop_id,
             metric_date=metric_day,
             violations=violation_rows,
         )

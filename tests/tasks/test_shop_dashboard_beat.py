@@ -91,6 +91,7 @@ def test_register_jobs_groups_by_task_type_and_reuses_single_adder(monkeypatch):
         "execution_id": "cron_collection_job_1",
         "triggered_by": None,
         "shop_id": "shop-1",
+        "shop_ids": ["shop-1"],
         "all": True,
     }
     assert second_shop_job["kwargs"] == {

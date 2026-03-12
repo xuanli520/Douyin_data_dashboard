@@ -12,6 +12,9 @@ from src.scrapers.shop_dashboard.rule_config_resolver import (
 
 @dataclass(slots=True)
 class ShopDashboardRuntimeConfig:
+    shop_mode: str
+    resolved_shop_ids: list[str]
+    catalog_stale: bool
     shop_id: str
     cookies: dict[str, str]
     proxy: str | None
@@ -44,6 +47,7 @@ class ShopDashboardRuntimeConfig:
     cursor: str | None = None
     account_id: str = ""
     storage_state: dict[str, Any] | None = None
+    shop_resolve_source: str = "rule"
 
 
 def build_runtime_config(
@@ -63,6 +67,9 @@ def build_runtime_config(
     if runtimes:
         return runtimes[0]
     return ShopDashboardRuntimeConfig(
+        shop_mode="EXACT",
+        resolved_shop_ids=[],
+        catalog_stale=False,
         shop_id="",
         cookies={},
         proxy=None,
@@ -108,6 +115,8 @@ def build_runtime_configs(
     )
     shop_ids = list(resolved.shop_ids)
     if not shop_ids:
+        shop_ids = list(resolved.resolved_shop_ids)
+    if not shop_ids:
         shop_ids = [resolved.shop_id]
     if not shop_ids:
         return []
@@ -125,6 +134,9 @@ def _build_runtime_from_resolved(
     shop_id: str,
 ) -> ShopDashboardRuntimeConfig:
     return ShopDashboardRuntimeConfig(
+        shop_mode=resolved.shop_mode,
+        resolved_shop_ids=list(resolved.resolved_shop_ids),
+        catalog_stale=False,
         shop_id=str(shop_id).strip(),
         cookies=dict(resolved.cookies),
         proxy=resolved.proxy,
@@ -157,4 +169,5 @@ def _build_runtime_from_resolved(
         cursor=resolved.cursor,
         account_id=resolved.account_id,
         storage_state=dict(resolved.storage_state) if resolved.storage_state else None,
+        shop_resolve_source="rule",
     )

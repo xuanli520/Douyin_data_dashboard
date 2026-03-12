@@ -83,6 +83,8 @@ class ResolvedRuleConfig:
     include_long_tail: bool
     session_level: bool
     extra_config: dict[str, Any]
+    shop_mode: str
+    resolved_shop_ids: list[str]
     shop_id: str
     shop_ids: list[str]
     api_groups: list[str]
@@ -128,6 +130,22 @@ def resolve_rule_config(
             return ds_extra[key]
         if ds_value is not None:
             return ds_value
+        return default
+
+    def pick_shop_selection(
+        key: str,
+        *,
+        rule_value: Any = None,
+        default: Any = None,
+    ) -> Any:
+        if key in payload and payload[key] is not None:
+            return payload[key]
+        if key in payload_extra and payload_extra[key] is not None:
+            return payload_extra[key]
+        if rule_value is not None:
+            return rule_value
+        if key in rule_extra and rule_extra[key] is not None:
+            return rule_extra[key]
         return default
 
     rule_id = int(_read_attr(rule, "id", 0) or 0)
@@ -264,10 +282,12 @@ def resolve_rule_config(
         rule_id=rule_id,
     )
 
-    explicit_shop_id = _normalize_nullable_text(pick("shop_id", default=None))
+    explicit_shop_id = _normalize_nullable_text(
+        pick_shop_selection("shop_id", default=None)
+    )
     all_shops = bool(
         _normalize_optional_bool(
-            pick("all", default=None),
+            pick_shop_selection("all", default=None),
             field="all",
             rule_id=rule_id,
         )
@@ -275,26 +295,31 @@ def resolve_rule_config(
     if explicit_shop_id and _is_all_shop_marker(explicit_shop_id):
         all_shops = True
         explicit_shop_id = None
-    raw_shop_ids = pick("shop_ids", default=None)
+    raw_shop_ids = pick_shop_selection("shop_ids", default=None)
     if raw_shop_ids is None:
         raw_shop_ids = filters.get("shop_id")
     shop_ids = _normalize_shop_ids(raw_shop_ids, rule_id=rule_id)
     if any(_is_all_shop_marker(shop) for shop in shop_ids):
         all_shops = True
         shop_ids = [shop for shop in shop_ids if not _is_all_shop_marker(shop)]
-    if all_shops and explicit_shop_id and explicit_shop_id not in shop_ids:
-        shop_ids.insert(0, explicit_shop_id)
     if all_shops:
         explicit_shop_id = None
-    if not shop_ids and explicit_shop_id:
-        shop_ids = [explicit_shop_id]
-    shop_id = explicit_shop_id or (shop_ids[0] if shop_ids else "")
+    else:
+        if explicit_shop_id and explicit_shop_id not in shop_ids:
+            shop_ids.insert(0, explicit_shop_id)
+        if not shop_ids and explicit_shop_id:
+            shop_ids = [explicit_shop_id]
+    shop_mode = "ALL" if all_shops else "EXACT"
+    resolved_shop_ids = [] if all_shops else list(shop_ids)
+    shop_id = resolved_shop_ids[0] if resolved_shop_ids else ""
     if all_shops:
         filters["all"] = True
         filters["shop_id"] = list(shop_ids)
     elif shop_ids:
+        filters.pop("all", None)
         filters["shop_id"] = list(shop_ids)
     elif "shop_id" in filters:
+        filters.pop("all", None)
         filters["shop_id"] = []
 
     merged_extra = dict(ds_extra)
@@ -377,8 +402,10 @@ def resolve_rule_config(
         include_long_tail=include_long_tail,
         session_level=session_level,
         extra_config=merged_extra,
+        shop_mode=shop_mode,
+        resolved_shop_ids=resolved_shop_ids,
         shop_id=shop_id,
-        shop_ids=shop_ids,
+        shop_ids=list(resolved_shop_ids),
         api_groups=api_groups,
         rate_limit_policy=rate_limit,
         fallback_chain=fallback_chain,

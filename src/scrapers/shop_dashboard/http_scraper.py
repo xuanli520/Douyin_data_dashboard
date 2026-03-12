@@ -13,6 +13,7 @@ import httpx
 
 from src.scrapers.shop_dashboard.parsers import (
     ensure_payload_success,
+    extract_actual_shop_id,
     parse_comment_details,
     parse_comment_summary,
     parse_core_scores,
@@ -311,6 +312,12 @@ class HttpScraper:
 
         return {
             "shop_id": shop_id,
+            "target_shop_id": shop_id,
+            "actual_shop_id": extract_actual_shop_id(
+                payloads["analysis"],
+                payloads["overview"],
+            )
+            or shop_id,
             "metric_date": date,
             "source": source,
             **parse_core_scores(overview_payload),

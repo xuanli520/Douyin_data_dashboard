@@ -5,6 +5,9 @@ from src.tasks.exceptions import ScrapingFailedException
 
 def _runtime() -> ShopDashboardRuntimeConfig:
     return ShopDashboardRuntimeConfig(
+        shop_mode="EXACT",
+        resolved_shop_ids=["shop-1"],
+        catalog_stale=False,
         shop_id="shop-1",
         cookies={"sid": "old"},
         proxy=None,

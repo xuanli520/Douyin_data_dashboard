@@ -5,6 +5,9 @@ from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
 
 def _runtime(account_id: str) -> ShopDashboardRuntimeConfig:
     return ShopDashboardRuntimeConfig(
+        shop_mode="EXACT",
+        resolved_shop_ids=["shop-1"],
+        catalog_stale=False,
         shop_id="shop-1",
         cookies={},
         proxy=None,

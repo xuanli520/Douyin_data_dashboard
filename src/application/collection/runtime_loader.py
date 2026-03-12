@@ -11,6 +11,10 @@ from src.domains.data_source.enums import ScrapingRuleStatus
 from src.domains.data_source.repository import DataSourceRepository
 from src.domains.scraping_rule.repository import ScrapingRuleRepository
 from src.domains.task.exceptions import ScrapingFailedException
+from src.domains.task.exceptions import ShopDashboardNoTargetShopsException
+from src.application.collection.account_shop_catalog_service import (
+    AccountShopCatalogService,
+)
 from src.scrapers.shop_dashboard.contracts import DataSourceContract
 from src.scrapers.shop_dashboard.contracts import ScrapingRuleContract
 from src.scrapers.shop_dashboard.account_shop_resolver import AccountShopResolver
@@ -30,8 +34,15 @@ class CollectionRuntimeLoader:
         self,
         *,
         account_shop_resolver: AccountShopResolver | None = None,
+        account_shop_catalog_service: AccountShopCatalogService | None = None,
     ) -> None:
         self.account_shop_resolver = account_shop_resolver or AccountShopResolver()
+        self.account_shop_catalog_service = (
+            account_shop_catalog_service
+            or AccountShopCatalogService(
+                account_shop_resolver=self.account_shop_resolver
+            )
+        )
 
     async def load(
         self,
@@ -106,6 +117,7 @@ class CollectionRuntimeLoader:
             runtime=runtime,
             data_source=data_source_contract,
         )
+        self._validate_target_shops(runtime=runtime, data_source_id=data_source_id)
         if not runtime.api_groups:
             raise ScrapingFailedException(
                 "No API groups resolved for runtime",
@@ -141,6 +153,10 @@ class CollectionRuntimeLoader:
             "rule_id": rule_id,
             "rule_version": rule_version,
             "execution_id": runtime.execution_id,
+            "shop_mode": runtime.shop_mode,
+            "resolved_shop_ids": list(runtime.resolved_shop_ids),
+            "catalog_stale": bool(runtime.catalog_stale),
+            "shop_resolve_source": runtime.shop_resolve_source,
             "shop_id": runtime.shop_id,
             "granularity": runtime.granularity,
             "timezone": runtime.timezone,
@@ -165,31 +181,66 @@ class CollectionRuntimeLoader:
         runtime: ShopDashboardRuntimeConfig,
         data_source: DataSourceContract,
     ) -> ShopDashboardRuntimeConfig:
-        filters = dict(runtime.filters or {})
-        all_mode = bool(filters.get("all"))
-        if not all_mode:
+        _ = data_source
+        if runtime.shop_mode != "ALL":
             return runtime
-        requested_shop_ids = _normalize_shop_ids(filters.get("shop_id"))
-        resolved_shop_ids = await self.account_shop_resolver.resolve_shop_ids(
+        catalog_result = await self.account_shop_catalog_service.get_shop_catalog(
             account_id=runtime.account_id,
             cookies=runtime.cookies,
             common_query=runtime.common_query,
-            extra_config=data_source.extra_config,
+            force_refresh=False,
         )
-        if requested_shop_ids:
-            requested_shop_id_set = set(requested_shop_ids)
-            resolved_shop_ids = [
-                shop_id
-                for shop_id in resolved_shop_ids
-                if shop_id in requested_shop_id_set
-            ]
+        resolved_shop_ids = list(catalog_result.shop_ids)
+        filters = dict(runtime.filters or {})
         filters["all"] = True
         filters["shop_id"] = list(resolved_shop_ids)
+        filters["catalog_stale"] = bool(catalog_result.catalog_stale)
+        filters["shop_resolve_source"] = catalog_result.resolve_source
         return replace(
             runtime,
             shop_id=resolved_shop_ids[0] if resolved_shop_ids else "",
+            resolved_shop_ids=list(resolved_shop_ids),
+            catalog_stale=bool(catalog_result.catalog_stale),
+            shop_resolve_source=catalog_result.resolve_source,
             filters=filters,
         )
+
+    def _validate_target_shops(
+        self,
+        *,
+        runtime: ShopDashboardRuntimeConfig,
+        data_source_id: int,
+    ) -> None:
+        resolved_shop_ids = _normalize_shop_ids(runtime.resolved_shop_ids)
+        if runtime.shop_mode == "ALL" and not resolved_shop_ids:
+            raise ShopDashboardNoTargetShopsException(
+                "No target shops resolved",
+                error_data={
+                    "data_source_id": data_source_id,
+                    "rule_id": runtime.rule_id,
+                    "execution_id": runtime.execution_id,
+                    "reason": "empty_target_shops",
+                    "shop_mode": runtime.shop_mode,
+                },
+            )
+        if runtime.shop_mode != "ALL":
+            if not resolved_shop_ids:
+                explicit_shop_id = str(runtime.shop_id or "").strip()
+                if explicit_shop_id:
+                    resolved_shop_ids = [explicit_shop_id]
+            if not resolved_shop_ids:
+                raise ShopDashboardNoTargetShopsException(
+                    "No target shops resolved",
+                    error_data={
+                        "data_source_id": data_source_id,
+                        "rule_id": runtime.rule_id,
+                        "execution_id": runtime.execution_id,
+                        "reason": "empty_target_shops",
+                        "shop_mode": runtime.shop_mode,
+                    },
+                )
+            runtime.resolved_shop_ids = list(resolved_shop_ids)
+            runtime.shop_id = resolved_shop_ids[0]
 
 
 def _as_enum_value(value: Any) -> Any:

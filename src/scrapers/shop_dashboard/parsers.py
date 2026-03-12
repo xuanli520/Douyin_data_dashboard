@@ -182,6 +182,25 @@ def parse_violation_details(
     }
 
 
+def extract_actual_shop_id(
+    analysis_payload: Mapping[str, Any],
+    overview_payload: Mapping[str, Any],
+) -> str | None:
+    analysis_data = _extract_data(analysis_payload)
+    overview_data = _extract_data(overview_payload)
+    candidates = [
+        _extract_shop_id_from_payload(analysis_payload),
+        _extract_shop_id_from_mapping(analysis_data),
+        _extract_shop_id_from_payload(overview_payload),
+        _extract_shop_id_from_mapping(overview_data),
+    ]
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if text:
+            return text
+    return None
+
+
 def _extract_data(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     data = payload.get("data", {})
     if isinstance(data, Mapping):
@@ -254,3 +273,26 @@ def _to_int(value: Any) -> int | None:
         return int(float(value))
     except (TypeError, ValueError):
         return None
+
+
+def _extract_shop_id_from_payload(payload: Mapping[str, Any]) -> str | None:
+    data = _extract_data(payload)
+    return _extract_shop_id_from_mapping(data)
+
+
+def _extract_shop_id_from_mapping(data: Mapping[str, Any]) -> str | None:
+    for path in (
+        ("shop_id",),
+        ("shopId",),
+        ("subject_id",),
+        ("subjectId",),
+        ("shop", "id"),
+        ("subject", "id"),
+        ("shop", "shop_id"),
+        ("shop", "shopId"),
+    ):
+        value = _get_path(data, path)
+        text = str(value or "").strip()
+        if text:
+            return text
+    return None

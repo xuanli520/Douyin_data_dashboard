@@ -62,6 +62,7 @@ class _FakeRedis:
 class _FakeStateStore:
     def __init__(self, base_dir=None):
         _ = base_dir
+        self._bundles: dict[tuple[str, str], dict[str, Any]] = {}
 
     def save(self, _account_id: str, _state: dict[str, Any]) -> None:
         return None
@@ -71,6 +72,15 @@ class _FakeStateStore:
 
     def exists(self, _account_id: str) -> bool:
         return True
+
+    def load_bundle(self, account_id: str, shop_id: str) -> dict[str, Any] | None:
+        return self._bundles.get((account_id, shop_id))
+
+    def save_bundle(self, account_id: str, shop_id: str, bundle: dict[str, Any]):
+        self._bundles[(account_id, shop_id)] = dict(bundle)
+
+    def invalidate_bundle(self, account_id: str, shop_id: str) -> None:
+        self._bundles.pop((account_id, shop_id), None)
 
 
 class _FakeLockManager:
@@ -82,6 +92,48 @@ class _FakeLoginStateManager:
     def __init__(self, state_store, redis_client=None):
         self.state_store = state_store
         self.redis_client = redis_client
+
+
+class _FakeSessionBootstrapper:
+    def __init__(self, state_store, browser_scraper=None):
+        self.state_store = state_store
+        self.browser_scraper = browser_scraper
+
+    async def bootstrap_shops(self, *, runtime, shop_ids, force_serial=None):
+        _ = force_serial
+        account_id = str(getattr(runtime, "account_id", "") or "").strip() or "acct-1"
+        result = {}
+        for shop_id in shop_ids:
+            shop_text = str(shop_id)
+            self.state_store.save_bundle(
+                account_id,
+                shop_text,
+                {
+                    "cookies": dict(getattr(runtime, "cookies", {}) or {}),
+                    "common_query": dict(getattr(runtime, "common_query", {}) or {}),
+                    "validated_shop_id": shop_text,
+                    "validated_at": "2026-03-10T00:00:00+00:00",
+                    "session_version": "1",
+                },
+            )
+            result[shop_text] = {"shop_id": shop_text, "bootstrap_failed": False}
+        return result
+
+    async def bootstrap_shop(self, *, runtime, shop_id):
+        account_id = str(getattr(runtime, "account_id", "") or "").strip() or "acct-1"
+        shop_text = str(shop_id)
+        self.state_store.save_bundle(
+            account_id,
+            shop_text,
+            {
+                "cookies": dict(getattr(runtime, "cookies", {}) or {}),
+                "common_query": dict(getattr(runtime, "common_query", {}) or {}),
+                "validated_shop_id": shop_text,
+                "validated_at": "2026-03-10T00:00:00+00:00",
+                "session_version": "1",
+            },
+        )
+        return {"shop_id": shop_text, "bootstrap_failed": False}
 
 
 def _collect_success(
@@ -153,6 +205,12 @@ async def test_collection_usecase_should_be_idempotent_by_queue_task_id(
     monkeypatch.setattr(module, "_collect_one_day", _collect_success)
     monkeypatch.setattr(module, "BrowserScraper", lambda: object())
     monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
+    monkeypatch.setattr(
+        module,
+        "SessionBootstrapper",
+        _FakeSessionBootstrapper,
+        raising=False,
+    )
     monkeypatch.setattr(module, "LockManager", _FakeLockManager)
     monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
     monkeypatch.setattr(
@@ -235,6 +293,7 @@ def test_sync_shop_dashboard_should_forward_queue_task_id_and_overrides(monkeypa
     assert captured["triggered_by"] == 5
     assert captured["overrides"] == {
         "shop_id": "shop-x",
+        "shop_ids": ["shop-x"],
         "all": False,
         "extra_config": {"cursor": "c1"},
     }

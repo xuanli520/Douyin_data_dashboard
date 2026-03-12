@@ -5,6 +5,10 @@ class ShopDashboardSettings(BaseSettings):
     base_url: str = "https://fxg.jinritemai.com"
     cookie_ttl_seconds: int = 21600
     lock_ttl_seconds: int = 3600
+    catalog_cache_ttl_seconds: int = 3600
+    catalog_cache_ttl_cap_seconds: int = 7200
+    catalog_stale_allow_seconds: int = 7200
+    catalog_refresh_lock_ttl_seconds: int = 30
     account_rate_limit_per_minute: int = 15
     llm_timeout_seconds: int = 120
     llm_retry_times: int = 3
@@ -20,3 +24,9 @@ class ShopDashboardSettings(BaseSettings):
     browser_locale: str | None = None
     browser_timezone: str | None = None
     browser_viewport: dict[str, int] | None = None
+    bootstrap_concurrency_limit: int = 2
+    bootstrap_failure_rate_degrade_threshold: float = 0.4
+    bootstrap_force_serial: bool = False
+    shop_mismatch_failure_threshold: int = 3
+    shop_mismatch_failure_window_seconds: int = 21600
+    shop_mismatch_circuit_open_seconds: int = 21600

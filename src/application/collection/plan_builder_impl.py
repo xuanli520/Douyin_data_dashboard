@@ -3,19 +3,31 @@ from __future__ import annotations
 from calendar import monthrange
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+import json
 from typing import Any
 from zoneinfo import ZoneInfo
 
 
 @dataclass(slots=True)
 class CollectionPlanUnit:
-    shop_id: str
+    target_shop_id: str
     window_start: datetime
     window_end: datetime
     metric_date: str
     granularity: str
-    cursor: str | None
+    effective_filters: dict[str, Any]
     plan_index: int
+
+    @property
+    def shop_id(self) -> str:
+        return self.target_shop_id
+
+    @property
+    def cursor(self) -> str | None:
+        cursor = self.effective_filters.get("cursor")
+        if cursor is None:
+            return None
+        return str(cursor)
 
 
 def build_collection_plan(
@@ -44,12 +56,16 @@ def build_collection_plan(
         for window_start, window_end in windows:
             plan_units.append(
                 CollectionPlanUnit(
-                    shop_id=shop_id,
+                    target_shop_id=shop_id,
                     window_start=window_start,
                     window_end=window_end,
                     metric_date=window_start.date().isoformat(),
                     granularity=granularity,
-                    cursor=cursor,
+                    effective_filters=_build_effective_filters(
+                        config=config,
+                        shop_id=shop_id,
+                        cursor=cursor,
+                    ),
                     plan_index=len(plan_units),
                 )
             )
@@ -57,16 +73,13 @@ def build_collection_plan(
 
 
 def _resolve_shop_ids(config: Any) -> list[str]:
+    resolved_shop_ids = _normalize_shop_ids(getattr(config, "resolved_shop_ids", None))
+    if resolved_shop_ids:
+        return resolved_shop_ids
+
     explicit_shop_ids = _normalize_shop_ids(getattr(config, "shop_ids", None))
     if explicit_shop_ids:
         return explicit_shop_ids
-
-    filters = getattr(config, "filters", {}) or {}
-    filter_shop_ids = _normalize_shop_ids(
-        filters.get("shop_id") if isinstance(filters, dict) else None
-    )
-    if filter_shop_ids:
-        return filter_shop_ids
 
     explicit_shop_id = str(getattr(config, "shop_id", "") or "").strip()
     if explicit_shop_id:
@@ -136,9 +149,6 @@ def _build_windows_from_time_range(
 
 
 def _resolve_cursor(config: Any) -> str | None:
-    incremental_mode = str(getattr(config, "incremental_mode", "BY_DATE")).upper()
-    if incremental_mode != "BY_CURSOR":
-        return None
     cursor = _normalize_text(getattr(config, "cursor", None))
     if cursor:
         return cursor
@@ -153,6 +163,32 @@ def _resolve_cursor(config: Any) -> str | None:
         if extra_cursor:
             return extra_cursor
     return None
+
+
+def _build_effective_filters(
+    *,
+    config: Any,
+    shop_id: str,
+    cursor: str | None,
+) -> dict[str, Any]:
+    raw_filters = getattr(config, "filters", {}) or {}
+    base_filters = dict(raw_filters) if isinstance(raw_filters, dict) else {}
+    date_range = _normalize_json_object(getattr(config, "time_range", None))
+    extra_filters: dict[str, Any] = {}
+    for key, value in base_filters.items():
+        key_text = str(key).strip()
+        if not key_text or key_text in {"shop_id", "cursor", "date_range"}:
+            continue
+        if not _is_json_serializable(value):
+            continue
+        extra_filters[key_text] = value
+    resolved_cursor = cursor if _is_json_serializable(cursor) else None
+    return {
+        "shop_id": shop_id,
+        "date_range": date_range,
+        "cursor": resolved_cursor,
+        "extra_filters": extra_filters,
+    }
 
 
 def _resolve_timezone(timezone_name: str) -> ZoneInfo:
@@ -290,6 +326,28 @@ def _normalize_shop_ids(value: Any) -> list[str]:
         seen.add(text)
         result.append(text)
     return result
+
+
+def _normalize_json_object(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    normalized: dict[str, Any] = {}
+    for key, item in value.items():
+        key_text = _normalize_text(key)
+        if not key_text or not _is_json_serializable(item):
+            continue
+        normalized[key_text] = item
+    return normalized or None
+
+
+def _is_json_serializable(value: Any) -> bool:
+    if value is None:
+        return True
+    try:
+        json.dumps(value, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 def _normalize_text(value: Any) -> str | None:

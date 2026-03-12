@@ -24,6 +24,9 @@ def _build_runtime(
     session_level: bool = False,
 ) -> ShopDashboardRuntimeConfig:
     return ShopDashboardRuntimeConfig(
+        shop_mode="EXACT",
+        resolved_shop_ids=["shop-1"],
+        catalog_stale=False,
         shop_id="shop-1",
         cookies=cookies or {},
         proxy=None,

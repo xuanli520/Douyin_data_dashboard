@@ -6,6 +6,9 @@ class TaskErrorCode(IntEnum):
     SCRAPING_FAILED = 61002
     SHOP_DASHBOARD_COOKIE_EXPIRED = 62001
     SHOP_DASHBOARD_DATA_INCOMPLETE = 62002
+    SHOP_DASHBOARD_NO_TARGET_SHOPS = 62003
+    SHOP_DASHBOARD_SHOP_MISMATCH = 62004
+    SHOP_DASHBOARD_SHOP_CIRCUIT_BREAK = 62005
 
 
 class TaskDomainException(Exception):
@@ -35,3 +38,18 @@ class ShopDashboardCookieExpiredException(TaskDomainException):
 class ShopDashboardDataIncompleteException(TaskDomainException):
     default_message = "Shop dashboard data incomplete"
     default_code = TaskErrorCode.SHOP_DASHBOARD_DATA_INCOMPLETE
+
+
+class ShopDashboardNoTargetShopsException(TaskDomainException):
+    default_message = "No target shops resolved"
+    default_code = TaskErrorCode.SHOP_DASHBOARD_NO_TARGET_SHOPS
+
+
+class ShopDashboardShopMismatchException(TaskDomainException):
+    default_message = "Shop mismatch detected"
+    default_code = TaskErrorCode.SHOP_DASHBOARD_SHOP_MISMATCH
+
+
+class ShopDashboardShopCircuitBreakException(TaskDomainException):
+    default_message = "Shop is circuit broken"
+    default_code = TaskErrorCode.SHOP_DASHBOARD_SHOP_CIRCUIT_BREAK

@@ -20,6 +20,9 @@ from src.tasks.bootstrap import (
     TASK_TYPE_TASK_FUNC_MAPPING,
 )
 from src.tasks.funboost_compat import ApsJobAdder
+from src.scrapers.shop_dashboard.shop_selection_validator import (
+    normalize_shop_selection_payload,
+)
 
 
 def register_jobs() -> None:
@@ -75,7 +78,7 @@ def _build_dispatch_kwargs(
         for key in SHOP_DASHBOARD_OVERRIDE_KEYS:
             if key in schedule_kwargs:
                 kwargs[key] = schedule_kwargs[key]
-        return kwargs
+        return normalize_shop_selection_payload(kwargs)
 
     return {
         "triggered_by": None,

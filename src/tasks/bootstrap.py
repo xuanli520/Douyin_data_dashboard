@@ -8,6 +8,9 @@ from src.domains.task.enums import TaskType
 from src.tasks.collection.douyin_shop_dashboard import sync_shop_dashboard
 from src.tasks.etl.orders import process_orders
 from src.tasks.etl.products import process_products
+from src.scrapers.shop_dashboard.shop_selection_validator import (
+    normalize_shop_selection_payload,
+)
 
 SHOP_DASHBOARD_OVERRIDE_KEYS: tuple[str, ...] = (
     "shop_id",
@@ -94,17 +97,18 @@ def _dispatch_shop_dashboard(
     triggered_by: int | None,
     execution_id: int,
 ) -> Any:
+    normalized_payload = normalize_shop_selection_payload(payload)
     dispatch_kwargs: dict[str, Any] = {
-        "data_source_id": payload["data_source_id"],
-        "rule_id": payload["rule_id"],
+        "data_source_id": normalized_payload["data_source_id"],
+        "rule_id": normalized_payload["rule_id"],
         "execution_id": str(
-            payload.get("execution_id") or f"task-execution-{execution_id}"
+            normalized_payload.get("execution_id") or f"task-execution-{execution_id}"
         ),
         "triggered_by": triggered_by,
     }
     for key in SHOP_DASHBOARD_OVERRIDE_KEYS:
-        if key in payload:
-            dispatch_kwargs[key] = payload[key]
+        if key in normalized_payload:
+            dispatch_kwargs[key] = normalized_payload[key]
     return sync_shop_dashboard.push(**dispatch_kwargs)
 
 

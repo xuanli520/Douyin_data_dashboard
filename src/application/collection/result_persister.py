@@ -21,8 +21,18 @@ class CollectionResultPersister:
     ) -> None:
         repo = ShopDashboardRepository(session)
         metric_day = date.fromisoformat(metric_date)
+        actual_shop_id = str(
+            payload.get("actual_shop_id") or payload.get("shop_id") or runtime.shop_id
+        ).strip()
+        target_shop_id = (
+            str(payload.get("target_shop_id") or runtime.shop_id).strip()
+            or runtime.shop_id
+        )
+        if actual_shop_id != target_shop_id:
+            return
+        resolved_shop_id = actual_shop_id or runtime.shop_id
         await repo.upsert_score(
-            shop_id=runtime.shop_id,
+            shop_id=resolved_shop_id,
             metric_date=metric_day,
             total_score=float(payload.get("total_score", 0.0)),
             product_score=float(payload.get("product_score", 0.0)),
@@ -44,7 +54,7 @@ class CollectionResultPersister:
                 }
             )
         await repo.replace_reviews(
-            shop_id=runtime.shop_id,
+            shop_id=resolved_shop_id,
             metric_date=metric_day,
             reviews=review_rows,
         )
@@ -81,7 +91,7 @@ class CollectionResultPersister:
                 }
             )
         await repo.replace_violations(
-            shop_id=runtime.shop_id,
+            shop_id=resolved_shop_id,
             metric_date=metric_day,
             violations=violation_rows,
         )

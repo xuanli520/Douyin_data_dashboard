@@ -70,6 +70,20 @@ def test_resolve_rule_config_parses_filters_shop_id_list_and_string():
     assert config_with_string.shop_ids == ["shop-3", "shop-4"]
 
 
+def test_resolve_rule_config_parses_json_shop_id_array():
+    data_source = _build_data_source()
+    rule = _build_rule(filters={"shop_id": '["shop-1","shop-2","shop-1"]'})
+
+    config = resolve_rule_config(
+        data_source=data_source,
+        rule=rule,
+        execution_id="exec-json-shop-ids",
+    )
+    assert config.shop_ids == ["shop-1", "shop-2"]
+    assert config.shop_mode == "EXACT"
+    assert config.resolved_shop_ids == ["shop-1", "shop-2"]
+
+
 def test_resolve_rule_config_field_priority_overrides_rule_extra_and_data_source():
     data_source = _build_data_source(
         extra_config={
@@ -143,19 +157,22 @@ def test_resolve_rule_config_should_not_fallback_to_data_source_shop_id():
 
     assert config.shop_id == ""
     assert config.shop_ids == []
+    assert config.resolved_shop_ids == []
+    assert config.shop_mode == "EXACT"
 
 
-def test_resolve_rule_config_all_mode_uses_data_source_extra_shop_ids():
+def test_resolve_rule_config_all_mode_ignores_shop_id_details():
     data_source = _build_data_source(extra_config={"shop_ids": ["shop-10", "shop-11"]})
-    rule = _build_rule(filters={})
+    rule = _build_rule(filters={"shop_id": ["shop-1", "shop-2"]})
 
     config = resolve_rule_config(
         data_source=data_source,
         rule=rule,
         execution_id="exec-all-mode",
-        overrides={"all": True},
+        overrides={"all": True, "shop_id": "shop-9"},
     )
 
-    assert config.shop_ids == ["shop-10", "shop-11"]
+    assert config.shop_mode == "ALL"
+    assert config.resolved_shop_ids == []
     assert config.filters["all"] is True
-    assert config.filters["shop_id"] == ["shop-10", "shop-11"]
+    assert config.filters["shop_id"] == ["shop-1", "shop-2"]

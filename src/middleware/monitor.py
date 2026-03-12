@@ -38,13 +38,27 @@ http_exceptions_total = Counter(
 shop_dashboard_collection_total = Counter(
     "shop_dashboard_collection_total",
     "Shop dashboard collection task total",
-    ["source", "status"],
+    [
+        "source",
+        "status",
+        "shop_mode",
+        "shop_resolve_source",
+        "bootstrap_status",
+        "circuit_break_status",
+    ],
 )
 
 shop_dashboard_collection_duration_seconds = Histogram(
     "shop_dashboard_collection_duration_seconds",
     "Shop dashboard collection task duration in seconds",
-    ["source", "status"],
+    [
+        "source",
+        "status",
+        "shop_mode",
+        "shop_resolve_source",
+        "bootstrap_status",
+        "circuit_break_status",
+    ],
 )
 
 PATH_PARAMETER_PATTERN = re.compile(r"/(?:\d+|[0-9a-fA-F-]{36})")
@@ -59,16 +73,34 @@ def observe_shop_dashboard_collection(
     source: str,
     status: str,
     duration_seconds: float,
+    shop_mode: str = "unknown",
+    shop_resolve_source: str = "unknown",
+    bootstrap_status: str = "unknown",
+    circuit_break_status: str = "unknown",
 ) -> None:
     safe_source = source if source else "unknown"
     safe_status = status if status else "unknown"
+    safe_shop_mode = shop_mode if shop_mode else "unknown"
+    safe_shop_resolve_source = shop_resolve_source if shop_resolve_source else "unknown"
+    safe_bootstrap_status = bootstrap_status if bootstrap_status else "unknown"
+    safe_circuit_break_status = (
+        circuit_break_status if circuit_break_status else "unknown"
+    )
     shop_dashboard_collection_total.labels(
         source=safe_source,
         status=safe_status,
+        shop_mode=safe_shop_mode,
+        shop_resolve_source=safe_shop_resolve_source,
+        bootstrap_status=safe_bootstrap_status,
+        circuit_break_status=safe_circuit_break_status,
     ).inc()
     shop_dashboard_collection_duration_seconds.labels(
         source=safe_source,
         status=safe_status,
+        shop_mode=safe_shop_mode,
+        shop_resolve_source=safe_shop_resolve_source,
+        bootstrap_status=safe_bootstrap_status,
+        circuit_break_status=safe_circuit_break_status,
     ).observe(max(duration_seconds, 0.0))
 
 

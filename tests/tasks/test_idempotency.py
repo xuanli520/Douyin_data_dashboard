@@ -47,6 +47,9 @@ def test_idempotency_refresh_lock_in_concurrent_context():
 
 def test_build_business_key_supports_extended_dedupe_variables():
     runtime = ShopDashboardRuntimeConfig(
+        shop_mode="EXACT",
+        resolved_shop_ids=["shop-1"],
+        catalog_stale=False,
         shop_id="shop-1",
         cookies={},
         proxy=None,
@@ -77,12 +80,17 @@ def test_build_business_key_supports_extended_dedupe_variables():
         api_groups=["overview"],
     )
     plan_unit = CollectionPlanUnit(
-        shop_id="shop-1",
+        target_shop_id="shop-1",
         window_start=datetime.fromisoformat("2026-03-03T00:00:00"),
         window_end=datetime.fromisoformat("2026-03-03T23:59:59"),
         metric_date="2026-03-03",
         granularity="DAY",
-        cursor=None,
+        effective_filters={
+            "shop_id": "shop-1",
+            "date_range": None,
+            "cursor": None,
+            "extra_filters": {},
+        },
         plan_index=0,
     )
 
