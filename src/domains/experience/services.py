@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from collections.abc import AsyncGenerator
 from datetime import date, datetime, timedelta
@@ -8,6 +9,8 @@ from math import ceil
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.cache import CacheProtocol, get_cache
+from src.config import get_settings
 from src.domains.experience.models import ExperienceIssueDaily, ExperienceMetricDaily
 from src.domains.experience.repository import ExperienceRepository
 from src.domains.experience.schemas import (
@@ -33,6 +36,7 @@ from src.domains.experience.schemas import (
     normalize_dimension_with_all,
 )
 from src.session import get_session
+from src.shared.redis_keys import redis_keys
 
 
 DIMENSION_SCORE_KEY = "dimension_score"
@@ -53,8 +57,18 @@ def _build_pagination_meta(page: int, size: int, total: int) -> dict[str, int | 
 
 
 class ExperienceQueryService:
-    def __init__(self, repo: ExperienceRepository):
+    def __init__(
+        self,
+        repo: ExperienceRepository,
+        cache: CacheProtocol | None = None,
+    ):
         self.repo = repo
+        self.cache = cache
+        cache_settings = get_settings().cache
+        self.metrics_ttl_seconds = cache_settings.experience_metrics_ttl_seconds
+        self.dashboard_ttl_seconds = cache_settings.experience_dashboard_ttl_seconds
+        self.issues_ttl_seconds = cache_settings.experience_issues_ttl_seconds
+        self.cache_index_ttl_seconds = cache_settings.experience_cache_index_ttl_seconds
 
     async def get_overview(
         self,
@@ -165,10 +179,25 @@ class ExperienceQueryService:
     ) -> ExperienceIssueListResponse:
         start_date, end_date, normalized_range = self._parse_date_range(date_range)
         normalized_dimension = normalize_dimension_with_all(dimension)
+        normalized_status = (
+            "all" if status in {None, "", "all"} else str(status).strip() or "all"
+        )
+        cache_key = redis_keys.experience_issues(
+            shop_id=shop_id,
+            dimension=normalized_dimension,
+            status=normalized_status,
+            date_range=normalized_range,
+            page=page,
+            size=size,
+        )
+        cached = await self._cache_get_model(cache_key, ExperienceIssueListResponse)
+        if cached is not None:
+            return cached
+
         filtered_dimension = (
             None if normalized_dimension == "all" else normalized_dimension
         )
-        filtered_status = None if status in {None, "", "all"} else status
+        filtered_status = None if normalized_status == "all" else normalized_status
 
         rows, total = await self.repo.list_issues(
             shop_id=str(shop_id),
@@ -183,10 +212,19 @@ class ExperienceQueryService:
             self._to_issue_item(shop_id=shop_id, row=row, date_range=normalized_range)
             for row in rows
         ]
-        return ExperienceIssueListResponse(
+        response = ExperienceIssueListResponse(
             items=items,
             meta=_build_pagination_meta(page=page, size=size, total=total),
         )
+        await self._cache_set_model(
+            cache_key,
+            response,
+            ttl_seconds=self.issues_ttl_seconds,
+            shop_id=shop_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        return response
 
     async def get_metric_detail(
         self,
@@ -199,6 +237,16 @@ class ExperienceQueryService:
         start_date, end_date, normalized_range = self._parse_date_range(date_range)
         normalized_dimension = normalize_dimension(metric_type)
         shop_key = str(shop_id)
+        cache_key = redis_keys.experience_metrics(
+            shop_id=shop_id,
+            dimension=normalized_dimension,
+            date_range=normalized_range,
+        )
+        cached = await self._cache_get_model(cache_key, MetricDetailResponse)
+        if cached is not None:
+            if cached.period != period:
+                return cached.model_copy(update={"period": period})
+            return cached
 
         trend_response = await self.get_trend(
             shop_id=shop_id,
@@ -272,7 +320,7 @@ class ExperienceQueryService:
             f"{contract.metric_key}*{contract.weight}" for contract in contracts
         )
 
-        return MetricDetailResponse(
+        response = MetricDetailResponse(
             shop_id=shop_id,
             metric_type=normalized_dimension,
             period=period,
@@ -283,6 +331,15 @@ class ExperienceQueryService:
             formula=formula,
             trend=trend_response.trend,
         )
+        await self._cache_set_model(
+            cache_key,
+            response,
+            ttl_seconds=self.metrics_ttl_seconds,
+            shop_id=shop_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        return response
 
     async def get_drilldown(
         self,
@@ -327,6 +384,15 @@ class ExperienceQueryService:
         date_range: str | None,
     ) -> DashboardOverviewResponse:
         start_date, end_date, normalized_range = self._parse_date_range(date_range)
+        cache_key = redis_keys.experience_dashboard(
+            shop_id=shop_id,
+            date_range=normalized_range,
+            section="overview",
+        )
+        cached = await self._cache_get_model(cache_key, DashboardOverviewResponse)
+        if cached is not None:
+            return cached
+
         overview = await self.get_overview(shop_id=shop_id, date_range=normalized_range)
         metrics = await self.repo.list_metric_rows(
             shop_id=str(shop_id),
@@ -348,7 +414,7 @@ class ExperienceQueryService:
         refund_rate_value = refund_row.metric_value if refund_row else 0.0
         conversion_rate_value = round(min(99.0, overview.overall_score / 1.2), 2)
 
-        return DashboardOverviewResponse(
+        response = DashboardOverviewResponse(
             shop_id=shop_id,
             date_range=normalized_range,
             cards={
@@ -359,6 +425,15 @@ class ExperienceQueryService:
                 "conversion_rate": f"{conversion_rate_value}%",
             },
         )
+        await self._cache_set_model(
+            cache_key,
+            response,
+            ttl_seconds=self.dashboard_ttl_seconds,
+            shop_id=shop_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        return response
 
     async def get_dashboard_kpis(
         self,
@@ -367,6 +442,15 @@ class ExperienceQueryService:
         date_range: str | None,
     ) -> DashboardKpisResponse:
         start_date, end_date, normalized_range = self._parse_date_range(date_range)
+        cache_key = redis_keys.experience_dashboard(
+            shop_id=shop_id,
+            date_range=normalized_range,
+            section="kpis",
+        )
+        cached = await self._cache_get_model(cache_key, DashboardKpisResponse)
+        if cached is not None:
+            return cached
+
         overview = await self.get_dashboard_overview(
             shop_id=shop_id, date_range=normalized_range
         )
@@ -409,7 +493,7 @@ class ExperienceQueryService:
         refund_first = refund_rows[0].metric_value if refund_rows else 0.0
         refund_last = refund_rows[-1].metric_value if refund_rows else 0.0
 
-        return DashboardKpisResponse(
+        response = DashboardKpisResponse(
             shop_id=shop_id,
             date_range=normalized_range,
             kpis=[
@@ -431,6 +515,122 @@ class ExperienceQueryService:
             ],
             trend=trend_points,
         )
+        await self._cache_set_model(
+            cache_key,
+            response,
+            ttl_seconds=self.dashboard_ttl_seconds,
+            shop_id=shop_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        return response
+
+    async def invalidate_shop_date(
+        self,
+        *,
+        shop_id: int | str,
+        metric_date: date,
+    ) -> int:
+        if self.cache is None:
+            return 0
+
+        date_text = metric_date.isoformat()
+        index_key = redis_keys.experience_cache_date_index(
+            shop_id=shop_id,
+            metric_date=date_text,
+        )
+        cached_raw = await self.cache.get(index_key)
+        if not cached_raw:
+            return 0
+
+        cache_keys = self._decode_cache_key_list(cached_raw)
+        deleted = 0
+        for cache_key in cache_keys:
+            if await self.cache.delete(cache_key):
+                deleted += 1
+        await self.cache.delete(index_key)
+        return deleted
+
+    async def _cache_get_model(self, key: str, model_type):
+        if self.cache is None:
+            return None
+        payload = await self.cache.get(key)
+        if payload is None:
+            return None
+        try:
+            return model_type.model_validate_json(payload)
+        except ValueError:
+            await self.cache.delete(key)
+            return None
+
+    async def _cache_set_model(
+        self,
+        key: str,
+        value,
+        *,
+        ttl_seconds: int,
+        shop_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> None:
+        if self.cache is None:
+            return
+        await self.cache.set(key, value.model_dump_json(), ttl=max(ttl_seconds, 1))
+        await self._append_cache_index_keys(
+            key=key,
+            shop_id=shop_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+    async def _append_cache_index_keys(
+        self,
+        *,
+        key: str,
+        shop_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> None:
+        if self.cache is None:
+            return
+        for metric_date in self._iterate_metric_dates(start_date, end_date):
+            index_key = redis_keys.experience_cache_date_index(
+                shop_id=shop_id,
+                metric_date=metric_date.isoformat(),
+            )
+            current_raw = await self.cache.get(index_key)
+            keys = self._decode_cache_key_list(current_raw)
+            if key not in keys:
+                keys.append(key)
+            await self.cache.set(
+                index_key,
+                json.dumps(keys, separators=(",", ":")),
+                ttl=max(self.cache_index_ttl_seconds, 1),
+            )
+
+    @staticmethod
+    def _iterate_metric_dates(start_date: date, end_date: date) -> list[date]:
+        if end_date < start_date:
+            return [start_date]
+        days = (end_date - start_date).days
+        return [start_date + timedelta(days=offset) for offset in range(days + 1)]
+
+    @staticmethod
+    def _decode_cache_key_list(raw: str | None) -> list[str]:
+        if not raw:
+            return []
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            return []
+        if not isinstance(parsed, list):
+            return []
+        keys: list[str] = []
+        for item in parsed:
+            text = str(item or "").strip()
+            if text and text not in keys:
+                keys.append(text)
+        return keys
 
     @staticmethod
     def _parse_date_range(date_range: str | None) -> tuple[date, date, str]:
@@ -570,5 +770,9 @@ class ExperienceQueryService:
 
 async def get_experience_service(
     session: AsyncSession = Depends(get_session),
+    cache: CacheProtocol = Depends(get_cache),
 ) -> AsyncGenerator[ExperienceQueryService, None]:
-    yield ExperienceQueryService(repo=ExperienceRepository(session=session))
+    yield ExperienceQueryService(
+        repo=ExperienceRepository(session=session),
+        cache=cache,
+    )

@@ -40,6 +40,31 @@ This repo also provides a full-featured, best-practiced backend template for bui
 - **Custom Error Codes**: Flexible handling of business-specific error codes and messages.
 - **Pagination**: Built-in support for paginating query results using `fastapi-pagination`.
 
+### Phase 3 Real Data Status (2026-03-12)
+
+Phase 3 experience endpoints are now running on real query services (not mock fallback):
+
+- `GET /api/v1/experience/overview`
+- `GET /api/v1/experience/trend`
+- `GET /api/v1/experience/issues`
+- `GET /api/v1/experience/drilldown/{dimension}`
+- `GET /api/v1/metrics/{metric_type}`
+- `GET /api/v1/dashboard/overview`
+- `GET /api/v1/dashboard/kpis`
+
+Supporting materials for frontend integration:
+
+- Real response examples: `docs/phase3-experience-real-api.md`
+- Integration seed SQL: `docs/phase3-experience-seed.sql`
+
+Cache policy for these endpoints:
+
+- metrics: 1h
+- dashboard: 30m
+- issues: 5m
+
+Collection write success triggers precise cache invalidation by `shop_id + metric_date`.
+
 ### DDD guidelines
 
 This repo follows **Domain-Driven Design (DDD)** principles to structure the codebase for better maintainability and scalability:

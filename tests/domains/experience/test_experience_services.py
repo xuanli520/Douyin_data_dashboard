@@ -1,5 +1,6 @@
 from datetime import UTC, date, datetime
 
+from src.cache.local import LocalCache
 from src.domains.experience.repository import ExperienceRepository
 from src.domains.experience.services import ExperienceQueryService
 
@@ -153,3 +154,74 @@ async def test_get_dashboard_kpis_contains_trend_and_change(test_db):
         assert kpis.kpis[1].id == "gmv"
         assert kpis.kpis[2].id == "refund_rate"
         assert kpis.kpis[0].change.endswith("%")
+
+
+async def test_get_metric_detail_uses_cache_on_repeated_query(test_db):
+    async with test_db() as session:
+        repo = ExperienceRepository(session)
+        await _seed_metrics_and_issues(repo)
+        await session.commit()
+
+        cache = LocalCache()
+        service = ExperienceQueryService(repo=repo, cache=cache)
+
+        original_list_metric_rows = repo.list_metric_rows
+        list_metric_rows_call_count = 0
+
+        async def counted_list_metric_rows(*args, **kwargs):
+            nonlocal list_metric_rows_call_count
+            list_metric_rows_call_count += 1
+            return await original_list_metric_rows(*args, **kwargs)
+
+        repo.list_metric_rows = counted_list_metric_rows  # type: ignore[method-assign]
+
+        first = await service.get_metric_detail(
+            shop_id=1001,
+            metric_type="product",
+            period="30d",
+            date_range="30d",
+        )
+        second = await service.get_metric_detail(
+            shop_id=1001,
+            metric_type="product",
+            period="30d",
+            date_range="30d",
+        )
+
+        assert list_metric_rows_call_count == 1
+        assert first.model_dump() == second.model_dump()
+        await cache.close()
+
+
+async def test_invalidate_shop_date_should_refresh_cached_dashboard_data(test_db):
+    async with test_db() as session:
+        repo = ExperienceRepository(session)
+        await _seed_metrics_and_issues(repo)
+        await session.commit()
+
+        cache = LocalCache()
+        service = ExperienceQueryService(repo=repo, cache=cache)
+
+        first = await service.get_dashboard_overview(shop_id=1001, date_range="30d")
+
+        await repo.upsert_metric(
+            shop_id="1001",
+            metric_date=date(2026, 3, 3),
+            dimension="product",
+            metric_key="dimension_score",
+            metric_score=62.0,
+            metric_value=62.0,
+            metric_unit="pt",
+            source_field="raw.product.score",
+            source="seed_v2",
+        )
+        await session.commit()
+
+        stale = await service.get_dashboard_overview(shop_id=1001, date_range="30d")
+        assert stale.model_dump() == first.model_dump()
+
+        await service.invalidate_shop_date(shop_id=1001, metric_date=date(2026, 3, 3))
+        refreshed = await service.get_dashboard_overview(shop_id=1001, date_range="30d")
+
+        assert refreshed.cards["gmv"] != stale.cards["gmv"]
+        await cache.close()

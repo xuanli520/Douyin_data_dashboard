@@ -6,6 +6,9 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import src.cache as cache_module
+from src.domains.experience.repository import ExperienceRepository
+from src.domains.experience.services import ExperienceQueryService
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 
@@ -96,6 +99,30 @@ class CollectionResultPersister:
             violations=violation_rows,
         )
         await session.commit()
+        await self._invalidate_experience_cache(
+            session=session,
+            shop_id=resolved_shop_id,
+            metric_day=metric_day,
+        )
+
+    async def _invalidate_experience_cache(
+        self,
+        *,
+        session: AsyncSession,
+        shop_id: str,
+        metric_day: date,
+    ) -> None:
+        cache = cache_module.cache
+        if cache is None:
+            return
+        service = ExperienceQueryService(
+            repo=ExperienceRepository(session=session),
+            cache=cache,
+        )
+        await service.invalidate_shop_date(
+            shop_id=shop_id,
+            metric_date=metric_day,
+        )
 
 
 def _extract_violation_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
