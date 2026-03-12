@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 from typing import Mapping
 
-from redis import Redis
 from sqlalchemy.exc import IntegrityError
 
 from src import session
@@ -15,6 +14,7 @@ from src.application.collection.plan_builder import CollectionPlanBuilder
 from src.application.collection.result_persister import CollectionResultPersister
 from src.application.collection.runtime_loader import CollectionRuntimeLoader
 from src.application.collection.runtime_loader import LoadedCollectionRuntime
+from src.cache import resolve_sync_redis_client
 from src.config import get_settings
 from src.domains.task.exceptions import ScrapingFailedException
 from src.domains.task.exceptions import ShopDashboardNoTargetShopsException
@@ -933,20 +933,7 @@ class CollectionUseCase:
         return exc
 
     def _resolve_redis_client(self, redis_client: Any | None) -> Any:
-        if redis_client is not None:
-            return redis_client
-        settings = get_settings()
-        return Redis(
-            host=settings.cache.host,
-            port=settings.cache.port,
-            db=settings.cache.db,
-            password=settings.cache.password,
-            encoding=settings.cache.encoding,
-            decode_responses=True,
-            socket_timeout=settings.cache.socket_timeout,
-            socket_connect_timeout=settings.cache.socket_connect_timeout,
-            retry_on_timeout=settings.cache.retry_on_timeout,
-        )
+        return resolve_sync_redis_client(redis_client)
 
 
 def _supports_shared_helpers(collector: Any) -> bool:

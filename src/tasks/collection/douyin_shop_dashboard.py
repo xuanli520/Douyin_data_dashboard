@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from src.agents import LLMDashboardAgent
+from src.cache import resolve_sync_redis_client
 from src.config import get_settings
 from src.domains.data_source.enums import DataSourceStatus, ScrapingRuleStatus
 from src.domains.data_source.repository import DataSourceRepository
@@ -130,7 +131,7 @@ def sync_shop_dashboard(
     extra_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     _write_started_status(sync_shop_dashboard, "sync_shop_dashboard", triggered_by)
-    redis_client = sync_shop_dashboard.publisher.redis_db_frame
+    redis_client = resolve_sync_redis_client()
     runtime_overrides = {
         key: value
         for key, value in {

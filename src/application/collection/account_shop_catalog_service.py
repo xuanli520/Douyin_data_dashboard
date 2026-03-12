@@ -37,6 +37,7 @@ class AccountShopCatalogService:
         redis_client: Any | None = None,
         catalog_cache_ttl_seconds: int | None = None,
         catalog_cache_ttl_cap_seconds: int | None = None,
+        catalog_stale_allow_seconds: int | None = None,
         catalog_refresh_lock_ttl_seconds: int | None = None,
     ) -> None:
         settings = get_settings().shop_dashboard
@@ -51,6 +52,18 @@ class AccountShopCatalogService:
             or 7200
         )
         self._catalog_cache_ttl_seconds = max(min(default_ttl, ttl_cap), 1)
+        self._catalog_stale_allow_seconds = max(
+            int(
+                catalog_stale_allow_seconds
+                or settings.catalog_stale_allow_seconds
+                or self._catalog_cache_ttl_seconds
+            ),
+            1,
+        )
+        self._catalog_cache_store_seconds = max(
+            self._catalog_cache_ttl_seconds,
+            self._catalog_stale_allow_seconds,
+        )
         self._catalog_refresh_lock_ttl_seconds = max(
             int(
                 catalog_refresh_lock_ttl_seconds
@@ -59,7 +72,7 @@ class AccountShopCatalogService:
             ),
             1,
         )
-        self._memory_cache: dict[str, tuple[list[str], float]] = {}
+        self._memory_cache: dict[str, tuple[list[str], int, float]] = {}
         self._memory_locks: dict[str, tuple[str, float]] = {}
 
     async def get_shop_catalog(
@@ -78,7 +91,11 @@ class AccountShopCatalogService:
         refresh_lock_key = redis_keys.shop_dashboard_shop_catalog_refresh_lock(
             account_id=normalized_account_id
         )
-        cached_shop_ids = [] if force_refresh else self._load_catalog_cache(catalog_key)
+        cached_shop_ids = (
+            []
+            if force_refresh
+            else self._load_catalog_cache(catalog_key, allow_stale=False)
+        )
         if cached_shop_ids and not force_refresh:
             return AccountShopCatalogResult(
                 shop_ids=list(cached_shop_ids),
@@ -89,7 +106,8 @@ class AccountShopCatalogService:
         token = self._acquire_lock(refresh_lock_key)
         if not token:
             fallback_cached_shop_ids = cached_shop_ids or self._load_catalog_cache(
-                catalog_key
+                catalog_key,
+                allow_stale=True,
             )
             if fallback_cached_shop_ids:
                 return AccountShopCatalogResult(
@@ -115,7 +133,10 @@ class AccountShopCatalogService:
 
         try:
             if not force_refresh:
-                cached_shop_ids = self._load_catalog_cache(catalog_key)
+                cached_shop_ids = self._load_catalog_cache(
+                    catalog_key,
+                    allow_stale=False,
+                )
                 if cached_shop_ids:
                     return AccountShopCatalogResult(
                         shop_ids=list(cached_shop_ids),
@@ -137,9 +158,13 @@ class AccountShopCatalogService:
                     catalog_stale=False,
                     resolve_source="live",
                 )
-            if cached_shop_ids:
+            fallback_cached_shop_ids = cached_shop_ids or self._load_catalog_cache(
+                catalog_key,
+                allow_stale=True,
+            )
+            if fallback_cached_shop_ids:
                 return AccountShopCatalogResult(
-                    shop_ids=list(cached_shop_ids),
+                    shop_ids=list(fallback_cached_shop_ids),
                     catalog_stale=True,
                     resolve_source="cache_stale",
                 )
@@ -150,7 +175,8 @@ class AccountShopCatalogService:
             )
         except Exception:
             fallback_cached_shop_ids = cached_shop_ids or self._load_catalog_cache(
-                catalog_key
+                catalog_key,
+                allow_stale=True,
             )
             if fallback_cached_shop_ids:
                 return AccountShopCatalogResult(
@@ -176,15 +202,17 @@ class AccountShopCatalogService:
             redis_set(
                 key,
                 payload,
-                ex=self._catalog_cache_ttl_seconds,
+                ex=self._catalog_cache_store_seconds,
             )
             return
+        now = time.time()
         self._memory_cache[key] = (
             list(shop_ids),
-            time.time() + self._catalog_cache_ttl_seconds,
+            int(now),
+            now + self._catalog_cache_store_seconds,
         )
 
-    def _load_catalog_cache(self, key: str) -> list[str]:
+    def _load_catalog_cache(self, key: str, *, allow_stale: bool) -> list[str]:
         redis_get = getattr(self._redis, "get", None)
         raw: Any = None
         if callable(redis_get):
@@ -193,11 +221,13 @@ class AccountShopCatalogService:
             cached = self._memory_cache.get(key)
             if cached is None:
                 return []
-            shop_ids, expires_at = cached
+            shop_ids, updated_at, expires_at = cached
             if expires_at <= time.time():
                 self._memory_cache.pop(key, None)
                 return []
-            return _normalize_shop_ids(shop_ids)
+            if self._is_cache_usable(updated_at=updated_at, allow_stale=allow_stale):
+                return _normalize_shop_ids(shop_ids)
+            return []
         if raw is None:
             return []
         if isinstance(raw, bytes):
@@ -213,7 +243,26 @@ class AccountShopCatalogService:
             return []
         if not isinstance(payload, dict):
             return []
-        return _normalize_shop_ids(payload.get("shop_ids"))
+        shop_ids = _normalize_shop_ids(payload.get("shop_ids"))
+        if not shop_ids:
+            return []
+        updated_at_raw = payload.get("updated_at")
+        try:
+            updated_at = int(updated_at_raw)
+        except (TypeError, ValueError):
+            return shop_ids
+        if self._is_cache_usable(updated_at=updated_at, allow_stale=allow_stale):
+            return shop_ids
+        return []
+
+    def _is_cache_usable(self, *, updated_at: int, allow_stale: bool) -> bool:
+        now = int(time.time())
+        age_seconds = max(now - int(updated_at), 0)
+        if age_seconds <= self._catalog_cache_ttl_seconds:
+            return True
+        if allow_stale and age_seconds <= self._catalog_stale_allow_seconds:
+            return True
+        return False
 
     def _acquire_lock(self, key: str) -> str | None:
         token = os.urandom(16).hex()

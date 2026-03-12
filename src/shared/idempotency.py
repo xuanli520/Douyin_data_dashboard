@@ -1,13 +1,14 @@
 import binascii
 import json
 import os
+from typing import Any
 
-from redis import Redis
+from src.cache import resolve_sync_redis_client
 
 
 class FunboostIdempotencyHelper:
-    def __init__(self, redis_client: Redis, task_name: str):
-        self.redis = redis_client
+    def __init__(self, redis_client: Any | None, task_name: str):
+        self.redis = resolve_sync_redis_client(redis_client)
         self.task_name = task_name
 
     def _lock_key(self, key: str) -> str:

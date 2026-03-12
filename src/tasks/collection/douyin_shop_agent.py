@@ -5,6 +5,7 @@ from datetime import UTC, date as date_type, datetime
 from typing import Any
 
 from src.agents import LLMDashboardAgent
+from src.cache import resolve_sync_redis_client
 from src.config import get_settings
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
 from src import session
@@ -48,7 +49,7 @@ def sync_shop_dashboard_agent(
         "sync_shop_dashboard_agent",
         triggered_by,
     )
-    redis_client = sync_shop_dashboard_agent.publisher.redis_db_frame
+    redis_client = resolve_sync_redis_client()
     helper = FunboostIdempotencyHelper(
         redis_client=redis_client,
         task_name="sync_shop_dashboard_agent",

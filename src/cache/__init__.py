@@ -4,11 +4,14 @@ from typing import Literal
 from .local import LocalCache
 from .protocol import CacheProtocol
 from .redis import RedisCache
+from .sync import SyncRedisCache, resolve_sync_redis_client
 
 __all__ = [
     "CacheProtocol",
     "RedisCache",
+    "SyncRedisCache",
     "LocalCache",
+    "resolve_sync_redis_client",
     "init_cache",
     "close_cache",
     "get_cache",

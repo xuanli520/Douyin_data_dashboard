@@ -6,12 +6,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 from src import session as session_module
+from src.cache import resolve_sync_redis_client
 from src.config import get_settings
 from src.domains.task.enums import TaskExecutionStatus
 from src.domains.task.repository import TaskExecutionRepository
 
 
-def resolve_status_redis_client(owner: Any) -> Any | None:
+def resolve_status_redis_client(owner: Any) -> Any:
     consumer = getattr(owner, "consumer", None)
     candidates = (
         getattr(consumer, "redis_db_filter_and_rpc_result", None),
@@ -22,8 +23,10 @@ def resolve_status_redis_client(owner: Any) -> Any | None:
     )
     for client in candidates:
         if client is not None:
-            return client
-    return None
+            return resolve_sync_redis_client(client)
+    return resolve_sync_redis_client(
+        db=get_settings().funboost.filter_and_rpc_result_redis_db
+    )
 
 
 def _hset_field_compat(redis_client: Any, key: str, field: str, value: Any) -> None:
@@ -46,8 +49,6 @@ def write_started_task_status(
     execution_id: int | None = None,
 ) -> None:
     redis_client = resolve_status_redis_client(owner)
-    if redis_client is None:
-        raise RuntimeError("status redis client is unavailable")
     key = f"douyin:task:status:{task_id}"
     started_at = time.time()
     _hset_mapping_compat(
@@ -81,8 +82,6 @@ def write_finished_task_status(
     error_message: str | None = None,
 ) -> None:
     redis_client = resolve_status_redis_client(owner)
-    if redis_client is None:
-        raise RuntimeError("status redis client is unavailable")
     key = f"douyin:task:status:{task_id}"
     _hset_mapping_compat(
         redis_client,

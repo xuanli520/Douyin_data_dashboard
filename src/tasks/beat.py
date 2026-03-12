@@ -43,6 +43,7 @@ def register_jobs() -> None:
                 **schedule.to_aps_job_kwargs(),
                 kwargs=_build_dispatch_kwargs(collection_job, schedule),
                 id=f"collection_job_{collection_job.id}",
+                replace_existing=True,
             )
 
 

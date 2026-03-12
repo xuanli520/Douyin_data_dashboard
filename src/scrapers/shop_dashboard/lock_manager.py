@@ -4,9 +4,9 @@ import os
 import time
 from typing import Any
 
-from redis import Redis
 from redis.exceptions import ResponseError
 
+from src.cache import resolve_sync_redis_client
 from src.config import get_settings
 
 
@@ -21,24 +21,14 @@ class LockManager:
 
     def __init__(
         self,
-        redis_client: Redis | Any | None = None,
+        redis_client: Any | None = None,
         lock_ttl_seconds: int | None = None,
     ) -> None:
         settings = get_settings()
         self._lock_ttl_seconds = int(
             lock_ttl_seconds or settings.shop_dashboard.lock_ttl_seconds
         )
-        self._redis = redis_client or Redis(
-            host=settings.cache.host,
-            port=settings.cache.port,
-            db=settings.cache.db,
-            password=settings.cache.password,
-            encoding=settings.cache.encoding,
-            decode_responses=True,
-            socket_timeout=settings.cache.socket_timeout,
-            socket_connect_timeout=settings.cache.socket_connect_timeout,
-            retry_on_timeout=settings.cache.retry_on_timeout,
-        )
+        self._redis = resolve_sync_redis_client(redis_client)
         self._memory_locks: dict[str, tuple[str, float]] = {}
 
     def account_lock_key(self, account_id: str) -> str:
