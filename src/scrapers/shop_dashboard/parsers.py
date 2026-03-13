@@ -201,6 +201,18 @@ def extract_actual_shop_id(
     return None
 
 
+def extract_actual_shop_id_from_group_payloads(
+    payloads: Mapping[str, Any],
+) -> str | None:
+    analysis_payload = payloads.get("analysis")
+    overview_payload = payloads.get("overview")
+    if not isinstance(analysis_payload, Mapping):
+        analysis_payload = {}
+    if not isinstance(overview_payload, Mapping):
+        overview_payload = {}
+    return extract_actual_shop_id(analysis_payload, overview_payload)
+
+
 def _extract_data(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     data = payload.get("data", {})
     if isinstance(data, Mapping):

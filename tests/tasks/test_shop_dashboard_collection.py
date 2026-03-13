@@ -36,6 +36,14 @@ class _FakeRedis:
     def get(self, key: str) -> Any | None:
         return self._kv.get(key)
 
+    def delete(self, *keys: str):
+        removed = 0
+        for key in keys:
+            if key in self._kv:
+                del self._kv[key]
+                removed += 1
+        return removed
+
     def eval(self, script: str, _num_keys: int, *args):
         key = str(args[0])
         token = args[1]
@@ -103,7 +111,15 @@ class _FakeSessionBootstrapper:
         self.state_store = state_store
         self.browser_scraper = browser_scraper
 
-    async def bootstrap_shops(self, *, runtime, shop_ids, force_serial=None):
+    async def bootstrap_shops(
+        self,
+        *,
+        runtime,
+        shop_ids,
+        verify_metric_date_by_shop=None,
+        force_serial=None,
+    ):
+        _ = verify_metric_date_by_shop
         _ = force_serial
         results: dict[str, dict[str, Any]] = {}
         account_id = str(getattr(runtime, "account_id", "") or "").strip() or "acct-1"
@@ -116,14 +132,24 @@ class _FakeSessionBootstrapper:
                     "cookies": dict(getattr(runtime, "cookies", {}) or {}),
                     "common_query": dict(getattr(runtime, "common_query", {}) or {}),
                     "validated_shop_id": shop_text,
-                    "validated_at": "2026-03-10T00:00:00+00:00",
-                    "session_version": "1",
+                    "verified_actual_shop_id": shop_text,
+                    "verify_status": "passed",
+                    "verified_at": "2026-03-10T00:00:00+00:00",
+                    "session_version": "2",
                 },
             )
-            results[shop_text] = {"shop_id": shop_text, "bootstrap_failed": False}
+            results[shop_text] = {
+                "shop_id": shop_text,
+                "target_shop_id": shop_text,
+                "bootstrap_failed": False,
+                "bootstrap_verify_status": "passed",
+                "bootstrap_verify_actual_shop_id": shop_text,
+                "bootstrap_verify_error_code": "",
+            }
         return results
 
-    async def bootstrap_shop(self, *, runtime, shop_id):
+    async def bootstrap_shop(self, *, runtime, shop_id, verify_metric_date=None):
+        _ = verify_metric_date
         account_id = str(getattr(runtime, "account_id", "") or "").strip() or "acct-1"
         shop_text = str(shop_id)
         self.state_store.save_bundle(
@@ -133,11 +159,139 @@ class _FakeSessionBootstrapper:
                 "cookies": dict(getattr(runtime, "cookies", {}) or {}),
                 "common_query": dict(getattr(runtime, "common_query", {}) or {}),
                 "validated_shop_id": shop_text,
-                "validated_at": "2026-03-10T00:00:00+00:00",
-                "session_version": "1",
+                "verified_actual_shop_id": shop_text,
+                "verify_status": "passed",
+                "verified_at": "2026-03-10T00:00:00+00:00",
+                "session_version": "2",
             },
         )
-        return {"shop_id": shop_text, "bootstrap_failed": False}
+        return {
+            "shop_id": shop_text,
+            "target_shop_id": shop_text,
+            "bootstrap_failed": False,
+            "bootstrap_verify_status": "passed",
+            "bootstrap_verify_actual_shop_id": shop_text,
+            "bootstrap_verify_error_code": "",
+        }
+
+
+class _BootstrapVerifyRequestFailed:
+    def __init__(self, state_store, browser_scraper=None):
+        self.state_store = state_store
+        self.browser_scraper = browser_scraper
+
+    async def bootstrap_shops(
+        self,
+        *,
+        runtime,
+        shop_ids,
+        verify_metric_date_by_shop=None,
+        force_serial=None,
+    ):
+        _ = (runtime, verify_metric_date_by_shop, force_serial)
+        return {
+            str(shop_id): {
+                "shop_id": str(shop_id),
+                "target_shop_id": str(shop_id),
+                "bootstrap_failed": True,
+                "error_code": "verify_request_failed",
+                "error": "verify_request_failed",
+                "bootstrap_choose_status": "passed",
+                "bootstrap_verify_status": "failed",
+                "bootstrap_verify_actual_shop_id": "",
+                "bootstrap_verify_error_code": "verify_request_failed",
+            }
+            for shop_id in shop_ids
+        }
+
+    async def bootstrap_shop(self, *, runtime, shop_id, verify_metric_date=None):
+        _ = (runtime, shop_id, verify_metric_date)
+        return {
+            "shop_id": str(shop_id),
+            "target_shop_id": str(shop_id),
+            "bootstrap_failed": True,
+            "error_code": "verify_request_failed",
+            "error": "verify_request_failed",
+            "bootstrap_choose_status": "passed",
+            "bootstrap_verify_status": "failed",
+            "bootstrap_verify_actual_shop_id": "",
+            "bootstrap_verify_error_code": "verify_request_failed",
+        }
+
+
+class _BootstrapVerifyMismatch:
+    def __init__(self, state_store, browser_scraper=None):
+        self.state_store = state_store
+        self.browser_scraper = browser_scraper
+
+    async def bootstrap_shops(
+        self,
+        *,
+        runtime,
+        shop_ids,
+        verify_metric_date_by_shop=None,
+        force_serial=None,
+    ):
+        _ = (runtime, verify_metric_date_by_shop, force_serial)
+        return {
+            str(shop_id): {
+                "shop_id": str(shop_id),
+                "target_shop_id": str(shop_id),
+                "bootstrap_failed": True,
+                "error_code": "verify_shop_mismatch",
+                "error": "verify_shop_mismatch",
+                "actual_shop_id": "shop-fixed",
+                "bootstrap_choose_status": "passed",
+                "bootstrap_verify_status": "failed",
+                "bootstrap_verify_actual_shop_id": "shop-fixed",
+                "bootstrap_verify_error_code": "verify_shop_mismatch",
+            }
+            for shop_id in shop_ids
+        }
+
+    async def bootstrap_shop(self, *, runtime, shop_id, verify_metric_date=None):
+        _ = (runtime, shop_id, verify_metric_date)
+        return {
+            "shop_id": str(shop_id),
+            "target_shop_id": str(shop_id),
+            "bootstrap_failed": True,
+            "error_code": "verify_shop_mismatch",
+            "error": "verify_shop_mismatch",
+            "actual_shop_id": "shop-fixed",
+            "bootstrap_choose_status": "passed",
+            "bootstrap_verify_status": "failed",
+            "bootstrap_verify_actual_shop_id": "shop-fixed",
+            "bootstrap_verify_error_code": "verify_shop_mismatch",
+        }
+
+
+def _collect_mismatch(
+    runtime_config,
+    metric_date: str,
+    _browser,
+    *,
+    lock_manager,
+    state_store,
+    login_state_manager,
+) -> dict[str, Any]:
+    _ = (lock_manager, state_store, login_state_manager)
+    return {
+        "status": "success",
+        "shop_id": runtime_config.shop_id,
+        "actual_shop_id": f"actual-{runtime_config.shop_id}",
+        "metric_date": metric_date,
+        "rule_id": runtime_config.rule_id,
+        "execution_id": runtime_config.execution_id,
+        "source": "script",
+        "total_score": 4.8,
+        "product_score": 4.7,
+        "logistics_score": 4.9,
+        "service_score": 4.6,
+        "bad_behavior_score": 0.0,
+        "reviews": {"summary": {}, "items": []},
+        "violations": {"summary": {}, "waiting_list": []},
+        "raw": {},
+    }
 
 
 async def _seed_entities(
@@ -147,6 +301,7 @@ async def _seed_entities(
     data_source_status: DataSourceStatus = DataSourceStatus.ACTIVE,
     ds_extra_config: dict[str, Any] | None = None,
     rule_filters: dict[str, Any] | None = None,
+    rule_time_range: dict[str, str] | None = None,
 ) -> tuple[int, int]:
     async with test_db() as db_session:
         data_source = DataSource(
@@ -164,7 +319,9 @@ async def _seed_entities(
             filters=rule_filters
             if rule_filters is not None
             else {"shop_id": ["shop-1"]},
-            time_range={"start": "2026-03-01", "end": "2026-03-01"},
+            time_range=rule_time_range
+            if rule_time_range is not None
+            else {"start": "2026-03-01", "end": "2026-03-01"},
             backfill_last_n_days=1,
         )
         db_session.add(rule)
@@ -317,6 +474,11 @@ async def test_collection_usecase_should_map_login_expired_to_task_exception(
         "_materialize_runtime_storage_state",
         lambda runtime, _store: runtime,
     )
+    monkeypatch.setattr(
+        CollectionUseCase,
+        "_raise_when_all_units_failed",
+        lambda self, result: None,
+    )
 
     usecase = CollectionUseCase()
     with pytest.raises(ShopDashboardCookieExpiredException):
@@ -341,3 +503,186 @@ async def test_collection_usecase_should_map_login_expired_to_task_exception(
 
 def _raise_login_expired(*_args, **_kwargs):
     raise LoginExpiredError("session expired")
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_verify_request_failed_not_counted_as_shop_mismatch(
+    test_db,
+    monkeypatch,
+):
+    data_source_id, rule_id = await _seed_entities(test_db)
+    monkeypatch.setattr(
+        db_session_module,
+        "async_session_factory",
+        test_db,
+        raising=False,
+    )
+    monkeypatch.setattr(module, "_collect_one_day", _raise_login_expired)
+    monkeypatch.setattr(module, "BrowserScraper", lambda: object())
+    monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
+    monkeypatch.setattr(
+        module,
+        "SessionBootstrapper",
+        _BootstrapVerifyRequestFailed,
+        raising=False,
+    )
+    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
+    monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
+    monkeypatch.setattr(
+        module,
+        "_materialize_runtime_storage_state",
+        lambda runtime, _store: runtime,
+    )
+    monkeypatch.setattr(
+        CollectionUseCase,
+        "_raise_when_all_units_failed",
+        lambda self, result: None,
+    )
+
+    usecase = CollectionUseCase()
+    result = await usecase._execute_async(
+        data_source_id=data_source_id,
+        rule_id=rule_id,
+        execution_id="exec-bootstrap-request-failed",
+        queue_task_id="queue-bootstrap-request-failed",
+        triggered_by=1,
+        overrides={},
+        redis_client=_FakeRedis(),
+    )
+
+    assert result["bootstrap_verify_failed_count"] == 1
+    assert result["shop_mismatch_count"] == 0
+    assert result["items"][0]["reason"] == "bootstrap_verify_failed"
+    assert result["items"][0]["error_code"] == "verify_request_failed"
+
+
+@pytest.mark.asyncio
+async def test_collect_mismatch_reaches_threshold_then_hits_circuit_break(
+    test_db,
+    monkeypatch,
+):
+    data_source_id, rule_id = await _seed_entities(
+        test_db,
+        rule_filters={"shop_id": ["shop-1"]},
+        rule_time_range={"start": "2026-03-01", "end": "2026-03-04"},
+    )
+    monkeypatch.setattr(
+        db_session_module,
+        "async_session_factory",
+        test_db,
+        raising=False,
+    )
+    monkeypatch.setattr(module, "_collect_one_day", _collect_mismatch)
+    monkeypatch.setattr(module, "BrowserScraper", lambda: object())
+    monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
+    monkeypatch.setattr(
+        module,
+        "SessionBootstrapper",
+        _FakeSessionBootstrapper,
+        raising=False,
+    )
+    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
+    monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
+    monkeypatch.setattr(
+        module,
+        "_materialize_runtime_storage_state",
+        lambda runtime, _store: runtime,
+    )
+    monkeypatch.setattr(
+        CollectionUseCase,
+        "_raise_when_all_units_failed",
+        lambda self, result: None,
+    )
+
+    usecase = CollectionUseCase()
+    result = await usecase._execute_async(
+        data_source_id=data_source_id,
+        rule_id=rule_id,
+        execution_id="exec-mismatch-circuit",
+        queue_task_id="queue-mismatch-circuit",
+        triggered_by=1,
+        overrides={},
+        redis_client=_FakeRedis(),
+    )
+
+    reasons = [str(item.get("reason", "")) for item in result["items"]]
+    assert reasons.count("shop_mismatch") >= 3
+    assert "shop_circuit_break" in reasons
+
+
+@pytest.mark.asyncio
+async def test_account_shop_switch_unsupported_short_circuit(
+    test_db,
+    monkeypatch,
+):
+    data_source_id, rule_id = await _seed_entities(
+        test_db,
+        rule_filters={"shop_id": ["shop-1", "shop-2", "shop-3", "shop-4"]},
+    )
+    monkeypatch.setattr(
+        db_session_module,
+        "async_session_factory",
+        test_db,
+        raising=False,
+    )
+    monkeypatch.setattr(module, "_collect_one_day", _collect_mismatch)
+    monkeypatch.setattr(module, "BrowserScraper", lambda: object())
+    monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
+    monkeypatch.setattr(
+        module,
+        "SessionBootstrapper",
+        _BootstrapVerifyMismatch,
+        raising=False,
+    )
+    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
+    monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
+    monkeypatch.setattr(
+        module,
+        "_materialize_runtime_storage_state",
+        lambda runtime, _store: runtime,
+    )
+    monkeypatch.setattr(
+        CollectionUseCase,
+        "_raise_when_all_units_failed",
+        lambda self, result: None,
+    )
+
+    usecase = CollectionUseCase()
+    result = await usecase._execute_async(
+        data_source_id=data_source_id,
+        rule_id=rule_id,
+        execution_id="exec-account-unsupported",
+        queue_task_id="queue-account-unsupported",
+        triggered_by=1,
+        overrides={},
+        redis_client=_FakeRedis(),
+    )
+
+    assert result["account_switch_unsupported_count"] >= 1
+    assert any(
+        str(item.get("reason", "")) == "account_shop_switch_unsupported"
+        for item in result["items"]
+    )
+
+
+def test_raise_when_all_units_failed_skips_exception_for_account_switch_unsupported():
+    usecase = CollectionUseCase()
+    result = {
+        "planned_units": 2,
+        "completed_units": 0,
+        "failed_units": 2,
+        "items": [
+            {
+                "status": "failed",
+                "reason": "account_shop_switch_unsupported",
+            },
+            {
+                "status": "failed",
+                "reason": "account_shop_switch_unsupported",
+            },
+        ],
+    }
+
+    usecase._raise_when_all_units_failed(result)
+
+    assert result["recommended_collection_mode"] == "per_shop_account"

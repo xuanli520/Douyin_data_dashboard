@@ -98,6 +98,16 @@ def _write_started_status(
         logger.exception("failed to write started task status: %s", task_name)
 
 
+def _resolve_account_id(runtime: ShopDashboardRuntimeConfig) -> str:
+    account_id = str(getattr(runtime, "account_id", "") or "").strip()
+    if account_id:
+        return account_id
+    rule_id = int(getattr(runtime, "rule_id", 0) or 0)
+    if rule_id > 0:
+        return f"rule_{rule_id}"
+    return f"shop_{runtime.shop_id}"
+
+
 @boost(
     CollectionTaskParams(
         queue_name="collection_shop_dashboard",
@@ -161,7 +171,7 @@ def sync_shop_dashboard(
     from src.application.collection.usecase import CollectionUseCase
 
     usecase = CollectionUseCase()
-    return usecase.execute(
+    result = usecase.execute(
         data_source_id=data_source_id,
         rule_id=rule_id,
         execution_id=execution_id,
@@ -170,6 +180,19 @@ def sync_shop_dashboard(
         overrides=runtime_overrides,
         redis_client=redis_client,
     )
+    items = result.get("items")
+    unsupported = False
+    if isinstance(items, list):
+        if "processed_rows" not in result:
+            result["processed_rows"] = len(items)
+        unsupported = any(
+            isinstance(item, Mapping)
+            and str(item.get("reason", "")).strip() == "account_shop_switch_unsupported"
+            for item in items
+        )
+    if unsupported:
+        result["recommended_collection_mode"] = "per_shop_account"
+    return result
 
 
 @boost(
@@ -194,9 +217,7 @@ def _materialize_runtime_storage_state(
     if not isinstance(storage_state, dict):
         return runtime
 
-    account_id = str(getattr(runtime, "account_id", "") or "").strip()
-    if not account_id:
-        account_id = f"shop_{runtime.shop_id}"
+    account_id = _resolve_account_id(runtime)
 
     state_store.save(account_id, storage_state)
     cookies = state_store.load_cookie_mapping(account_id)
@@ -271,7 +292,7 @@ def _collect_one_day(
         state_store=state_store
     )
     explicit_account_id = str(getattr(runtime, "account_id", "") or "").strip()
-    account_id = explicit_account_id or f"shop_{runtime.shop_id}"
+    account_id = _resolve_account_id(runtime)
     shop_lock_id = _resolve_shop_lock_id(runtime.shop_id, account_id)
     last_error: Exception | None = None
     http_error: Exception | None = None
@@ -390,11 +411,6 @@ def _collect_one_day(
                             )
                         continue
                 if stage_name == "agent":
-                    _append_fallback_trace(
-                        fallback_trace,
-                        stage="agent",
-                        status="success",
-                    )
                     return _build_agent_fallback_result(
                         runtime,
                         metric_date,
@@ -468,8 +484,9 @@ def _normalize_task_result(
     actual_shop_id = str(
         payload.get("actual_shop_id") or payload.get("shop_id") or target_shop_id
     ).strip()
+    normalized_status = str(payload.get("status") or "success").strip() or "success"
     result = {
-        "status": "success",
+        "status": normalized_status,
         "shop_id": runtime.shop_id,
         "target_shop_id": target_shop_id,
         "actual_shop_id": actual_shop_id,
@@ -491,6 +508,8 @@ def _normalize_task_result(
         "retry_count": retry_count,
         "fallback_trace": list(fallback_trace or []),
     }
+    if "reason" in payload:
+        result["reason"] = payload.get("reason")
     for key in ("violations_detail", "arbitration_detail", "dsr_trend"):
         if key in payload:
             result[key] = payload.get(key)
@@ -523,6 +542,7 @@ def _build_agent_fallback_result(
 ) -> dict[str, Any]:
     reason = _resolve_agent_reason(http_error, browser_error)
     payload: dict[str, Any] = {
+        "status": "success",
         "source": "llm",
         "total_score": 0.0,
         "product_score": 0.0,
@@ -535,6 +555,7 @@ def _build_agent_fallback_result(
     }
 
     agent = LLMDashboardAgent()
+    llm_error: Exception | None = None
     try:
         patched = agent.supplement_cold_data(
             payload,
@@ -543,18 +564,39 @@ def _build_agent_fallback_result(
             reason=reason,
         )
     except Exception as exc:
-        raw = dict(payload.get("raw") or {})
-        raw["llm_patch"] = {
-            "status": "failed",
-            "reason": reason,
-            "error": str(exc),
-        }
-        payload["raw"] = raw
-        patched = payload
+        patched = None
+        llm_error = exc
     finally:
         close = getattr(agent, "close", None)
         if callable(close):
             close()
+
+    if not isinstance(patched, dict):
+        failure_error = (
+            str(llm_error) if llm_error is not None else "invalid_llm_payload"
+        )
+        raw = dict(payload.get("raw") or {})
+        raw["llm_patch"] = {
+            "status": "failed",
+            "reason": reason,
+            "error": failure_error,
+        }
+        payload["raw"] = raw
+        payload["status"] = "degraded"
+        payload["reason"] = "llm_failed"
+        patched = payload
+        _append_fallback_trace(
+            fallback_trace if isinstance(fallback_trace, list) else [],
+            stage="agent",
+            status="failed",
+            error=llm_error if llm_error is not None else RuntimeError(failure_error),
+        )
+    else:
+        _append_fallback_trace(
+            fallback_trace if isinstance(fallback_trace, list) else [],
+            stage="agent",
+            status="success",
+        )
 
     if not isinstance(patched, dict):
         patched = payload

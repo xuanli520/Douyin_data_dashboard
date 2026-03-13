@@ -61,6 +61,17 @@ shop_dashboard_collection_duration_seconds = Histogram(
     ],
 )
 
+shop_dashboard_bootstrap_verify_failed_total = Counter(
+    "shop_dashboard_bootstrap_verify_failed_total",
+    "Shop dashboard bootstrap verify failed count",
+    ["error_code"],
+)
+
+shop_dashboard_account_switch_unsupported_total = Counter(
+    "shop_dashboard_account_switch_unsupported_total",
+    "Shop dashboard account switch unsupported count",
+)
+
 PATH_PARAMETER_PATTERN = re.compile(r"/(?:\d+|[0-9a-fA-F-]{36})")
 
 
@@ -102,6 +113,17 @@ def observe_shop_dashboard_collection(
         bootstrap_status=safe_bootstrap_status,
         circuit_break_status=safe_circuit_break_status,
     ).observe(max(duration_seconds, 0.0))
+
+
+def observe_shop_dashboard_bootstrap_verify_failed(*, error_code: str) -> None:
+    safe_error_code = error_code if error_code else "unknown"
+    shop_dashboard_bootstrap_verify_failed_total.labels(
+        error_code=safe_error_code
+    ).inc()
+
+
+def observe_shop_dashboard_account_switch_unsupported() -> None:
+    shop_dashboard_account_switch_unsupported_total.inc()
 
 
 class MonitorMiddleware(BaseHTTPMiddleware):

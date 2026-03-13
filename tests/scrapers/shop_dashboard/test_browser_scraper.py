@@ -87,3 +87,35 @@ def test_browser_scraper_retry_http_sets_browser_source():
 
     assert result["source"] == "browser"
     assert len(http_scraper.calls) == 1
+
+
+def test_merge_runtime_cookies_into_storage_state_overrides_existing_value(tmp_path):
+    scraper = BrowserScraper(state_store=SessionStateStore(base_dir=tmp_path))
+    runtime = _runtime(cookies={"PHPSESSID": "new-session", "sid": "new-token"})
+    storage_state = {
+        "cookies": [
+            {
+                "name": "PHPSESSID",
+                "value": "old-session",
+                "domain": ".jinritemai.com",
+                "path": "/",
+            }
+        ],
+        "origins": [],
+    }
+
+    merged = scraper._merge_runtime_cookies_into_storage_state(
+        storage_state,
+        runtime_config=runtime,
+    )
+
+    assert isinstance(merged, dict)
+    merged_cookies = merged.get("cookies")
+    assert isinstance(merged_cookies, list)
+    merged_values = {
+        str(item.get("name")): str(item.get("value"))
+        for item in merged_cookies
+        if isinstance(item, dict)
+    }
+    assert merged_values["PHPSESSID"] == "new-session"
+    assert merged_values["sid"] == "new-token"

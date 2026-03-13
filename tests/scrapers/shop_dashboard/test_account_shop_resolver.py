@@ -5,13 +5,30 @@ from src.scrapers.shop_dashboard.account_shop_resolver import AccountShopResolve
 
 
 @pytest.mark.asyncio
-async def test_account_shop_resolver_without_cookies_returns_empty():
+async def test_account_shop_resolver_without_cookies_returns_fallback_shop_ids():
     resolver = AccountShopResolver()
 
     shop_ids = await resolver.resolve_shop_ids(
         account_id="acct-1",
         cookies={},
         extra_config={"shop_ids": ["shop-1", "shop-2", "shop-1"]},
+    )
+
+    assert shop_ids == ["shop-1", "shop-2"]
+
+
+@pytest.mark.asyncio
+async def test_account_shop_resolver_ignores_non_shop_fields_in_fallback_context():
+    resolver = AccountShopResolver()
+
+    shop_ids = await resolver.resolve_shop_ids(
+        account_id="acct-1",
+        cookies={},
+        common_query={
+            "shop_mode": "all",
+            "subject_aid": 4966,
+            "shop_name": "demo",
+        },
     )
 
     assert shop_ids == []

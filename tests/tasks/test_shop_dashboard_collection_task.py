@@ -32,6 +32,14 @@ class _FakeRedis:
     def get(self, key: str) -> Any | None:
         return self._kv.get(key)
 
+    def delete(self, *keys: str):
+        removed = 0
+        for key in keys:
+            if key in self._kv:
+                del self._kv[key]
+                removed += 1
+        return removed
+
     def eval(self, script: str, _num_keys: int, *args):
         key = str(args[0])
         token = args[1]
@@ -99,7 +107,15 @@ class _FakeSessionBootstrapper:
         self.state_store = state_store
         self.browser_scraper = browser_scraper
 
-    async def bootstrap_shops(self, *, runtime, shop_ids, force_serial=None):
+    async def bootstrap_shops(
+        self,
+        *,
+        runtime,
+        shop_ids,
+        verify_metric_date_by_shop=None,
+        force_serial=None,
+    ):
+        _ = verify_metric_date_by_shop
         _ = force_serial
         account_id = str(getattr(runtime, "account_id", "") or "").strip() or "acct-1"
         result = {}
@@ -112,14 +128,24 @@ class _FakeSessionBootstrapper:
                     "cookies": dict(getattr(runtime, "cookies", {}) or {}),
                     "common_query": dict(getattr(runtime, "common_query", {}) or {}),
                     "validated_shop_id": shop_text,
-                    "validated_at": "2026-03-10T00:00:00+00:00",
-                    "session_version": "1",
+                    "verified_actual_shop_id": shop_text,
+                    "verify_status": "passed",
+                    "verified_at": "2026-03-10T00:00:00+00:00",
+                    "session_version": "2",
                 },
             )
-            result[shop_text] = {"shop_id": shop_text, "bootstrap_failed": False}
+            result[shop_text] = {
+                "shop_id": shop_text,
+                "target_shop_id": shop_text,
+                "bootstrap_failed": False,
+                "bootstrap_verify_status": "passed",
+                "bootstrap_verify_actual_shop_id": shop_text,
+                "bootstrap_verify_error_code": "",
+            }
         return result
 
-    async def bootstrap_shop(self, *, runtime, shop_id):
+    async def bootstrap_shop(self, *, runtime, shop_id, verify_metric_date=None):
+        _ = verify_metric_date
         account_id = str(getattr(runtime, "account_id", "") or "").strip() or "acct-1"
         shop_text = str(shop_id)
         self.state_store.save_bundle(
@@ -129,11 +155,20 @@ class _FakeSessionBootstrapper:
                 "cookies": dict(getattr(runtime, "cookies", {}) or {}),
                 "common_query": dict(getattr(runtime, "common_query", {}) or {}),
                 "validated_shop_id": shop_text,
-                "validated_at": "2026-03-10T00:00:00+00:00",
-                "session_version": "1",
+                "verified_actual_shop_id": shop_text,
+                "verify_status": "passed",
+                "verified_at": "2026-03-10T00:00:00+00:00",
+                "session_version": "2",
             },
         )
-        return {"shop_id": shop_text, "bootstrap_failed": False}
+        return {
+            "shop_id": shop_text,
+            "target_shop_id": shop_text,
+            "bootstrap_failed": False,
+            "bootstrap_verify_status": "passed",
+            "bootstrap_verify_actual_shop_id": shop_text,
+            "bootstrap_verify_error_code": "",
+        }
 
 
 def _collect_success(
@@ -297,3 +332,39 @@ def test_sync_shop_dashboard_should_forward_queue_task_id_and_overrides(monkeypa
         "all": False,
         "extra_config": {"cursor": "c1"},
     }
+
+
+def test_sync_shop_dashboard_sets_recommended_mode_for_unsupported(monkeypatch):
+    monkeypatch.setattr(module.fct, "task_id", 123, raising=False)
+    monkeypatch.setattr(
+        module.sync_shop_dashboard,
+        "publisher",
+        SimpleNamespace(redis_db_frame=_FakeRedis()),
+        raising=False,
+    )
+
+    class _FakeUseCase:
+        def execute(self, **kwargs):
+            _ = kwargs
+            return {
+                "status": "success",
+                "items": [
+                    {
+                        "status": "failed",
+                        "reason": "account_shop_switch_unsupported",
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(
+        "src.application.collection.usecase.CollectionUseCase",
+        _FakeUseCase,
+    )
+
+    result = module.sync_shop_dashboard(
+        data_source_id=11,
+        rule_id=22,
+        execution_id="exec-forward",
+    )
+
+    assert result["recommended_collection_mode"] == "per_shop_account"

@@ -11,6 +11,7 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
     from src.tasks import worker as module
 
     calls = []
+    monkeypatch.setattr(module, "_wait_forever", lambda: None)
     monkeypatch.setattr(
         module.douyin_shop_dashboard.sync_shop_dashboard,
         "consume",
@@ -85,6 +86,38 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
         "etl_orders_dlx",
         "etl_products_dlx",
     } == set(calls)
+
+
+def test_worker_run_all_waits_for_non_blocking_consumers(monkeypatch):
+    from src.tasks import worker as module
+
+    calls = []
+
+    monkeypatch.setattr(
+        module,
+        "_queue_runners",
+        lambda _etl_processes: {
+            "collection_shop_dashboard": lambda: calls.append("consume_started")
+        },
+    )
+
+    class _FakeThread:
+        def __init__(self, target, name):
+            self._target = target
+            self.name = name
+
+        def start(self):
+            self._target()
+
+        def join(self):
+            return None
+
+    monkeypatch.setattr(module, "Thread", _FakeThread)
+    monkeypatch.setattr(module, "_wait_forever", lambda: calls.append("wait_forever"))
+
+    module.run_all(etl_processes=2)
+
+    assert calls == ["consume_started", "wait_forever"]
 
 
 def test_worker_run_queue_supports_dead_letter_queue(monkeypatch):

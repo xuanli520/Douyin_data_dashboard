@@ -50,14 +50,17 @@ def _queue_runners(etl_processes: int) -> dict[str, Callable[[], None]]:
 
 
 def run_all(etl_processes: int = 2) -> None:
+    runners = _queue_runners(etl_processes)
     threads = [
         Thread(target=runner, name=f"worker-{queue_name}")
-        for queue_name, runner in _queue_runners(etl_processes).items()
+        for queue_name, runner in runners.items()
     ]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join()
+    if any(queue_name in _NON_BLOCKING_CONSUME_QUEUES for queue_name in runners):
+        _wait_forever()
 
 
 def run_queue(queue_name: str, etl_processes: int = 2) -> None:

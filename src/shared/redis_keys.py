@@ -89,6 +89,20 @@ class _ExperienceCacheDateIndex:
         return f"{self.namespace}:{shop_id}:{metric_date}"
 
 
+class _ShopDashboardUnsupportedHttpShopSwitch:
+    namespace = "shop_dashboard:unsupported_http_shop_switch"
+
+    def __call__(self, account_id: str) -> str:
+        return f"{self.namespace}:account:{account_id}"
+
+
+class _ShopDashboardAccountSwitchObservation:
+    namespace = "shop_dashboard:account_switch_observation"
+
+    def __call__(self, account_id: str) -> str:
+        return f"{self.namespace}:account:{account_id}"
+
+
 class RedisKeyRegistry:
     """Registry for all Redis keys used in the application."""
 
@@ -102,6 +116,10 @@ class RedisKeyRegistry:
     experience_dashboard = _ExperienceDashboard()
     experience_issues = _ExperienceIssues()
     experience_cache_date_index = _ExperienceCacheDateIndex()
+    shop_dashboard_unsupported_http_shop_switch = (
+        _ShopDashboardUnsupportedHttpShopSwitch()
+    )
+    shop_dashboard_account_switch_observation = _ShopDashboardAccountSwitchObservation()
 
 
 redis_keys = RedisKeyRegistry()

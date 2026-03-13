@@ -23,9 +23,21 @@ def test_shop_dashboard_settings_defaults():
     assert settings.shop_dashboard.bootstrap_concurrency_limit == 2
     assert settings.shop_dashboard.bootstrap_failure_rate_degrade_threshold == 0.4
     assert settings.shop_dashboard.bootstrap_force_serial is False
+    assert settings.shop_dashboard.bootstrap_verify_timeout_seconds == 8.0
+    assert settings.shop_dashboard.bootstrap_verify_retry_limit == 1
+    assert settings.shop_dashboard.bootstrap_verify_strict is True
+    assert settings.shop_dashboard.bootstrap_bundle_session_version == "2"
     assert settings.shop_dashboard.shop_mismatch_failure_threshold == 3
+    assert settings.shop_dashboard.shop_mismatch_failure_threshold_degraded == 0
+    assert (
+        settings.shop_dashboard.shop_mismatch_failure_threshold_degraded_accounts == ""
+    )
     assert settings.shop_dashboard.shop_mismatch_failure_window_seconds == 21600
     assert settings.shop_dashboard.shop_mismatch_circuit_open_seconds == 21600
+    assert settings.shop_dashboard.account_switch_mismatch_threshold == 3
+    assert settings.shop_dashboard.account_switch_min_distinct_targets == 2
+    assert settings.shop_dashboard.account_switch_observation_ttl_seconds == 900
+    assert settings.shop_dashboard.unsupported_http_shop_switch_ttl_seconds == 900
     assert settings.shop_dashboard.llm_timeout_seconds == 120
 
 
@@ -43,9 +55,24 @@ def test_shop_dashboard_settings_env_override(monkeypatch):
         "0.3",
     )
     monkeypatch.setenv("SHOP_DASHBOARD__BOOTSTRAP_FORCE_SERIAL", "true")
+    monkeypatch.setenv("SHOP_DASHBOARD__BOOTSTRAP_VERIFY_TIMEOUT_SECONDS", "5.5")
+    monkeypatch.setenv("SHOP_DASHBOARD__BOOTSTRAP_VERIFY_RETRY_LIMIT", "3")
+    monkeypatch.setenv("SHOP_DASHBOARD__BOOTSTRAP_VERIFY_STRICT", "false")
+    monkeypatch.setenv("SHOP_DASHBOARD__BOOTSTRAP_BUNDLE_SESSION_VERSION", "9")
     monkeypatch.setenv("SHOP_DASHBOARD__SHOP_MISMATCH_FAILURE_THRESHOLD", "5")
+    monkeypatch.setenv("SHOP_DASHBOARD__SHOP_MISMATCH_FAILURE_THRESHOLD_DEGRADED", "2")
+    monkeypatch.setenv(
+        "SHOP_DASHBOARD__SHOP_MISMATCH_FAILURE_THRESHOLD_DEGRADED_ACCOUNTS",
+        "acct-1|acct-2",
+    )
     monkeypatch.setenv("SHOP_DASHBOARD__SHOP_MISMATCH_FAILURE_WINDOW_SECONDS", "100")
     monkeypatch.setenv("SHOP_DASHBOARD__SHOP_MISMATCH_CIRCUIT_OPEN_SECONDS", "120")
+    monkeypatch.setenv("SHOP_DASHBOARD__ACCOUNT_SWITCH_MISMATCH_THRESHOLD", "4")
+    monkeypatch.setenv("SHOP_DASHBOARD__ACCOUNT_SWITCH_MIN_DISTINCT_TARGETS", "3")
+    monkeypatch.setenv("SHOP_DASHBOARD__ACCOUNT_SWITCH_OBSERVATION_TTL_SECONDS", "180")
+    monkeypatch.setenv(
+        "SHOP_DASHBOARD__UNSUPPORTED_HTTP_SHOP_SWITCH_TTL_SECONDS", "600"
+    )
     monkeypatch.setenv("SHOP_DASHBOARD__LLM_TIMEOUT_SECONDS", "90")
 
     settings = get_settings()
@@ -60,9 +87,22 @@ def test_shop_dashboard_settings_env_override(monkeypatch):
     assert settings.shop_dashboard.bootstrap_concurrency_limit == 4
     assert settings.shop_dashboard.bootstrap_failure_rate_degrade_threshold == 0.3
     assert settings.shop_dashboard.bootstrap_force_serial is True
+    assert settings.shop_dashboard.bootstrap_verify_timeout_seconds == 5.5
+    assert settings.shop_dashboard.bootstrap_verify_retry_limit == 3
+    assert settings.shop_dashboard.bootstrap_verify_strict is False
+    assert settings.shop_dashboard.bootstrap_bundle_session_version == "9"
     assert settings.shop_dashboard.shop_mismatch_failure_threshold == 5
+    assert settings.shop_dashboard.shop_mismatch_failure_threshold_degraded == 2
+    assert (
+        settings.shop_dashboard.shop_mismatch_failure_threshold_degraded_accounts
+        == "acct-1|acct-2"
+    )
     assert settings.shop_dashboard.shop_mismatch_failure_window_seconds == 100
     assert settings.shop_dashboard.shop_mismatch_circuit_open_seconds == 120
+    assert settings.shop_dashboard.account_switch_mismatch_threshold == 4
+    assert settings.shop_dashboard.account_switch_min_distinct_targets == 3
+    assert settings.shop_dashboard.account_switch_observation_ttl_seconds == 180
+    assert settings.shop_dashboard.unsupported_http_shop_switch_ttl_seconds == 600
     assert settings.shop_dashboard.llm_timeout_seconds == 90
 
 

@@ -188,6 +188,7 @@ class CollectionRuntimeLoader:
             account_id=runtime.account_id,
             cookies=runtime.cookies,
             common_query=runtime.common_query,
+            extra_config=runtime.extra_config,
             force_refresh=False,
         )
         resolved_shop_ids = list(catalog_result.shop_ids)

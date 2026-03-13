@@ -22,8 +22,7 @@ from src.scrapers.shop_dashboard.parsers import (
 )
 from src.scrapers.shop_dashboard.exceptions import ShopDashboardScraperError
 from src.scrapers.shop_dashboard.query_builder import (
-    EndpointQueryContext,
-    build_endpoint_query_context,
+    build_endpoint_request_payload,
 )
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 
@@ -60,6 +59,7 @@ ENDPOINT_GROUP_ORDER: tuple[str, ...] = (
 )
 
 CORE_REQUIRED_GROUPS: frozenset[str] = frozenset({"overview", "analysis"})
+SHOP_CONTEXT_VERIFY_GROUPS: tuple[str, ...] = ("overview", "analysis")
 
 
 ENDPOINT_SPECS: dict[str, EndpointSpec] = {
@@ -242,42 +242,23 @@ class HttpScraper:
             if group_name not in groups:
                 continue
             spec = ENDPOINT_SPECS[group_name]
-            query_context = self._build_query_context(
-                runtime_config=runtime_config,
-                date=date,
+            request_payload = build_endpoint_request_payload(
+                runtime_config,
+                metric_date=date,
                 group_name=group_name,
+                base_params=spec.params,
+                base_json_body=spec.json_body,
+                requires_graphql_query=spec.requires_graphql_query,
+                graphql_query=graphql_query,
             )
-            json_body = (
-                {
-                    "operationName": "ExperienceScoreHome",
-                    "query": graphql_query,
-                    "variables": {"shopId": shop_id, "date": date},
-                }
-                if spec.requires_graphql_query and graphql_query
-                else dict(spec.json_body)
-                if spec.json_body is not None
-                else None
-            )
-            params = dict(spec.params) if spec.params is not None else {}
-            params.update(self._flatten_query_context_params(query_context.params))
-            if not params:
-                params = None
-            if spec.requires_graphql_query and json_body is not None:
-                variables = dict(json_body.get("variables") or {})
-                variables.update(query_context.graphql_variables)
-                json_body["variables"] = variables
-            elif query_context.json_body:
-                if json_body is None:
-                    json_body = {}
-                json_body.update(query_context.json_body)
-            for warning in query_context.warnings:
+            for warning in request_payload.warnings:
                 logger.warning(
                     "shop_dashboard unknown filter group=%s warning=%s shop_id=%s",
                     group_name,
                     warning,
                     shop_id,
                 )
-            if spec.requires_graphql_query and not graphql_query:
+            if spec.requires_graphql_query and request_payload.json_body is None:
                 continue
             try:
                 payloads[group_name] = self._request_json(
@@ -285,8 +266,8 @@ class HttpScraper:
                     spec.path,
                     shop_id,
                     date,
-                    params=params,
-                    json_body=json_body,
+                    params=request_payload.params,
+                    json_body=request_payload.json_body,
                     common_query=common_query,
                     cookie_mapping=cookie_mapping,
                     max_retries=max_retries,
@@ -316,8 +297,7 @@ class HttpScraper:
             "actual_shop_id": extract_actual_shop_id(
                 payloads["analysis"],
                 payloads["overview"],
-            )
-            or shop_id,
+            ),
             "metric_date": date,
             "source": source,
             **parse_core_scores(overview_payload),
@@ -717,42 +697,3 @@ class HttpScraper:
             if raw_message:
                 message = str(raw_message)
         return {"code": code, "message": message}
-
-    @staticmethod
-    def _build_query_context(
-        *,
-        runtime_config: ShopDashboardRuntimeConfig | None,
-        date: str,
-        group_name: str,
-    ) -> EndpointQueryContext:
-        if runtime_config is None:
-            return EndpointQueryContext(
-                params={},
-                json_body={},
-                graphql_variables={},
-            )
-        return build_endpoint_query_context(
-            runtime_config,
-            metric_date=date,
-            group_name=group_name,
-        )
-
-    @staticmethod
-    def _flatten_query_context_params(params: Mapping[str, Any]) -> dict[str, Any]:
-        flattened: dict[str, Any] = {}
-        for key, value in params.items():
-            if value is None:
-                continue
-            if key == "filters" and isinstance(value, Mapping):
-                for filter_key, filter_value in value.items():
-                    if filter_value is None:
-                        continue
-                    flattened[f"filter_{filter_key}"] = filter_value
-                continue
-            if key in {"dimensions", "metrics"} and isinstance(value, list):
-                flattened[key] = ",".join(
-                    str(item) for item in value if item is not None
-                )
-                continue
-            flattened[key] = value
-        return flattened

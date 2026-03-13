@@ -545,3 +545,38 @@ def test_pipeline_shop_id_fanout_for_rule_8_like_config(monkeypatch):
 
     assert result["shop_count"] == 13
     assert result["planned_units"] >= 13
+
+
+def test_pipeline_sets_recommended_collection_mode_for_account_unsupported(monkeypatch):
+    monkeypatch.setattr(
+        module.sync_shop_dashboard,
+        "publisher",
+        SimpleNamespace(redis_db_frame=_FakeRedis()),
+        raising=False,
+    )
+
+    class _FakeUseCase:
+        def execute(self, **kwargs):
+            _ = kwargs
+            return {
+                "status": "success",
+                "items": [
+                    {
+                        "status": "failed",
+                        "reason": "account_shop_switch_unsupported",
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(
+        "src.application.collection.usecase.CollectionUseCase",
+        _FakeUseCase,
+    )
+
+    result = module.sync_shop_dashboard(
+        data_source_id=1,
+        rule_id=2,
+        execution_id="exec-pipeline-route-unsupported",
+    )
+
+    assert result["recommended_collection_mode"] == "per_shop_account"

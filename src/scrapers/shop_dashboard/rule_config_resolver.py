@@ -338,9 +338,7 @@ def resolve_rule_config(
         pick("cookies", default={})
     )
 
-    default_account_id = f"rule_{rule_id}"
-    if shop_id:
-        default_account_id = f"shop_{shop_id}"
+    default_account_id = f"rule_{rule_id}" if rule_id > 0 else ""
     account_id = (
         _normalize_nullable_text(pick("account_id", default=""))
         or _normalize_nullable_text(login_state_meta.get("account_id"))

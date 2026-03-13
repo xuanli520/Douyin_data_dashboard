@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -10,6 +11,13 @@ class EndpointQueryContext:
     params: dict[str, Any]
     json_body: dict[str, Any]
     graphql_variables: dict[str, Any]
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class EndpointRequestPayload:
+    params: dict[str, Any] | None
+    json_body: dict[str, Any] | None
     warnings: tuple[str, ...] = ()
 
 
@@ -29,6 +37,7 @@ def build_endpoint_query_context(
     session_level = bool(getattr(config, "session_level", False))
     granularity = _resolve_text(getattr(config, "granularity", None)) or "DAY"
     shop_id = _resolve_shop_id(config, plan_unit)
+    filters = _force_target_shop_filter(filters=filters, shop_id=shop_id)
     resolved_metric_date = (
         metric_date
         or _resolve_text(getattr(plan_unit, "metric_date", None))
@@ -103,23 +112,91 @@ def build_endpoint_query_context(
     )
 
 
+def build_endpoint_request_payload(
+    config: Any,
+    *,
+    metric_date: str,
+    group_name: str,
+    base_params: Mapping[str, Any] | None = None,
+    base_json_body: Mapping[str, Any] | None = None,
+    requires_graphql_query: bool = False,
+    graphql_query: str | None = None,
+) -> EndpointRequestPayload:
+    query_context = build_endpoint_query_context(
+        config,
+        metric_date=metric_date,
+        group_name=group_name,
+    )
+    params = dict(base_params or {})
+    params.update(flatten_query_context_params(query_context.params))
+    resolved_params = params or None
+
+    resolved_json_body: dict[str, Any] | None
+    if requires_graphql_query:
+        if not graphql_query:
+            resolved_json_body = None
+        else:
+            resolved_json_body = {
+                "operationName": "ExperienceScoreHome",
+                "query": graphql_query,
+                "variables": dict(query_context.graphql_variables),
+            }
+    else:
+        resolved_json_body = dict(base_json_body or {}) if base_json_body else None
+        if query_context.json_body:
+            if resolved_json_body is None:
+                resolved_json_body = {}
+            resolved_json_body.update(query_context.json_body)
+    return EndpointRequestPayload(
+        params=resolved_params,
+        json_body=resolved_json_body,
+        warnings=query_context.warnings,
+    )
+
+
+def flatten_query_context_params(params: Mapping[str, Any]) -> dict[str, Any]:
+    flattened: dict[str, Any] = {}
+    for key, value in params.items():
+        if value is None:
+            continue
+        if key == "filters" and isinstance(value, Mapping):
+            for filter_key, filter_value in value.items():
+                if filter_value is None:
+                    continue
+                flattened[f"filter_{filter_key}"] = filter_value
+            continue
+        if key in {"dimensions", "metrics"} and isinstance(value, list):
+            flattened[key] = ",".join(str(item) for item in value if item is not None)
+            continue
+        flattened[key] = value
+    return flattened
+
+
 def _resolve_filters(config: Any, plan_unit: Any | None) -> dict[str, Any]:
     effective_filters = _resolve_effective_filters(config=config, plan_unit=plan_unit)
     if effective_filters:
         filters: dict[str, Any] = {}
         extra_filters = effective_filters.get("extra_filters")
         if isinstance(extra_filters, dict):
-            filters.update(
-                {str(k): v for k, v in extra_filters.items() if k is not None}
-            )
+            for key, value in extra_filters.items():
+                resolved_key = _resolve_filter_key(key)
+                if resolved_key is None:
+                    continue
+                filters[resolved_key] = value
         date_range = effective_filters.get("date_range")
         if isinstance(date_range, dict):
             filters["date_range"] = dict(date_range)
-        return filters
+        return _strip_internal_filters(filters)
     raw_filters = getattr(config, "filters", None)
     if not isinstance(raw_filters, dict):
         return {}
-    return {str(k): v for k, v in raw_filters.items() if k is not None}
+    normalized_filters: dict[str, Any] = {}
+    for key, value in raw_filters.items():
+        resolved_key = _resolve_filter_key(key)
+        if resolved_key is None:
+            continue
+        normalized_filters[resolved_key] = value
+    return _strip_internal_filters(normalized_filters)
 
 
 def _resolve_shop_id(config: Any, plan_unit: Any | None) -> str:
@@ -177,10 +254,60 @@ def _resolve_unknown_filter_keys(filters: dict[str, Any]) -> list[str]:
         "keyword",
         "status",
         "source",
+        "all",
+        "catalog_stale",
+        "shop_resolve_source",
     }
-    unknown = [key for key in filters if key not in known_filter_keys]
+    unknown: list[str] = []
+    for key in filters:
+        normalized_key = _normalized_filter_key_for_matching(key)
+        if normalized_key in known_filter_keys:
+            continue
+        unknown.append(str(key))
     unknown.sort()
     return unknown
+
+
+def _strip_internal_filters(filters: dict[str, Any]) -> dict[str, Any]:
+    internal_filter_keys = {"all", "catalog_stale", "shop_resolve_source"}
+    sanitized: dict[str, Any] = {}
+    for key, value in filters.items():
+        normalized_key = _normalized_filter_key_for_matching(key)
+        if normalized_key in internal_filter_keys:
+            continue
+        sanitized[str(key)] = value
+    return sanitized
+
+
+def _resolve_filter_key(value: Any) -> str | None:
+    text = _resolve_text(value)
+    if not text:
+        return None
+    if text.lower().startswith("filter_"):
+        stripped = text[7:].strip()
+        if stripped:
+            return stripped
+    return text
+
+
+def _normalized_filter_key_for_matching(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text.startswith("filter_"):
+        text = text[7:].strip()
+    return text
+
+
+def _force_target_shop_filter(
+    *,
+    filters: dict[str, Any],
+    shop_id: str,
+) -> dict[str, Any]:
+    normalized_shop_id = str(shop_id or "").strip()
+    if not normalized_shop_id:
+        return dict(filters)
+    forced = dict(filters)
+    forced["shop_id"] = normalized_shop_id
+    return forced
 
 
 def _resolve_effective_filters(config: Any, plan_unit: Any | None) -> dict[str, Any]:
