@@ -161,7 +161,7 @@ def sync_shop_dashboard(
     from src.application.collection.usecase import CollectionUseCase
 
     usecase = CollectionUseCase()
-    return usecase.execute(
+    result = usecase.execute(
         data_source_id=data_source_id,
         rule_id=rule_id,
         execution_id=execution_id,
@@ -170,6 +170,17 @@ def sync_shop_dashboard(
         overrides=runtime_overrides,
         redis_client=redis_client,
     )
+    items = result.get("items")
+    unsupported = False
+    if isinstance(items, list):
+        unsupported = any(
+            isinstance(item, Mapping)
+            and str(item.get("reason", "")).strip() == "account_shop_switch_unsupported"
+            for item in items
+        )
+    if unsupported:
+        result["recommended_collection_mode"] = "per_shop_account"
+    return result
 
 
 @boost(
@@ -196,7 +207,11 @@ def _materialize_runtime_storage_state(
 
     account_id = str(getattr(runtime, "account_id", "") or "").strip()
     if not account_id:
-        account_id = f"shop_{runtime.shop_id}"
+        rule_id = int(getattr(runtime, "rule_id", 0) or 0)
+        if rule_id > 0:
+            account_id = f"rule_{rule_id}"
+        else:
+            account_id = f"shop_{runtime.shop_id}"
 
     state_store.save(account_id, storage_state)
     cookies = state_store.load_cookie_mapping(account_id)
@@ -271,7 +286,14 @@ def _collect_one_day(
         state_store=state_store
     )
     explicit_account_id = str(getattr(runtime, "account_id", "") or "").strip()
-    account_id = explicit_account_id or f"shop_{runtime.shop_id}"
+    if explicit_account_id:
+        account_id = explicit_account_id
+    else:
+        rule_id = int(getattr(runtime, "rule_id", 0) or 0)
+        if rule_id > 0:
+            account_id = f"rule_{rule_id}"
+        else:
+            account_id = f"shop_{runtime.shop_id}"
     shop_lock_id = _resolve_shop_lock_id(runtime.shop_id, account_id)
     last_error: Exception | None = None
     http_error: Exception | None = None

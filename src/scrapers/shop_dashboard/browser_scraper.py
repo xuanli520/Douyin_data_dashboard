@@ -140,6 +140,10 @@ class BrowserScraper:
         browser, context = None, None
         account_id = self._resolve_account_id(runtime_config)
         storage_state = self._state_store.load(account_id)
+        storage_state = self._merge_runtime_cookies_into_storage_state(
+            storage_state,
+            runtime_config=runtime_config,
+        )
 
         try:
             async with async_playwright() as playwright:
@@ -202,6 +206,46 @@ class BrowserScraper:
             context_kwargs["storage_state"] = storage_state
         return context_kwargs
 
+    def _merge_runtime_cookies_into_storage_state(
+        self,
+        storage_state: dict[str, Any] | None,
+        *,
+        runtime_config: ShopDashboardRuntimeConfig,
+    ) -> dict[str, Any] | None:
+        runtime_cookie_mapping = {
+            str(key): str(value)
+            for key, value in dict(runtime_config.cookies or {}).items()
+            if str(key or "").strip() and str(value or "").strip()
+        }
+        if not runtime_cookie_mapping:
+            return storage_state
+
+        merged_state: dict[str, Any] = dict(storage_state or {})
+        raw_cookies = merged_state.get("cookies")
+        existing_cookies = raw_cookies if isinstance(raw_cookies, list) else []
+        merged_cookies: list[dict[str, Any]] = []
+        applied_cookie_names: set[str] = set()
+        for item in existing_cookies:
+            if not isinstance(item, dict):
+                continue
+            normalized = dict(item)
+            name = str(normalized.get("name") or "").strip()
+            if not name:
+                continue
+            if name in runtime_cookie_mapping:
+                normalized["value"] = runtime_cookie_mapping[name]
+                applied_cookie_names.add(name)
+            merged_cookies.append(normalized)
+        for cookie_record in self._runtime_cookie_records(runtime_config):
+            name = str(cookie_record.get("name") or "").strip()
+            if not name or name in applied_cookie_names:
+                continue
+            merged_cookies.append(dict(cookie_record))
+        merged_state["cookies"] = merged_cookies
+        if not isinstance(merged_state.get("origins"), list):
+            merged_state["origins"] = []
+        return merged_state
+
     async def _create_page(
         self, context, runtime_config: ShopDashboardRuntimeConfig, date: str | None
     ) -> Any:
@@ -248,6 +292,10 @@ class BrowserScraper:
         parsed = urlparse(base)
         query = dict(parse_qsl(parsed.query, keep_blank_values=True))
         query.update({str(k): str(v) for k, v in runtime_config.common_query.items()})
+        target_shop_id = str(getattr(runtime_config, "shop_id", "") or "").strip()
+        if target_shop_id:
+            query["shop_id"] = target_shop_id
+            query["subject_id"] = target_shop_id
         if date:
             query["date"] = date
         return parsed._replace(query=urlencode(query)).geturl()
@@ -266,4 +314,12 @@ class BrowserScraper:
     @staticmethod
     def _resolve_account_id(runtime_config: ShopDashboardRuntimeConfig) -> str:
         account_id = str(getattr(runtime_config, "account_id", "") or "").strip()
-        return account_id if account_id else f"shop_{runtime_config.shop_id}"
+        if account_id:
+            return account_id
+        rule_id = int(getattr(runtime_config, "rule_id", 0) or 0)
+        if rule_id > 0:
+            return f"rule_{rule_id}"
+        shop_id = str(getattr(runtime_config, "shop_id", "") or "").strip()
+        if shop_id:
+            return f"shop_{shop_id}"
+        return "shop_anonymous"

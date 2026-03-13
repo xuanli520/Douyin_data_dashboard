@@ -164,11 +164,25 @@ class SessionStateStore:
             str(bundle.get("validated_shop_id") or "").strip() or str(shop_id).strip()
         )
         validated_at = str(bundle.get("validated_at") or "").strip()
+        verified_actual_shop_id = (
+            str(bundle.get("verified_actual_shop_id") or "").strip()
+            or str(bundle.get("active_shop_id") or "").strip()
+            or validated_shop_id
+        )
+        verify_status = str(bundle.get("verify_status") or "").strip() or "unknown"
+        verified_at = (
+            str(bundle.get("verified_at") or "").strip()
+            or validated_at
+            or str(bundle.get("validated_at") or "").strip()
+        )
         session_version = str(bundle.get("session_version") or "").strip() or "1"
         return {
             "cookies": normalized_cookies,
             "common_query": normalized_common_query,
             "validated_shop_id": validated_shop_id,
             "validated_at": validated_at,
+            "verified_actual_shop_id": verified_actual_shop_id,
+            "verify_status": verify_status,
+            "verified_at": verified_at,
             "session_version": session_version,
         }

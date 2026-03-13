@@ -27,6 +27,16 @@ class ShopDashboardSettings(BaseSettings):
     bootstrap_concurrency_limit: int = 2
     bootstrap_failure_rate_degrade_threshold: float = 0.4
     bootstrap_force_serial: bool = False
+    bootstrap_verify_timeout_seconds: float = 8.0
+    bootstrap_verify_retry_limit: int = 1
+    bootstrap_verify_strict: bool = True
+    bootstrap_bundle_session_version: str = "2"
     shop_mismatch_failure_threshold: int = 3
+    shop_mismatch_failure_threshold_degraded: int = 0
+    shop_mismatch_failure_threshold_degraded_accounts: str = ""
     shop_mismatch_failure_window_seconds: int = 21600
     shop_mismatch_circuit_open_seconds: int = 21600
+    account_switch_mismatch_threshold: int = 3
+    account_switch_min_distinct_targets: int = 2
+    account_switch_observation_ttl_seconds: int = 900
+    unsupported_http_shop_switch_ttl_seconds: int = 900

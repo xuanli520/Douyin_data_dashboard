@@ -61,6 +61,26 @@ def test_task_status_hook_writes_fields_and_ttl():
     assert expire_ttl == get_settings().funboost.status_ttl_seconds
 
 
+def test_write_finished_task_status_ignores_interpreter_shutdown(monkeypatch):
+    owner = SimpleNamespace(publisher=SimpleNamespace(redis_db_frame=FakeRedis()))
+
+    def _raise_shutdown(_coro):
+        raise RuntimeError("cannot schedule new futures after interpreter shutdown")
+
+    monkeypatch.setattr(session_module, "run_coro", _raise_shutdown)
+
+    write_finished_task_status(
+        owner=owner,
+        task_id="queue-status-shutdown",
+        task_name="process_orders",
+        success=False,
+        completed_at=1730000000.0,
+        triggered_by=7,
+        processed_rows=0,
+        error_message="boom",
+    )
+
+
 async def test_status_store_syncs_execution_record_fields(test_db):
     original_factory = session_module.async_session_factory
     session_module.async_session_factory = test_db

@@ -81,6 +81,7 @@ class AccountShopCatalogService:
         account_id: str,
         cookies: Mapping[str, str] | None,
         common_query: Mapping[str, Any] | None = None,
+        extra_config: Mapping[str, Any] | None = None,
         force_refresh: bool = False,
         refresh_login_callback: Callable[[str], Awaitable[bool] | bool] | None = None,
     ) -> AccountShopCatalogResult:
@@ -119,7 +120,7 @@ class AccountShopCatalogService:
                 account_id=normalized_account_id,
                 cookies=cookies,
                 common_query=common_query,
-                extra_config=None,
+                extra_config=extra_config,
                 refresh_login_callback=refresh_login_callback,
             )
             shop_ids = _normalize_shop_ids(shop_ids)
@@ -147,7 +148,7 @@ class AccountShopCatalogService:
                 account_id=normalized_account_id,
                 cookies=cookies,
                 common_query=common_query,
-                extra_config=None,
+                extra_config=extra_config,
                 refresh_login_callback=refresh_login_callback,
             )
             shop_ids = _normalize_shop_ids(shop_ids)

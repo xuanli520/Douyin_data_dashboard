@@ -53,6 +53,20 @@ class _ShopDashboardShopMismatchCircuit:
         return f"{self.namespace}:account:{account_id}:shop:{shop_id}"
 
 
+class _ShopDashboardUnsupportedHttpShopSwitch:
+    namespace = "shop_dashboard:unsupported_http_shop_switch"
+
+    def __call__(self, account_id: str) -> str:
+        return f"{self.namespace}:account:{account_id}"
+
+
+class _ShopDashboardAccountSwitchObservation:
+    namespace = "shop_dashboard:account_switch_observation"
+
+    def __call__(self, account_id: str) -> str:
+        return f"{self.namespace}:account:{account_id}"
+
+
 class RedisKeyRegistry:
     """Registry for all Redis keys used in the application."""
 
@@ -62,6 +76,10 @@ class RedisKeyRegistry:
     shop_dashboard_shop_catalog_refresh_lock = _ShopDashboardShopCatalogRefreshLock()
     shop_dashboard_shop_mismatch_fail_count = _ShopDashboardShopMismatchFailCount()
     shop_dashboard_shop_mismatch_circuit = _ShopDashboardShopMismatchCircuit()
+    shop_dashboard_unsupported_http_shop_switch = (
+        _ShopDashboardUnsupportedHttpShopSwitch()
+    )
+    shop_dashboard_account_switch_observation = _ShopDashboardAccountSwitchObservation()
 
 
 redis_keys = RedisKeyRegistry()

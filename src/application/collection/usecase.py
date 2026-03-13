@@ -14,6 +14,9 @@ from src.application.collection.plan_builder import CollectionPlanBuilder
 from src.application.collection.result_persister import CollectionResultPersister
 from src.application.collection.runtime_loader import CollectionRuntimeLoader
 from src.application.collection.runtime_loader import LoadedCollectionRuntime
+from src.application.collection.shop_switch_capability import (
+    ShopSwitchCapabilityService,
+)
 from src.cache import resolve_sync_redis_client
 from src.config import get_settings
 from src.domains.task.exceptions import ScrapingFailedException
@@ -27,6 +30,8 @@ from src.domains.task.enums import TaskTriggerMode
 from src.domains.task.enums import TaskType
 from src.domains.task.repository import TaskDefinitionRepository
 from src.domains.task.repository import TaskExecutionRepository
+from src.middleware.monitor import observe_shop_dashboard_account_switch_unsupported
+from src.middleware.monitor import observe_shop_dashboard_bootstrap_verify_failed
 from src.middleware.monitor import observe_shop_dashboard_collection
 from src.scrapers.shop_dashboard.browser_scraper import BrowserScraper
 from src.scrapers.shop_dashboard.exceptions import DataIncompleteError
@@ -132,6 +137,7 @@ class CollectionUseCase:
                 redis_client=redis_client,
                 session_factory=session_factory,
             )
+            self._raise_when_all_units_failed(result)
             await self._mark_success(
                 execution_id=execution.id if execution.id is not None else 0,
                 processed_rows=len(result["items"]),
@@ -424,23 +430,76 @@ class CollectionUseCase:
         requested_shop_ids = list(runtime.resolved_shop_ids)
         if not requested_shop_ids:
             requested_shop_ids = list({plan_unit.shop_id for plan_unit in plan_units})
-        bootstrap_results = await bootstrapper.bootstrap_shops(
+        verify_metric_date_by_shop: dict[str, str] = {}
+        for plan_unit in plan_units:
+            if plan_unit.shop_id in verify_metric_date_by_shop:
+                continue
+            verify_metric_date_by_shop[plan_unit.shop_id] = plan_unit.metric_date
+        bootstrap_results = await self._bootstrap_shops(
+            bootstrapper=bootstrapper,
             runtime=runtime,
             shop_ids=requested_shop_ids,
+            verify_metric_date_by_shop=verify_metric_date_by_shop,
         )
+        capability_service = ShopSwitchCapabilityService(redis_client=resolved_redis)
         bootstrap_rebuild_count = 0
+        bootstrap_verify_failed_count = 0
         shop_mismatch_count = 0
         shop_circuit_break_count = 0
+        account_switch_unsupported_count = 0
 
         for plan_unit in plan_units:
             rate_limiter.wait()
             unit_runtime = runtimes_by_shop[plan_unit.shop_id]
-            account_id = str(unit_runtime.account_id or "").strip() or (
-                f"shop_{plan_unit.shop_id}"
+            storage_account_id = self._resolve_storage_account_id(
+                runtime=unit_runtime,
+                shop_id=plan_unit.shop_id,
             )
+            capability_account_id = capability_service.resolve_capability_account_id(
+                str(unit_runtime.account_id or "").strip()
+            )
+            account_id_status = (
+                "stable" if capability_account_id else "account_id_unstable"
+            )
+            if (
+                capability_account_id
+                and capability_service.is_unsupported_http_shop_switch(
+                    capability_account_id
+                )
+            ):
+                account_switch_unsupported_count += 1
+                observe_shop_dashboard_account_switch_unsupported()
+                unsupported_item = {
+                    "status": "failed",
+                    "reason": "account_shop_switch_unsupported",
+                    "metric_date": plan_unit.metric_date,
+                    "shop_id": unit_runtime.shop_id,
+                    "target_shop_id": plan_unit.shop_id,
+                    "actual_shop_id": None,
+                    "mismatch_status": "unsupported",
+                    "rule_id": unit_runtime.rule_id,
+                    "execution_id": unit_runtime.execution_id,
+                    "retry_count": 0,
+                    "fallback_trace": [],
+                    "error_code": "account_shop_switch_unsupported",
+                    "recommended_collection_mode": "per_shop_account",
+                    "account_id": capability_account_id,
+                    "account_id_status": account_id_status,
+                }
+                items.append(unsupported_item)
+                observe_shop_dashboard_collection(
+                    source="capability",
+                    status="failed",
+                    duration_seconds=0.0,
+                    shop_mode=runtime.shop_mode,
+                    shop_resolve_source=runtime.shop_resolve_source,
+                    bootstrap_status="skipped",
+                    circuit_break_status="closed",
+                )
+                continue
             if self._is_shop_circuit_open(
                 redis_client=resolved_redis,
-                account_id=account_id,
+                account_id=storage_account_id,
                 shop_id=plan_unit.shop_id,
             ):
                 shop_circuit_break_count += 1
@@ -456,6 +515,7 @@ class CollectionUseCase:
                     "execution_id": unit_runtime.execution_id,
                     "retry_count": 0,
                     "fallback_trace": [],
+                    "account_id_status": account_id_status,
                 }
                 items.append(circuit_item)
                 observe_shop_dashboard_collection(
@@ -468,15 +528,17 @@ class CollectionUseCase:
                     circuit_break_status="open",
                 )
                 continue
-            bundle = state_store.load_bundle(account_id, plan_unit.shop_id)
+            bundle = state_store.load_bundle(storage_account_id, plan_unit.shop_id)
             if not bundle:
-                bootstrap_result = await bootstrapper.bootstrap_shop(
+                bootstrap_result = await self._bootstrap_shop(
+                    bootstrapper=bootstrapper,
                     runtime=unit_runtime,
                     shop_id=plan_unit.shop_id,
+                    verify_metric_date=plan_unit.metric_date,
                 )
                 bootstrap_results[plan_unit.shop_id] = bootstrap_result
                 bootstrap_rebuild_count += 1
-                bundle = state_store.load_bundle(account_id, plan_unit.shop_id)
+                bundle = state_store.load_bundle(storage_account_id, plan_unit.shop_id)
             if bundle:
                 bundle_cookies = bundle.get("cookies")
                 bundle_common_query = bundle.get("common_query")
@@ -493,16 +555,79 @@ class CollectionUseCase:
             if isinstance(bootstrap_result, dict) and bool(
                 bootstrap_result.get("bootstrap_failed")
             ):
+                bootstrap_error_code = str(
+                    bootstrap_result.get("error_code") or "verify_request_failed"
+                ).strip()
+                bootstrap_error = str(bootstrap_result.get("error") or "").strip()
+                bootstrap_verify_failed_count += 1
+                observe_shop_dashboard_bootstrap_verify_failed(
+                    error_code=bootstrap_error_code
+                )
+                mismatch_state: dict[str, Any] | None = None
+                actual_shop_id = str(
+                    bootstrap_result.get("actual_shop_id")
+                    or bootstrap_result.get("bootstrap_verify_actual_shop_id")
+                    or ""
+                ).strip()
+                if bootstrap_error_code == "verify_shop_mismatch":
+                    shop_mismatch_count += 1
+                    mismatch_state = self._record_shop_mismatch_failure(
+                        redis_client=resolved_redis,
+                        account_id=storage_account_id,
+                        shop_id=plan_unit.shop_id,
+                    )
+                    if bool(mismatch_state.get("circuit_open")):
+                        shop_circuit_break_count += 1
+                    if capability_account_id and actual_shop_id:
+                        capability_evidence = (
+                            capability_service.record_mismatch_evidence(
+                                account_id=capability_account_id,
+                                target_shop_id=plan_unit.shop_id,
+                                actual_shop_id=actual_shop_id,
+                            )
+                        )
+                        if bool(capability_evidence.get("unsupported")):
+                            account_switch_unsupported_count += 1
+                            observe_shop_dashboard_account_switch_unsupported()
                 failed_item = {
                     "status": "failed",
-                    "reason": "bootstrap_failed",
+                    "reason": "bootstrap_verify_failed",
                     "metric_date": plan_unit.metric_date,
                     "shop_id": unit_runtime.shop_id,
+                    "target_shop_id": plan_unit.shop_id,
+                    "actual_shop_id": actual_shop_id or None,
+                    "mismatch_status": (
+                        "mismatched"
+                        if bootstrap_error_code == "verify_shop_mismatch"
+                        else "unknown"
+                    ),
                     "rule_id": unit_runtime.rule_id,
                     "execution_id": unit_runtime.execution_id,
                     "retry_count": 0,
                     "fallback_trace": [],
+                    "error_code": bootstrap_error_code,
+                    "bootstrap_choose_status": str(
+                        bootstrap_result.get("bootstrap_choose_status") or "unknown"
+                    ),
+                    "bootstrap_verify_status": str(
+                        bootstrap_result.get("bootstrap_verify_status") or "failed"
+                    ),
+                    "bootstrap_verify_actual_shop_id": str(
+                        bootstrap_result.get("bootstrap_verify_actual_shop_id") or ""
+                    ),
+                    "bootstrap_verify_error_code": str(
+                        bootstrap_result.get("bootstrap_verify_error_code")
+                        or bootstrap_error_code
+                    ),
+                    "account_id_status": account_id_status,
                 }
+                if mismatch_state is not None:
+                    failed_item["error_data"] = {
+                        "mismatch_fail_count": mismatch_state.get("count", 0),
+                        "circuit_open": bool(mismatch_state.get("circuit_open", False)),
+                    }
+                if bootstrap_error:
+                    failed_item["error"] = bootstrap_error
                 items.append(failed_item)
                 observe_shop_dashboard_collection(
                     source="bootstrap",
@@ -511,7 +636,13 @@ class CollectionUseCase:
                     shop_mode=runtime.shop_mode,
                     shop_resolve_source=runtime.shop_resolve_source,
                     bootstrap_status="failed",
-                    circuit_break_status="closed",
+                    circuit_break_status=(
+                        "open"
+                        if bool(
+                            mismatch_state and mismatch_state.get("circuit_open", False)
+                        )
+                        else "closed"
+                    ),
                 )
                 continue
             business_key = build_business_key(
@@ -521,6 +652,8 @@ class CollectionUseCase:
             )
             cached = helper.get_cached_result(business_key)
             if cached:
+                if isinstance(cached, dict) and "account_id_status" not in cached:
+                    cached["account_id_status"] = account_id_status
                 items.append(cached)
                 observe_shop_dashboard_collection(
                     source=str(cached.get("source", "cache")),
@@ -547,6 +680,7 @@ class CollectionUseCase:
                     "execution_id": unit_runtime.execution_id,
                     "retry_count": 0,
                     "fallback_trace": [],
+                    "account_id_status": account_id_status,
                 }
                 items.append(skipped_result)
                 observe_shop_dashboard_collection(
@@ -584,15 +718,20 @@ class CollectionUseCase:
                 )
                 if mismatch_status == "mismatched":
                     shop_mismatch_count += 1
-                    state_store.invalidate_bundle(account_id, target_shop_id)
-                    bootstrap_retry = await bootstrapper.bootstrap_shop(
+                    state_store.invalidate_bundle(storage_account_id, target_shop_id)
+                    bootstrap_retry = await self._bootstrap_shop(
+                        bootstrapper=bootstrapper,
                         runtime=unit_runtime,
                         shop_id=target_shop_id,
+                        verify_metric_date=plan_unit.metric_date,
                     )
                     bootstrap_rebuild_count += 1
                     bootstrap_results[target_shop_id] = bootstrap_retry
                     if not bool(bootstrap_retry.get("bootstrap_failed")):
-                        bundle = state_store.load_bundle(account_id, target_shop_id)
+                        bundle = state_store.load_bundle(
+                            storage_account_id,
+                            target_shop_id,
+                        )
                         if bundle:
                             bundle_cookies = bundle.get("cookies")
                             bundle_common_query = bundle.get("common_query")
@@ -634,12 +773,24 @@ class CollectionUseCase:
                 collected["effective_filters_snapshot"] = dict(
                     plan_unit.effective_filters
                 )
+                collected["account_id_status"] = account_id_status
                 if mismatch_status == "mismatched":
                     mismatch_state = self._record_shop_mismatch_failure(
                         redis_client=resolved_redis,
-                        account_id=account_id,
+                        account_id=storage_account_id,
                         shop_id=target_shop_id,
                     )
+                    if capability_account_id:
+                        capability_evidence = (
+                            capability_service.record_mismatch_evidence(
+                                account_id=capability_account_id,
+                                target_shop_id=target_shop_id,
+                                actual_shop_id=actual_shop_id,
+                            )
+                        )
+                        if bool(capability_evidence.get("unsupported")):
+                            account_switch_unsupported_count += 1
+                            observe_shop_dashboard_account_switch_unsupported()
                     if bool(mismatch_state.get("circuit_open")):
                         shop_circuit_break_count += 1
                     mismatch_result = {
@@ -656,6 +807,7 @@ class CollectionUseCase:
                         "execution_id": unit_runtime.execution_id,
                         "retry_count": int(collected.get("retry_count", 0)),
                         "fallback_trace": list(collected.get("fallback_trace", [])),
+                        "account_id_status": account_id_status,
                         "error_data": {
                             "mismatch_fail_count": mismatch_state.get("count", 0),
                             "circuit_open": bool(
@@ -683,9 +835,11 @@ class CollectionUseCase:
                     continue
                 self._clear_shop_mismatch_failure(
                     redis_client=resolved_redis,
-                    account_id=account_id,
+                    account_id=storage_account_id,
                     shop_id=target_shop_id,
                 )
+                if capability_account_id:
+                    capability_service.clear_observation(capability_account_id)
                 async with session_factory() as persist_session:
                     await self.result_persister.persist(
                         session=persist_session,
@@ -729,8 +883,10 @@ class CollectionUseCase:
             "requested_shop_count": len(requested_shop_ids),
             "resolved_shop_count": len({plan_unit.shop_id for plan_unit in plan_units}),
             "bootstrap_rebuild_count": bootstrap_rebuild_count,
+            "bootstrap_verify_failed_count": bootstrap_verify_failed_count,
             "shop_mismatch_count": shop_mismatch_count,
             "shop_circuit_break_count": shop_circuit_break_count,
+            "account_switch_unsupported_count": account_switch_unsupported_count,
             "catalog_stale": bool(runtime.catalog_stale),
             "shop_count": len({plan_unit.shop_id for plan_unit in plan_units}),
             "planned_units": len(plan_units),
@@ -742,6 +898,63 @@ class CollectionUseCase:
             ),
             "items": items,
         }
+
+    def _raise_when_all_units_failed(self, result: dict[str, Any]) -> None:
+        planned_units = int(result.get("planned_units", 0) or 0)
+        completed_units = int(result.get("completed_units", 0) or 0)
+        failed_units = int(result.get("failed_units", 0) or 0)
+        if planned_units <= 0:
+            return
+        if completed_units > 0:
+            return
+        if failed_units <= 0:
+            return
+
+        items = result.get("items")
+        failed_items = [
+            item
+            for item in (items if isinstance(items, list) else [])
+            if isinstance(item, dict)
+            and str(item.get("status", "success")).lower() != "success"
+        ]
+        failure_reasons = [
+            str(item.get("reason") or "").strip()
+            for item in failed_items
+            if str(item.get("reason") or "").strip()
+        ]
+        if (
+            failed_items
+            and len(failure_reasons) == len(failed_items)
+            and all(
+                reason == "account_shop_switch_unsupported"
+                for reason in failure_reasons
+            )
+        ):
+            result["recommended_collection_mode"] = "per_shop_account"
+            return
+        primary_error = ""
+        for item in failed_items:
+            reason = str(item.get("reason") or "").strip()
+            error = str(item.get("error") or "").strip()
+            if error:
+                primary_error = f"{reason}: {error}" if reason else error
+                break
+            if reason:
+                primary_error = reason
+        message = "Collection failed: all planned units failed"
+        if primary_error:
+            message = f"{message}; {primary_error}"
+
+        raise ScrapingFailedException(
+            message,
+            error_data={
+                "planned_units": planned_units,
+                "completed_units": completed_units,
+                "failed_units": failed_units,
+                "failure_reasons": failure_reasons,
+                "primary_error": primary_error,
+            },
+        )
 
     def _collect_one_unit_payload(
         self,
@@ -784,6 +997,23 @@ class CollectionUseCase:
             return candidate
         return str(fallback_shop_id or "").strip()
 
+    def _resolve_storage_account_id(
+        self,
+        *,
+        runtime: ShopDashboardRuntimeConfig,
+        shop_id: str,
+    ) -> str:
+        account_id = str(getattr(runtime, "account_id", "") or "").strip()
+        if account_id:
+            return account_id
+        rule_id = int(getattr(runtime, "rule_id", 0) or 0)
+        if rule_id > 0:
+            return f"rule_{rule_id}"
+        normalized_shop_id = str(shop_id or "").strip()
+        if normalized_shop_id:
+            return f"shop_{normalized_shop_id}"
+        return "shop_anonymous"
+
     def _is_shop_circuit_open(
         self,
         *,
@@ -818,7 +1048,7 @@ class CollectionUseCase:
             shop_id=shop_id,
         )
         window_seconds = max(int(settings.shop_mismatch_failure_window_seconds), 1)
-        threshold = max(int(settings.shop_mismatch_failure_threshold), 1)
+        threshold = max(self._resolve_shop_mismatch_threshold(account_id), 1)
         circuit_open_seconds = max(int(settings.shop_mismatch_circuit_open_seconds), 1)
         count = 0
         redis_incr = getattr(redis_client, "incr", None)
@@ -879,6 +1109,91 @@ class CollectionUseCase:
         if callable(redis_set):
             redis_set(fail_count_key, "0", ex=1)
             redis_set(circuit_key, "0", ex=1)
+
+    def _resolve_shop_mismatch_threshold(self, account_id: str) -> int:
+        settings = get_settings().shop_dashboard
+        default_threshold = max(int(settings.shop_mismatch_failure_threshold), 1)
+        degraded_threshold = int(settings.shop_mismatch_failure_threshold_degraded or 0)
+        if degraded_threshold <= 0:
+            return default_threshold
+        configured_accounts = str(
+            settings.shop_mismatch_failure_threshold_degraded_accounts or ""
+        )
+        candidates = {
+            item.strip()
+            for chunk in configured_accounts.split(",")
+            for item in chunk.split("|")
+            if item.strip()
+        }
+        if not candidates:
+            return max(degraded_threshold, 1)
+        if str(account_id or "").strip() in candidates:
+            return max(degraded_threshold, 1)
+        return default_threshold
+
+    async def _bootstrap_shops(
+        self,
+        *,
+        bootstrapper: Any,
+        runtime: ShopDashboardRuntimeConfig,
+        shop_ids: list[str],
+        verify_metric_date_by_shop: Mapping[str, str],
+    ) -> dict[str, dict[str, Any]]:
+        bootstrap_shops = getattr(bootstrapper, "bootstrap_shops")
+        kwargs: dict[str, Any] = {
+            "runtime": runtime,
+            "shop_ids": shop_ids,
+        }
+        if self._supports_keyword_argument(
+            bootstrap_shops,
+            "verify_metric_date_by_shop",
+        ):
+            kwargs["verify_metric_date_by_shop"] = dict(verify_metric_date_by_shop)
+        result = bootstrap_shops(**kwargs)
+        if inspect.isawaitable(result):
+            result = await result
+        if isinstance(result, dict):
+            return result
+        return {}
+
+    async def _bootstrap_shop(
+        self,
+        *,
+        bootstrapper: Any,
+        runtime: ShopDashboardRuntimeConfig,
+        shop_id: str,
+        verify_metric_date: str,
+    ) -> dict[str, Any]:
+        bootstrap_shop = getattr(bootstrapper, "bootstrap_shop")
+        kwargs: dict[str, Any] = {
+            "runtime": runtime,
+            "shop_id": shop_id,
+        }
+        if self._supports_keyword_argument(bootstrap_shop, "verify_metric_date"):
+            kwargs["verify_metric_date"] = verify_metric_date
+        result = bootstrap_shop(**kwargs)
+        if inspect.isawaitable(result):
+            result = await result
+        if isinstance(result, dict):
+            return result
+        return {
+            "shop_id": shop_id,
+            "target_shop_id": shop_id,
+            "bootstrap_failed": True,
+            "status": "failed",
+            "error": "bootstrap_result_invalid",
+            "error_code": "verify_request_failed",
+        }
+
+    def _supports_keyword_argument(self, call: Any, argument_name: str) -> bool:
+        try:
+            signature = inspect.signature(call)
+        except (TypeError, ValueError):
+            return True
+        for parameter in signature.parameters.values():
+            if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+                return True
+        return argument_name in signature.parameters
 
     def _build_idempotency_key(
         self,

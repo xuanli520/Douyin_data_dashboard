@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -112,6 +113,15 @@ def _from_timestamp(timestamp: float | None) -> datetime | None:
     return datetime.fromtimestamp(float(timestamp), tz=UTC)
 
 
+def _is_shutdown_runtime_error(exc: RuntimeError) -> bool:
+    message = str(exc).strip().lower()
+    return (
+        "cannot schedule new futures after interpreter shutdown" in message
+        or "interpreter shutdown" in message
+        or "event loop is closed" in message
+    )
+
+
 def _sync_execution_status(
     *,
     queue_task_id: str,
@@ -122,6 +132,9 @@ def _sync_execution_status(
     error_message: str | None = None,
     triggered_by: int | None = None,
 ) -> None:
+    if sys.is_finalizing():
+        return
+
     coro = _sync_execution_status_async(
         queue_task_id=queue_task_id,
         status=status,
@@ -134,9 +147,21 @@ def _sync_execution_status(
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        session_module.run_coro(coro)
+        try:
+            session_module.run_coro(coro)
+        except RuntimeError as exc:
+            coro.close()
+            if _is_shutdown_runtime_error(exc):
+                return
+            raise
         return
-    loop.create_task(coro)
+    try:
+        loop.create_task(coro)
+    except RuntimeError as exc:
+        coro.close()
+        if _is_shutdown_runtime_error(exc):
+            return
+        raise
 
 
 async def _sync_execution_status_async(

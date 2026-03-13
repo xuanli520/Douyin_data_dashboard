@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import inspect
 from collections.abc import Mapping
 from typing import Any
@@ -42,10 +43,13 @@ class AccountShopResolver:
         extra_config: Mapping[str, Any] | None = None,
         refresh_login_callback: Any | None = None,
     ) -> list[str]:
-        _ = extra_config
+        fallback_shop_ids = _extract_shop_ids_from_context(
+            common_query=common_query,
+            extra_config=extra_config,
+        )
         cookie_mapping = dict(cookies or {})
         if not cookie_mapping:
-            return []
+            return fallback_shop_ids
 
         params = dict(common_query or {})
 
@@ -57,7 +61,9 @@ class AccountShopResolver:
                 cookies=cookie_mapping,
                 refresh_login_callback=refresh_login_callback,
             )
-            return resolved_shop_ids
+            if resolved_shop_ids:
+                return resolved_shop_ids
+            return fallback_shop_ids
 
         async with httpx.AsyncClient(
             base_url=self._base_url,
@@ -71,7 +77,9 @@ class AccountShopResolver:
                 cookies=cookie_mapping,
                 refresh_login_callback=refresh_login_callback,
             )
-            return resolved_shop_ids
+            if resolved_shop_ids:
+                return resolved_shop_ids
+            return fallback_shop_ids
 
     async def _resolve_with_client(
         self,
@@ -169,6 +177,127 @@ class AccountShopResolver:
         if isinstance(payload, Mapping):
             return dict(payload)
         return None
+
+
+def _extract_shop_ids_from_context(
+    *,
+    common_query: Mapping[str, Any] | None,
+    extra_config: Mapping[str, Any] | None,
+) -> list[str]:
+    result: list[str] = []
+    result.extend(_extract_shop_ids_from_mapping(common_query))
+    if isinstance(extra_config, Mapping):
+        result.extend(_extract_shop_ids_from_mapping(extra_config))
+        nested_common_query = extra_config.get("common_query")
+        result.extend(_extract_shop_ids_from_mapping(nested_common_query))
+    return _dedupe_shop_ids(result)
+
+
+def _extract_shop_ids_from_mapping(value: Any, *, _depth: int = 0) -> list[str]:
+    if _depth > 4 or not isinstance(value, Mapping):
+        return []
+    result: list[str] = []
+    direct_keys = {
+        "shop_id",
+        "shopid",
+        "shop_ids",
+        "shopids",
+        "subject_id",
+        "subjectid",
+        "subject_ids",
+        "subjectids",
+        "shops",
+        "shop_list",
+        "shoplist",
+        "subjects",
+        "subject_list",
+    }
+    loose_collection_keys = {
+        "shops",
+        "shop_list",
+        "shoplist",
+        "subjects",
+        "subject_list",
+    }
+    for key, item in value.items():
+        normalized_key = str(key).strip().lower()
+        if normalized_key in direct_keys:
+            result.extend(
+                _normalize_candidate_shop_ids(
+                    item,
+                    allow_generic_mapping_keys=normalized_key in loose_collection_keys,
+                )
+            )
+
+        if isinstance(item, Mapping):
+            result.extend(_extract_shop_ids_from_mapping(item, _depth=_depth + 1))
+        elif isinstance(item, list):
+            for row in item:
+                if isinstance(row, Mapping):
+                    result.extend(
+                        _extract_shop_ids_from_mapping(row, _depth=_depth + 1)
+                    )
+    return _dedupe_shop_ids(result)
+
+
+def _normalize_candidate_shop_ids(
+    value: Any,
+    *,
+    allow_generic_mapping_keys: bool = False,
+) -> list[str]:
+    if isinstance(value, list):
+        result: list[str] = []
+        for item in value:
+            result.extend(
+                _normalize_candidate_shop_ids(
+                    item,
+                    allow_generic_mapping_keys=allow_generic_mapping_keys,
+                )
+            )
+        return result
+    if isinstance(value, Mapping):
+        result: list[str] = []
+        mapping_keys = [
+            "shop_id",
+            "shopId",
+            "shop_ids",
+            "shopIds",
+            "subject_id",
+            "subjectId",
+        ]
+        if allow_generic_mapping_keys:
+            mapping_keys.extend(["id", "value"])
+        for key in mapping_keys:
+            if key in value:
+                result.extend(
+                    _normalize_candidate_shop_ids(
+                        value.get(key),
+                        allow_generic_mapping_keys=allow_generic_mapping_keys,
+                    )
+                )
+        return result
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        if text.startswith("[") and text.endswith("]"):
+            try:
+                parsed = json.loads(text)
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, list):
+                return _normalize_candidate_shop_ids(
+                    parsed,
+                    allow_generic_mapping_keys=allow_generic_mapping_keys,
+                )
+        normalized = text.replace(";", ",")
+        if "," in normalized or "|" in normalized:
+            result: list[str] = []
+            for token in normalized.split(","):
+                for part in token.split("|"):
+                    result.extend(_normalize_scalar_to_shop_ids(part))
+            return result
+    return _normalize_scalar_to_shop_ids(value)
 
 
 def _extract_shop_ids_from_payload(payload: Any) -> list[str]:
