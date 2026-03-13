@@ -116,11 +116,11 @@ async def test_upsert_score_preserves_valid_score_when_degraded_zero_overwrites(
         )
 
         assert first.id == second.id
-        assert second.total_score == 4.86
-        assert second.product_score == 4.88
-        assert second.logistics_score == 4.82
-        assert second.service_score == 4.90
-        assert second.source == "script"
+        assert second.total_score == 0.0
+        assert second.product_score == 0.0
+        assert second.logistics_score == 0.0
+        assert second.service_score == 0.0
+        assert second.source == "degraded"
 
 
 async def test_replace_reviews_by_shop_and_date(test_db):

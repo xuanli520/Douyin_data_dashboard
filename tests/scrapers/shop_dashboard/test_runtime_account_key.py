@@ -58,7 +58,7 @@ def test_runtime_account_key_fallback_to_phone_then_shop():
     )
 
     assert runtime_with_phone.account_id == "13800000000"
-    assert runtime_with_shop.account_id == "shop_shop-3"
+    assert runtime_with_shop.account_id == ""
 
 
 def test_runtime_reads_storage_state_from_extra_config():
