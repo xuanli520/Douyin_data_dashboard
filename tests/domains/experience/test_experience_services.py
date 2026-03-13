@@ -3,6 +3,61 @@ from datetime import UTC, date, datetime
 from src.cache.local import LocalCache
 from src.domains.experience.repository import ExperienceRepository
 from src.domains.experience.services import ExperienceQueryService
+from src.shared.redis_keys import redis_keys
+
+
+class _FakeRedisClient:
+    def __init__(self) -> None:
+        self._set_members: dict[str, set[str]] = {}
+
+    async def eval(self, script: str, numkeys: int, *args):  # pragma: no cover
+        if numkeys != 1:
+            raise ValueError("expected exactly one key")
+        index_key, cache_key, _ttl = args
+        members = self._set_members.setdefault(str(index_key), set())
+        members.add(str(cache_key))
+        return 1
+
+    async def type(self, key: str) -> str:
+        if key in self._set_members:
+            return "set"
+        return "none"
+
+    async def smembers(self, key: str) -> set[str]:
+        return set(self._set_members.get(key, set()))
+
+
+class _FakeRedisSetCache:
+    def __init__(self) -> None:
+        self.client = _FakeRedisClient()
+        self._store: dict[str, str] = {}
+
+    async def set(self, key: str, value: str, ttl: int | None = None) -> None:
+        self._store[key] = value
+
+    async def get(self, key: str) -> str | None:
+        if await self.client.type(key) == "set":
+            raise RuntimeError(
+                "WRONGTYPE Operation against a key holding the wrong kind of value"
+            )
+        return self._store.get(key)
+
+    async def delete(self, key: str) -> bool:
+        deleted = False
+        if key in self._store:
+            del self._store[key]
+            deleted = True
+        if key in self.client._set_members:
+            del self.client._set_members[key]
+            deleted = True
+        return deleted
+
+    async def exists(self, key: str) -> bool:
+        return key in self._store or key in self.client._set_members
+
+    async def close(self) -> None:
+        self._store.clear()
+        self.client._set_members.clear()
 
 
 async def _seed_metrics_and_issues(repo: ExperienceRepository) -> None:
@@ -225,3 +280,27 @@ async def test_invalidate_shop_date_should_refresh_cached_dashboard_data(test_db
 
         assert refreshed.cards["gmv"] != stale.cards["gmv"]
         await cache.close()
+
+
+async def test_invalidate_shop_date_should_support_redis_set_index(test_db):
+    async with test_db() as session:
+        repo = ExperienceRepository(session)
+        cache = _FakeRedisSetCache()
+        service = ExperienceQueryService(repo=repo, cache=cache)
+
+        cache_key = "experience:dashboard:1001:30d:overview"
+        await cache.set(cache_key, '{"shop_id":1001}')
+        index_key = redis_keys.experience_cache_date_index(
+            shop_id=1001,
+            metric_date="2026-03-03",
+        )
+        await cache.client.eval("SADD", 1, index_key, cache_key, 300)
+
+        deleted = await service.invalidate_shop_date(
+            shop_id=1001,
+            metric_date=date(2026, 3, 3),
+        )
+
+        assert deleted == 1
+        assert await cache.exists(cache_key) is False
+        assert await cache.exists(index_key) is False

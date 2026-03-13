@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator
 from datetime import date, datetime, timedelta
 from math import ceil
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.cache import CacheProtocol, get_cache
@@ -40,6 +40,7 @@ from src.shared.redis_keys import redis_keys
 
 
 DIMENSION_SCORE_KEY = "dimension_score"
+MAX_DATE_RANGE_DAYS = 365
 
 
 def _build_pagination_meta(page: int, size: int, total: int) -> dict[str, int | bool]:
@@ -539,11 +540,10 @@ class ExperienceQueryService:
             shop_id=shop_id,
             metric_date=date_text,
         )
-        cached_raw = await self.cache.get(index_key)
-        if not cached_raw:
+        cache_keys = await self._load_cache_index_keys(index_key)
+        if not cache_keys:
             return 0
 
-        cache_keys = self._decode_cache_key_list(cached_raw)
         deleted = 0
         for cache_key in cache_keys:
             if await self.cache.delete(cache_key):
@@ -593,20 +593,86 @@ class ExperienceQueryService:
     ) -> None:
         if self.cache is None:
             return
+        index_ttl = max(self.cache_index_ttl_seconds, 1)
         for metric_date in self._iterate_metric_dates(start_date, end_date):
             index_key = redis_keys.experience_cache_date_index(
                 shop_id=shop_id,
                 metric_date=metric_date.isoformat(),
             )
-            current_raw = await self.cache.get(index_key)
+            if await self._append_cache_index_key_atomic(
+                index_key=index_key,
+                cache_key=key,
+                ttl_seconds=index_ttl,
+            ):
+                continue
+            try:
+                current_raw = await self.cache.get(index_key)
+            except Exception:
+                current_raw = None
             keys = self._decode_cache_key_list(current_raw)
             if key not in keys:
                 keys.append(key)
             await self.cache.set(
                 index_key,
                 json.dumps(keys, separators=(",", ":")),
-                ttl=max(self.cache_index_ttl_seconds, 1),
+                ttl=index_ttl,
             )
+
+    async def _append_cache_index_key_atomic(
+        self,
+        *,
+        index_key: str,
+        cache_key: str,
+        ttl_seconds: int,
+    ) -> bool:
+        redis_client = self._get_redis_client()
+        if redis_client is None:
+            return False
+        try:
+            await redis_client.eval(
+                (
+                    "redis.call('SADD', KEYS[1], ARGV[1]);"
+                    "local ttl=tonumber(ARGV[2]);"
+                    "if ttl and ttl>0 then redis.call('EXPIRE', KEYS[1], ttl); end;"
+                    "return 1;"
+                ),
+                1,
+                index_key,
+                cache_key,
+                str(ttl_seconds),
+            )
+            return True
+        except Exception:
+            return False
+
+    async def _load_cache_index_keys(self, index_key: str) -> list[str]:
+        if self.cache is None:
+            return []
+        redis_client = self._get_redis_client()
+        if redis_client is not None:
+            try:
+                key_type = await redis_client.type(index_key)
+                key_type_text = (
+                    key_type.decode("utf-8", errors="ignore")
+                    if isinstance(key_type, bytes)
+                    else str(key_type)
+                )
+                if key_type_text == "set":
+                    members = await redis_client.smembers(index_key)
+                    return self._normalize_cache_key_items(list(members))
+            except Exception:
+                return []
+
+        try:
+            cached_raw = await self.cache.get(index_key)
+        except Exception:
+            return []
+        return self._decode_cache_key_list(cached_raw)
+
+    def _get_redis_client(self):
+        if self.cache is None:
+            return None
+        return getattr(self.cache, "client", None)
 
     @staticmethod
     def _iterate_metric_dates(start_date: date, end_date: date) -> list[date]:
@@ -625,9 +691,16 @@ class ExperienceQueryService:
             return []
         if not isinstance(parsed, list):
             return []
+        return ExperienceQueryService._normalize_cache_key_items(parsed)
+
+    @staticmethod
+    def _normalize_cache_key_items(items: list[object]) -> list[str]:
         keys: list[str] = []
-        for item in parsed:
-            text = str(item or "").strip()
+        for item in items:
+            if isinstance(item, bytes):
+                text = item.decode("utf-8", errors="ignore").strip()
+            else:
+                text = str(item or "").strip()
             if text and text not in keys:
                 keys.append(text)
         return keys
@@ -645,15 +718,36 @@ class ExperienceQueryService:
                 start = datetime.strptime(start_raw, "%Y-%m-%d").date()
                 end = datetime.strptime(end_raw, "%Y-%m-%d").date()
                 if start <= end:
+                    ExperienceQueryService._ensure_date_range_limit(start, end)
                     return start, end, f"{start.isoformat()},{end.isoformat()}"
             except ValueError:
                 pass
 
         if clean.endswith("d") and clean[:-1].isdigit():
             days = max(int(clean[:-1]), 1)
+            if days > MAX_DATE_RANGE_DAYS:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "date_range is too large: "
+                        f"maximum supported window is {MAX_DATE_RANGE_DAYS} days"
+                    ),
+                )
             return today - timedelta(days=days - 1), today, f"{days}d"
 
         return today - timedelta(days=29), today, "30d"
+
+    @staticmethod
+    def _ensure_date_range_limit(start: date, end: date) -> None:
+        days = (end - start).days + 1
+        if days > MAX_DATE_RANGE_DAYS:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "date_range is too large: "
+                    f"maximum supported window is {MAX_DATE_RANGE_DAYS} days"
+                ),
+            )
 
     @staticmethod
     def _latest_scores_by_dimension(

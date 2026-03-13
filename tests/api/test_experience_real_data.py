@@ -333,3 +333,20 @@ async def test_experience_real_data_invalid_pagination_should_return_422(
         headers=headers,
     )
     assert too_large_size.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_experience_real_data_too_large_date_range_should_return_422(
+    api_client,
+    phase3_user,
+):
+    headers = await get_auth_headers(
+        api_client,
+        "phase3user@example.com",
+        "phase3real123",
+    )
+    response = await api_client.get(
+        "/api/v1/experience/overview?shop_id=1001&date_range=999d",
+        headers=headers,
+    )
+    assert response.status_code == 422
