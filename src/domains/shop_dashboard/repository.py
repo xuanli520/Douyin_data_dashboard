@@ -11,6 +11,7 @@ from src.domains.shop_dashboard.models import (
     ShopDashboardScore,
     ShopDashboardViolation,
 )
+from src.shared.mixins import now
 from src.shared.repository import BaseRepository
 
 
@@ -51,30 +52,13 @@ class ShopDashboardRepository(BaseRepository):
             )
             self.session.add(score)
         else:
-            if (
-                score.source in {"script", "browser"}
-                and (
-                    float(score.total_score) != 0.0
-                    or float(score.product_score) != 0.0
-                    or float(score.logistics_score) != 0.0
-                    or float(score.service_score) != 0.0
-                    or float(score.bad_behavior_score) != 0.0
-                )
-                and source in {"degraded", "llm"}
-                and float(total_score) == 0.0
-                and float(product_score) == 0.0
-                and float(logistics_score) == 0.0
-                and float(service_score) == 0.0
-                and normalized_bad_behavior_score == 0.0
-            ):
-                await self.session.refresh(score)
-                return score
             score.total_score = total_score
             score.product_score = product_score
             score.logistics_score = logistics_score
             score.service_score = service_score
             score.bad_behavior_score = normalized_bad_behavior_score
             score.source = source
+            score.updated_at = now()
 
         await self._flush()
         await self.session.refresh(score)
