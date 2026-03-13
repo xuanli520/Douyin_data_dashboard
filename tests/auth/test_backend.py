@@ -1,8 +1,7 @@
 import asyncio
-import hashlib
+from datetime import datetime, timezone
 
 from src.auth.backend import RefreshTokenManager
-from src.shared.redis_keys import redis_keys
 
 
 async def test_create_refresh_token(local_cache, settings):
@@ -49,22 +48,26 @@ async def test_revoke_all_user_tokens(local_cache, settings):
     assert await manager.verify_refresh_token(token2) is None
 
 
-async def test_revoke_all_user_tokens_revokes_equal_timestamp_token(
-    local_cache, settings
+async def test_revoke_all_user_tokens_revokes_tokens_with_same_timestamp(
+    local_cache, settings, monkeypatch
 ):
     manager = RefreshTokenManager(local_cache, settings)
-    token = await manager.create_refresh_token(1, "Mozilla/5.0")
-    token_hash = hashlib.sha256(token.encode()).hexdigest()
-    token_key = redis_keys.refresh_token(token_hash=token_hash)
-    token_payload = await local_cache.get(token_key)
-    assert token_payload is not None
-    token_created_time = token_payload.split(":", maxsplit=2)[2]
 
-    await local_cache.set(
-        redis_keys.user_revoked(user_id=1),
-        token_created_time,
-        ttl=settings.auth.refresh_token_lifetime_seconds,
-    )
+    fixed_time = datetime(2026, 3, 6, 12, 0, 0, tzinfo=timezone.utc)
+
+    class _FrozenDateTime:
+        @staticmethod
+        def now(tz=None):
+            return fixed_time
+
+        @staticmethod
+        def fromisoformat(value: str):
+            return datetime.fromisoformat(value)
+
+    monkeypatch.setattr("src.auth.backend.datetime", _FrozenDateTime)
+
+    token = await manager.create_refresh_token(1, "Mozilla/5.0")
+    await manager.revoke_all_user_tokens(1)
 
     assert await manager.verify_refresh_token(token) is None
 
