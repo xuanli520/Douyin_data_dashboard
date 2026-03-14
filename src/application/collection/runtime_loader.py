@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.cache import resolve_sync_redis_client
 from src.domains.data_source.enums import DataSourceStatus
 from src.domains.data_source.enums import ScrapingRuleStatus
 from src.domains.data_source.repository import DataSourceRepository
@@ -35,12 +36,14 @@ class CollectionRuntimeLoader:
         *,
         account_shop_resolver: AccountShopResolver | None = None,
         account_shop_catalog_service: AccountShopCatalogService | None = None,
+        redis_client: Any | None = None,
     ) -> None:
         self.account_shop_resolver = account_shop_resolver or AccountShopResolver()
         self.account_shop_catalog_service = (
             account_shop_catalog_service
             or AccountShopCatalogService(
-                account_shop_resolver=self.account_shop_resolver
+                account_shop_resolver=self.account_shop_resolver,
+                redis_client=resolve_sync_redis_client(redis_client),
             )
         )
 
