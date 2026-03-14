@@ -1,66 +1,45 @@
 from __future__ import annotations
 
 import json
-from collections import defaultdict
 from collections.abc import AsyncGenerator
 from datetime import date, datetime, timedelta
-from math import ceil
 
 from fastapi import Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.cache import CacheProtocol, get_cache
 from src.config import get_settings
-from src.domains.experience.models import ExperienceIssueDaily, ExperienceMetricDaily
-from src.domains.experience.repository import ExperienceRepository
+from src.domains.experience.presentation_mapper import (
+    build_dashboard_kpis,
+    build_dashboard_overview,
+    build_issues,
+    build_metric_detail,
+    build_overview,
+    build_trend,
+)
 from src.domains.experience.schemas import (
     DIMENSION_WEIGHTS,
-    METRIC_CONTRACTS,
-    SUPPORTED_EXPERIENCE_DIMENSIONS,
-    DashboardKpiItem,
     DashboardKpisResponse,
-    DashboardKpisTrendPoint,
     DashboardOverviewResponse,
-    ExperienceAlertSummary,
-    ExperienceDimension,
-    ExperienceDimensionScore,
     ExperienceDrilldownResponse,
-    ExperienceIssueItem,
     ExperienceIssueListResponse,
     ExperienceOverviewResponse,
-    ExperienceTrendPoint,
     ExperienceTrendResponse,
     MetricDetailResponse,
-    MetricSubMetric,
     normalize_dimension,
     normalize_dimension_with_all,
 )
+from src.domains.shop_dashboard.repository import ShopDashboardRepository
 from src.session import get_session
 from src.shared.redis_keys import redis_keys
 
-
-DIMENSION_SCORE_KEY = "dimension_score"
 MAX_DATE_RANGE_DAYS = 365
-
-
-def _build_pagination_meta(page: int, size: int, total: int) -> dict[str, int | bool]:
-    size = max(size, 1)
-    page = max(page, 1)
-    pages = max(ceil(total / size), 1) if total else 0
-    return {
-        "page": page,
-        "size": size,
-        "total": total,
-        "pages": pages,
-        "has_next": page < pages,
-        "has_prev": page > 1 and pages > 0,
-    }
 
 
 class ExperienceQueryService:
     def __init__(
         self,
-        repo: ExperienceRepository,
+        repo: ShopDashboardRepository,
         cache: CacheProtocol | None = None,
     ):
         self.repo = repo
@@ -78,65 +57,18 @@ class ExperienceQueryService:
         date_range: str | None,
     ) -> ExperienceOverviewResponse:
         start_date, end_date, normalized_range = self._parse_date_range(date_range)
-        shop_key = str(shop_id)
-
-        metric_rows = await self.repo.list_metric_rows(
-            shop_id=shop_key,
-            start_date=start_date,
-            end_date=end_date,
-            metric_key=DIMENSION_SCORE_KEY,
-        )
-        latest_scores = self._latest_scores_by_dimension(metric_rows)
-        risk_deduct_points = self._latest_risk_deduct_points(metric_rows)
-
-        ranked_dimensions = sorted(
-            (
-                (dimension, latest_scores.get(dimension, 0.0))
-                for dimension in SUPPORTED_EXPERIENCE_DIMENSIONS
-            ),
-            key=lambda item: item[1],
-            reverse=True,
-        )
-        rank_map = {
-            dimension: index + 1
-            for index, (dimension, _) in enumerate(ranked_dimensions)
-        }
-
-        dimensions: list[ExperienceDimensionScore] = []
-        for dimension in SUPPORTED_EXPERIENCE_DIMENSIONS:
-            score = round(latest_scores.get(dimension, 0.0), 2)
-            dimensions.append(
-                ExperienceDimensionScore(
-                    dimension=dimension,
-                    score=score,
-                    weight=f"{int(DIMENSION_WEIGHTS[dimension] * 100)}%",
-                    rank=rank_map[dimension],
-                )
-            )
-
-        overall_score = round(
-            sum(
-                latest_scores.get(dimension, 0.0) * DIMENSION_WEIGHTS[dimension]
-                for dimension in SUPPORTED_EXPERIENCE_DIMENSIONS
-            )
-            - risk_deduct_points,
-            2,
-        )
-
-        issue_rows = await self.repo.list_issue_rows(
-            shop_id=shop_key,
+        materials = await self.repo.list_display_materials(
+            shop_id=str(shop_id),
             start_date=start_date,
             end_date=end_date,
         )
-        alerts = self._build_alert_summary(issue_rows)
-
-        return ExperienceOverviewResponse(
+        payload = build_overview(
             shop_id=shop_id,
             date_range=normalized_range,
-            overall_score=overall_score,
-            dimensions=dimensions,
-            alerts=alerts,
+            materials=materials,
+            dimension_weights=DIMENSION_WEIGHTS,
         )
+        return ExperienceOverviewResponse.model_validate(payload)
 
     async def get_trend(
         self,
@@ -147,26 +79,18 @@ class ExperienceQueryService:
     ) -> ExperienceTrendResponse:
         start_date, end_date, normalized_range = self._parse_date_range(date_range)
         normalized_dimension = normalize_dimension(dimension)
-        shop_key = str(shop_id)
-        rows = await self.repo.list_metric_rows(
-            shop_id=shop_key,
+        materials = await self.repo.list_display_materials(
+            shop_id=str(shop_id),
             start_date=start_date,
             end_date=end_date,
-            dimension=normalized_dimension,
-            metric_key=DIMENSION_SCORE_KEY,
         )
-        points = [
-            ExperienceTrendPoint(
-                date=row.metric_date.isoformat(), value=round(row.metric_score, 2)
-            )
-            for row in rows
-        ]
-        return ExperienceTrendResponse(
+        payload = build_trend(
             shop_id=shop_id,
             dimension=normalized_dimension,
             date_range=normalized_range,
-            trend=points,
+            materials=materials,
         )
+        return ExperienceTrendResponse.model_validate(payload)
 
     async def get_issues(
         self,
@@ -195,28 +119,21 @@ class ExperienceQueryService:
         if cached is not None:
             return cached
 
-        filtered_dimension = (
-            None if normalized_dimension == "all" else normalized_dimension
-        )
-        filtered_status = None if normalized_status == "all" else normalized_status
-
-        rows, total = await self.repo.list_issues(
+        materials = await self.repo.list_display_materials(
             shop_id=str(shop_id),
             start_date=start_date,
             end_date=end_date,
-            dimension=filtered_dimension,
-            status=filtered_status,
+        )
+        payload = build_issues(
+            shop_id=shop_id,
+            date_range=normalized_range,
+            materials=materials,
+            dimension=normalized_dimension,
+            status=normalized_status,
             page=page,
             size=size,
         )
-        items = [
-            self._to_issue_item(shop_id=shop_id, row=row, date_range=normalized_range)
-            for row in rows
-        ]
-        response = ExperienceIssueListResponse(
-            items=items,
-            meta=_build_pagination_meta(page=page, size=size, total=total),
-        )
+        response = ExperienceIssueListResponse.model_validate(payload)
         await self._cache_set_model(
             cache_key,
             response,
@@ -237,7 +154,6 @@ class ExperienceQueryService:
     ) -> MetricDetailResponse:
         start_date, end_date, normalized_range = self._parse_date_range(date_range)
         normalized_dimension = normalize_dimension(metric_type)
-        shop_key = str(shop_id)
         cache_key = redis_keys.experience_metrics(
             shop_id=shop_id,
             dimension=normalized_dimension,
@@ -249,89 +165,19 @@ class ExperienceQueryService:
                 return cached.model_copy(update={"period": period})
             return cached
 
-        trend_response = await self.get_trend(
-            shop_id=shop_id,
-            dimension=normalized_dimension,
-            date_range=normalized_range,
-        )
-        latest_date = await self.repo.get_latest_metric_date(
-            shop_id=shop_key,
+        materials = await self.repo.list_display_materials(
+            shop_id=str(shop_id),
             start_date=start_date,
             end_date=end_date,
-            dimension=normalized_dimension,
         )
-        latest_rows = []
-        if latest_date is not None:
-            latest_rows = await self.repo.list_rows_for_metric_date(
-                shop_id=shop_key,
-                metric_date=latest_date,
-                dimension=normalized_dimension,
-            )
-        row_by_metric = {row.metric_key: row for row in latest_rows}
-
-        contracts = METRIC_CONTRACTS[normalized_dimension]
-        sub_metrics: list[MetricSubMetric] = []
-        for contract in contracts:
-            row = row_by_metric.get(contract.metric_key)
-            score = round(row.metric_score if row else 0.0, 2)
-            raw_value = row.metric_value if row else 0.0
-            value = self._format_metric_value(raw_value, contract.unit)
-
-            payload = {
-                "id": contract.metric_key,
-                "title": contract.title,
-                "score": score,
-                "weight": contract.weight,
-                "value": value,
-                "desc": contract.formula,
-            }
-            if contract.deduct_points:
-                deduct = round(row.deduct_points if row else 0.0, 2)
-                payload.update(
-                    {
-                        "deduct_points": deduct,
-                        "impact_score": round(
-                            float((row.extra or {}).get("impact_score", deduct * 0.65))
-                            if row
-                            else 0.0,
-                            2,
-                        ),
-                        "status": str((row.extra or {}).get("status", "pending"))
-                        if row
-                        else "pending",
-                        "owner": str((row.extra or {}).get("owner", "")) if row else "",
-                        "deadline_at": str((row.extra or {}).get("deadline_at", ""))
-                        if row
-                        else "",
-                    }
-                )
-            sub_metrics.append(MetricSubMetric(**payload))
-
-        dimension_score_row = row_by_metric.get(DIMENSION_SCORE_KEY)
-        category_score = (
-            round(dimension_score_row.metric_score, 2)
-            if dimension_score_row
-            else round(
-                sum(metric.score for metric in sub_metrics) / max(len(sub_metrics), 1),
-                2,
-            )
-        )
-        score_ranges = self._build_score_ranges(sub_metrics)
-        formula = " + ".join(
-            f"{contract.metric_key}*{contract.weight}" for contract in contracts
-        )
-
-        response = MetricDetailResponse(
+        payload = build_metric_detail(
             shop_id=shop_id,
             metric_type=normalized_dimension,
             period=period,
             date_range=normalized_range,
-            category_score=category_score,
-            sub_metrics=sub_metrics,
-            score_ranges=score_ranges,
-            formula=formula,
-            trend=trend_response.trend,
+            materials=materials,
         )
+        response = MetricDetailResponse.model_validate(payload)
         await self._cache_set_model(
             cache_key,
             response,
@@ -394,38 +240,24 @@ class ExperienceQueryService:
         if cached is not None:
             return cached
 
-        overview = await self.get_overview(shop_id=shop_id, date_range=normalized_range)
-        metrics = await self.repo.list_metric_rows(
+        materials = await self.repo.list_display_materials(
             shop_id=str(shop_id),
             start_date=start_date,
             end_date=end_date,
-            metric_key=DIMENSION_SCORE_KEY,
         )
-
-        orders = len(metrics) * 10
-        gmv = round(overview.overall_score * max(orders, 1) * 1.2, 2) if orders else 0.0
-        average_order_value = round(gmv / orders, 2) if orders else 0.0
-
-        refund_row = await self.repo.get_latest_metric_row(
-            shop_id=str(shop_id),
-            start_date=start_date,
-            end_date=end_date,
-            metric_key="product_return_rate",
-        )
-        refund_rate_value = refund_row.metric_value if refund_row else 0.0
-        conversion_rate_value = round(min(99.0, overview.overall_score / 1.2), 2)
-
-        response = DashboardOverviewResponse(
+        overview_payload = build_overview(
             shop_id=shop_id,
             date_range=normalized_range,
-            cards={
-                "orders": orders,
-                "gmv": gmv,
-                "average_order_value": average_order_value,
-                "refund_rate": f"{round(refund_rate_value, 2)}%",
-                "conversion_rate": f"{conversion_rate_value}%",
-            },
+            materials=materials,
+            dimension_weights=DIMENSION_WEIGHTS,
         )
+        payload = build_dashboard_overview(
+            shop_id=shop_id,
+            date_range=normalized_range,
+            materials=materials,
+            overview_payload=overview_payload,
+        )
+        response = DashboardOverviewResponse.model_validate(payload)
         await self._cache_set_model(
             cache_key,
             response,
@@ -452,70 +284,22 @@ class ExperienceQueryService:
         if cached is not None:
             return cached
 
-        overview = await self.get_dashboard_overview(
-            shop_id=shop_id, date_range=normalized_range
-        )
-        metric_rows = await self.repo.list_metric_rows(
+        materials = await self.repo.list_display_materials(
             shop_id=str(shop_id),
             start_date=start_date,
             end_date=end_date,
-            metric_key=DIMENSION_SCORE_KEY,
         )
-
-        scores_by_day: dict[date, list[float]] = defaultdict(list)
-        for row in metric_rows:
-            scores_by_day[row.metric_date].append(row.metric_score)
-
-        trend_points: list[DashboardKpisTrendPoint] = []
-        for metric_date in sorted(scores_by_day):
-            daily_scores = scores_by_day[metric_date]
-            avg_score = sum(daily_scores) / max(len(daily_scores), 1)
-            orders = int(round(avg_score * 10))
-            gmv = round(orders * avg_score, 2)
-            trend_points.append(
-                DashboardKpisTrendPoint(
-                    date=metric_date.isoformat(),
-                    orders=orders,
-                    gmv=gmv,
-                )
-            )
-
-        first_orders = trend_points[0].orders if trend_points else 0
-        last_orders = trend_points[-1].orders if trend_points else 0
-        first_gmv = trend_points[0].gmv if trend_points else 0.0
-        last_gmv = trend_points[-1].gmv if trend_points else 0.0
-
-        refund_rows = await self.repo.list_metric_rows(
-            shop_id=str(shop_id),
-            start_date=start_date,
-            end_date=end_date,
-            metric_key="product_return_rate",
-        )
-        refund_first = refund_rows[0].metric_value if refund_rows else 0.0
-        refund_last = refund_rows[-1].metric_value if refund_rows else 0.0
-
-        response = DashboardKpisResponse(
+        dashboard_overview = await self.get_dashboard_overview(
             shop_id=shop_id,
             date_range=normalized_range,
-            kpis=[
-                DashboardKpiItem(
-                    id="orders",
-                    value=trend_points[-1].orders if trend_points else 0,
-                    change=self._format_change(first_orders, last_orders),
-                ),
-                DashboardKpiItem(
-                    id="gmv",
-                    value=trend_points[-1].gmv if trend_points else 0.0,
-                    change=self._format_change(first_gmv, last_gmv),
-                ),
-                DashboardKpiItem(
-                    id="refund_rate",
-                    value=overview.cards["refund_rate"],
-                    change=self._format_change(refund_first, refund_last),
-                ),
-            ],
-            trend=trend_points,
         )
+        payload = build_dashboard_kpis(
+            shop_id=shop_id,
+            date_range=normalized_range,
+            materials=materials,
+            overview_payload=dashboard_overview.model_dump(),
+        )
+        response = DashboardKpisResponse.model_validate(payload)
         await self._cache_set_model(
             cache_key,
             response,
@@ -749,124 +533,12 @@ class ExperienceQueryService:
                 ),
             )
 
-    @staticmethod
-    def _latest_scores_by_dimension(
-        rows: list[ExperienceMetricDaily],
-    ) -> dict[ExperienceDimension, float]:
-        latest: dict[ExperienceDimension, tuple[date, float]] = {}
-        for row in rows:
-            if row.dimension not in SUPPORTED_EXPERIENCE_DIMENSIONS:
-                continue
-            metric_date = row.metric_date
-            previous = latest.get(row.dimension)
-            if previous is None or metric_date >= previous[0]:
-                latest[row.dimension] = (metric_date, float(row.metric_score))
-        return {dimension: score for dimension, (_, score) in latest.items()}
-
-    @staticmethod
-    def _latest_risk_deduct_points(rows: list[ExperienceMetricDaily]) -> float:
-        latest_risk: tuple[date, float, float] | None = None
-        for row in rows:
-            if row.dimension != "risk":
-                continue
-            metric_date = row.metric_date
-            current = (metric_date, float(row.metric_score), float(row.deduct_points))
-            if latest_risk is None or metric_date >= latest_risk[0]:
-                latest_risk = current
-
-        if latest_risk is None:
-            return 0.0
-
-        _, risk_score, deduct_points = latest_risk
-        if deduct_points > 0:
-            return round(deduct_points, 2)
-        return round(max(0.0, 100.0 - risk_score), 2)
-
-    @staticmethod
-    def _build_alert_summary(
-        rows: list[ExperienceIssueDaily],
-    ) -> ExperienceAlertSummary:
-        critical = 0
-        warning = 0
-        info = 0
-        unread = 0
-        for row in rows:
-            if row.impact_score >= 15:
-                critical += 1
-            elif row.impact_score >= 8:
-                warning += 1
-            else:
-                info += 1
-            if row.status in {"pending", "processing"}:
-                unread += 1
-        return ExperienceAlertSummary(
-            critical=critical,
-            warning=warning,
-            info=info,
-            total=len(rows),
-            unread=unread,
-        )
-
-    @staticmethod
-    def _to_issue_item(
-        *,
-        shop_id: int,
-        row: ExperienceIssueDaily,
-        date_range: str,
-    ) -> ExperienceIssueItem:
-        return ExperienceIssueItem(
-            id=row.issue_key,
-            shop_id=shop_id,
-            dimension=normalize_dimension(row.dimension),
-            title=row.issue_title,
-            deduct_points=round(row.deduct_points, 2),
-            impact_score=round(row.impact_score, 2),
-            status=row.status,
-            owner=row.owner,
-            occurred_at=row.occurred_at.isoformat(),
-            deadline_at=row.deadline_at.isoformat() if row.deadline_at else None,
-            date_range=date_range,
-        )
-
-    @staticmethod
-    def _build_score_ranges(
-        sub_metrics: list[MetricSubMetric],
-    ) -> list[dict[str, str | int]]:
-        excellent = len([metric for metric in sub_metrics if metric.score >= 90])
-        good = len([metric for metric in sub_metrics if 80 <= metric.score < 90])
-        attention = len([metric for metric in sub_metrics if metric.score < 80])
-        return [
-            {"label": "excellent", "range": "90-100", "count": excellent},
-            {"label": "good", "range": "80-89", "count": good},
-            {"label": "attention", "range": "0-79", "count": attention},
-        ]
-
-    @staticmethod
-    def _format_metric_value(value: float, unit: str) -> str:
-        rounded = round(float(value), 2)
-        if unit == "%":
-            return f"{rounded}%"
-        if unit == "s":
-            return f"{rounded}s"
-        return f"{rounded}{unit}"
-
-    @staticmethod
-    def _format_change(first: float | int, last: float | int) -> str:
-        first_value = float(first)
-        last_value = float(last)
-        if first_value == 0:
-            delta = 0.0 if last_value == 0 else 100.0
-        else:
-            delta = ((last_value - first_value) / abs(first_value)) * 100
-        sign = "+" if delta >= 0 else ""
-        return f"{sign}{round(delta, 2)}%"
-
 
 async def get_experience_service(
     session: AsyncSession = Depends(get_session),
     cache: CacheProtocol = Depends(get_cache),
 ) -> AsyncGenerator[ExperienceQueryService, None]:
     yield ExperienceQueryService(
-        repo=ExperienceRepository(session=session),
+        repo=ShopDashboardRepository(session=session),
         cache=cache,
     )

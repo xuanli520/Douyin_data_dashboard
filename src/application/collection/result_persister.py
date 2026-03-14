@@ -8,7 +8,6 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import src.cache as cache_module
-from src.domains.experience.repository import ExperienceRepository
 from src.domains.experience.services import ExperienceQueryService
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
@@ -126,7 +125,7 @@ class CollectionResultPersister:
         if cache is None:
             return
         service = ExperienceQueryService(
-            repo=ExperienceRepository(session=session),
+            repo=ShopDashboardRepository(session=session),
             cache=cache,
         )
         await service.invalidate_shop_date(

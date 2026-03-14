@@ -1,8 +1,8 @@
-from datetime import UTC, date, datetime
+from datetime import date
 
 from src.cache.local import LocalCache
-from src.domains.experience.repository import ExperienceRepository
 from src.domains.experience.services import ExperienceQueryService
+from src.domains.shop_dashboard.repository import ShopDashboardRepository
 from src.shared.redis_keys import redis_keys
 
 
@@ -60,97 +60,91 @@ class _FakeRedisSetCache:
         self.client._set_members.clear()
 
 
-async def _seed_metrics_and_issues(repo: ExperienceRepository) -> None:
+async def _seed_materials(repo: ShopDashboardRepository) -> None:
     for metric_date, values in [
         (
             date(2026, 3, 1),
-            {"product": 90.0, "logistics": 88.0, "service": 86.0, "risk": 80.0},
+            {
+                "total": 86.6,
+                "product": 90.0,
+                "logistics": 88.0,
+                "service": 86.0,
+                "bad_behavior": 20.0,
+            },
         ),
         (
             date(2026, 3, 2),
-            {"product": 91.0, "logistics": 87.0, "service": 87.0, "risk": 81.0},
+            {
+                "total": 87.2,
+                "product": 91.0,
+                "logistics": 87.0,
+                "service": 87.0,
+                "bad_behavior": 19.0,
+            },
         ),
         (
             date(2026, 3, 3),
-            {"product": 92.0, "logistics": 89.0, "service": 88.0, "risk": 79.0},
+            {
+                "total": 89.9,
+                "product": 92.0,
+                "logistics": 89.0,
+                "service": 88.0,
+                "bad_behavior": 21.0,
+            },
         ),
     ]:
-        for dimension, score in values.items():
-            await repo.upsert_metric(
-                shop_id="1001",
-                metric_date=metric_date,
-                dimension=dimension,
-                metric_key="dimension_score",
-                metric_score=score,
-                metric_value=score,
-                metric_unit="pt",
-                source_field=f"raw.{dimension}.score",
-                is_penalty=dimension == "risk",
-                deduct_points=max(0.0, 100.0 - score) if dimension == "risk" else 0.0,
-                source="seed",
-            )
+        await repo.upsert_score(
+            shop_id="1001",
+            metric_date=metric_date,
+            total_score=values["total"],
+            product_score=values["product"],
+            logistics_score=values["logistics"],
+            service_score=values["service"],
+            bad_behavior_score=values["bad_behavior"],
+            source="seed",
+        )
 
-    await repo.upsert_metric(
+    await repo.replace_violations(
         shop_id="1001",
         metric_date=date(2026, 3, 3),
-        dimension="risk",
-        metric_key="fake_transaction",
-        metric_score=78.0,
-        metric_value=22.0,
-        metric_unit="pt",
-        source_field="raw.risk.fake_transaction_cases",
-        is_penalty=True,
-        deduct_points=22.0,
-        source="seed",
-        extra={"impact_score": 14.3, "status": "processing", "owner": "owner_7"},
+        violations=[
+            {
+                "violation_id": "issue_1",
+                "violation_type": "product",
+                "description": "product defect complaints",
+                "score": 18,
+                "source": "seed",
+            }
+        ],
     )
-
-    await repo.upsert_metric(
-        shop_id="1001",
-        metric_date=date(2026, 3, 3),
-        dimension="product",
-        metric_key="product_return_rate",
-        metric_score=89.0,
-        metric_value=1.8,
-        metric_unit="%",
-        source_field="raw.product.return_rate",
-        source="seed",
-    )
-
-    await repo.upsert_issue(
-        shop_id="1001",
-        metric_date=date(2026, 3, 3),
-        dimension="product",
-        issue_key="issue_1",
-        issue_title="product defect complaints",
-        status="pending",
-        owner="owner_1",
-        impact_score=18.5,
-        deduct_points=6.2,
-        occurred_at=datetime(2026, 3, 3, 9, 0, tzinfo=UTC),
-        deadline_at=datetime(2026, 3, 6, 18, 0, tzinfo=UTC),
-        source="seed",
-    )
-    await repo.upsert_issue(
+    await repo.replace_violations(
         shop_id="1001",
         metric_date=date(2026, 3, 2),
-        dimension="risk",
-        issue_key="issue_2",
-        issue_title="policy violation warning",
-        status="resolved",
-        owner="owner_2",
-        impact_score=11.0,
-        deduct_points=3.0,
-        occurred_at=datetime(2026, 3, 2, 8, 0, tzinfo=UTC),
-        deadline_at=None,
+        violations=[
+            {
+                "violation_id": "issue_2",
+                "violation_type": "risk",
+                "description": "policy violation warning",
+                "score": 11,
+                "source": "seed",
+            }
+        ],
+    )
+    await repo.upsert_cold_metrics(
+        shop_id="1001",
+        metric_date=date(2026, 3, 1),
+        reason="cold reason fallback",
+        violations_detail=[],
+        arbitration_detail=[],
+        dsr_trend=[],
         source="seed",
     )
 
 
 async def test_get_overview_returns_weighted_score_and_alerts(test_db):
     async with test_db() as session:
-        repo = ExperienceRepository(session)
-        await _seed_metrics_and_issues(repo)
+        repo = ShopDashboardRepository(session)
+        await _seed_materials(repo)
         await session.commit()
 
         service = ExperienceQueryService(repo=repo)
@@ -158,19 +152,18 @@ async def test_get_overview_returns_weighted_score_and_alerts(test_db):
 
         assert overview.shop_id == 1001
         assert len(overview.dimensions) == 4
-        # formula: product*40% + logistics*30% + service*30% - risk_deduct_points
-        # latest scores: product=92, logistics=89, service=88, risk_deduct_points=21
-        assert overview.overall_score == 68.9
-        assert overview.alerts.total == 2
+        assert overview.overall_score == 89.9
+        assert overview.alerts.total == 3
         assert overview.alerts.critical == 1
         assert overview.alerts.warning == 1
-        assert overview.alerts.unread == 1
+        assert overview.alerts.info == 1
+        assert overview.alerts.unread == 3
 
 
 async def test_get_metric_detail_risk_contains_penalty_fields(test_db):
     async with test_db() as session:
-        repo = ExperienceRepository(session)
-        await _seed_metrics_and_issues(repo)
+        repo = ShopDashboardRepository(session)
+        await _seed_materials(repo)
         await session.commit()
 
         service = ExperienceQueryService(repo=repo)
@@ -183,20 +176,17 @@ async def test_get_metric_detail_risk_contains_penalty_fields(test_db):
 
         assert detail.metric_type == "risk"
         assert len(detail.sub_metrics) == 3
-        assert len(detail.trend) >= 1
-        fake_tx = [
-            item for item in detail.sub_metrics if item.id == "fake_transaction"
-        ][0]
-        assert fake_tx.deduct_points is not None
-        assert fake_tx.impact_score is not None
-        assert fake_tx.status == "processing"
-        assert fake_tx.owner == "owner_7"
+        assert len(detail.trend) == 3
+        risk_item = detail.sub_metrics[0]
+        assert risk_item.deduct_points is not None
+        assert risk_item.impact_score is not None
+        assert risk_item.status == "pending"
 
 
 async def test_get_dashboard_kpis_contains_trend_and_change(test_db):
     async with test_db() as session:
-        repo = ExperienceRepository(session)
-        await _seed_metrics_and_issues(repo)
+        repo = ShopDashboardRepository(session)
+        await _seed_materials(repo)
         await session.commit()
 
         service = ExperienceQueryService(repo=repo)
@@ -213,22 +203,22 @@ async def test_get_dashboard_kpis_contains_trend_and_change(test_db):
 
 async def test_get_metric_detail_uses_cache_on_repeated_query(test_db):
     async with test_db() as session:
-        repo = ExperienceRepository(session)
-        await _seed_metrics_and_issues(repo)
+        repo = ShopDashboardRepository(session)
+        await _seed_materials(repo)
         await session.commit()
 
         cache = LocalCache()
         service = ExperienceQueryService(repo=repo, cache=cache)
 
-        original_list_metric_rows = repo.list_metric_rows
-        list_metric_rows_call_count = 0
+        original_list_display_materials = repo.list_display_materials
+        list_display_materials_call_count = 0
 
-        async def counted_list_metric_rows(*args, **kwargs):
-            nonlocal list_metric_rows_call_count
-            list_metric_rows_call_count += 1
-            return await original_list_metric_rows(*args, **kwargs)
+        async def counted_list_display_materials(*args, **kwargs):
+            nonlocal list_display_materials_call_count
+            list_display_materials_call_count += 1
+            return await original_list_display_materials(*args, **kwargs)
 
-        repo.list_metric_rows = counted_list_metric_rows  # type: ignore[method-assign]
+        repo.list_display_materials = counted_list_display_materials  # type: ignore[method-assign]
 
         first = await service.get_metric_detail(
             shop_id=1001,
@@ -243,15 +233,15 @@ async def test_get_metric_detail_uses_cache_on_repeated_query(test_db):
             date_range="30d",
         )
 
-        assert list_metric_rows_call_count == 1
+        assert list_display_materials_call_count == 1
         assert first.model_dump() == second.model_dump()
         await cache.close()
 
 
 async def test_invalidate_shop_date_should_refresh_cached_dashboard_data(test_db):
     async with test_db() as session:
-        repo = ExperienceRepository(session)
-        await _seed_metrics_and_issues(repo)
+        repo = ShopDashboardRepository(session)
+        await _seed_materials(repo)
         await session.commit()
 
         cache = LocalCache()
@@ -259,15 +249,14 @@ async def test_invalidate_shop_date_should_refresh_cached_dashboard_data(test_db
 
         first = await service.get_dashboard_overview(shop_id=1001, date_range="30d")
 
-        await repo.upsert_metric(
+        await repo.upsert_score(
             shop_id="1001",
             metric_date=date(2026, 3, 3),
-            dimension="product",
-            metric_key="dimension_score",
-            metric_score=62.0,
-            metric_value=62.0,
-            metric_unit="pt",
-            source_field="raw.product.score",
+            total_score=62.0,
+            product_score=62.0,
+            logistics_score=62.0,
+            service_score=62.0,
+            bad_behavior_score=50.0,
             source="seed_v2",
         )
         await session.commit()
@@ -284,7 +273,7 @@ async def test_invalidate_shop_date_should_refresh_cached_dashboard_data(test_db
 
 async def test_invalidate_shop_date_should_support_redis_set_index(test_db):
     async with test_db() as session:
-        repo = ExperienceRepository(session)
+        repo = ShopDashboardRepository(session)
         cache = _FakeRedisSetCache()
         service = ExperienceQueryService(repo=repo, cache=cache)
 

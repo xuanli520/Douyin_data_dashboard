@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime
+from datetime import date
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from src.auth.captcha import get_captcha_service
 from src.cache import get_cache
-from src.domains.experience.models import ExperienceIssueDaily, ExperienceMetricDaily
+from src.domains.shop_dashboard.repository import ShopDashboardRepository
 from src.main import app
 
 
@@ -96,120 +96,84 @@ async def phase3_user(test_db):
 @pytest.fixture
 async def seeded_phase3_data(test_db):
     async with test_db() as session:
-        rows: list[ExperienceMetricDaily] = []
+        repo = ShopDashboardRepository(session)
         for metric_date, values in [
             (
                 date(2026, 3, 1),
-                {"product": 90.0, "logistics": 88.0, "service": 86.0, "risk": 80.0},
+                {
+                    "total": 86.6,
+                    "product": 90.0,
+                    "logistics": 88.0,
+                    "service": 86.0,
+                    "bad_behavior": 20.0,
+                },
             ),
             (
                 date(2026, 3, 2),
-                {"product": 91.0, "logistics": 87.0, "service": 87.0, "risk": 81.0},
+                {
+                    "total": 87.2,
+                    "product": 91.0,
+                    "logistics": 87.0,
+                    "service": 87.0,
+                    "bad_behavior": 19.0,
+                },
             ),
             (
                 date(2026, 3, 3),
-                {"product": 92.0, "logistics": 89.0, "service": 88.0, "risk": 79.0},
+                {
+                    "total": 89.9,
+                    "product": 92.0,
+                    "logistics": 89.0,
+                    "service": 88.0,
+                    "bad_behavior": 21.0,
+                },
             ),
         ]:
-            for dimension, score in values.items():
-                rows.append(
-                    ExperienceMetricDaily(
-                        shop_id="1001",
-                        metric_date=metric_date,
-                        dimension=dimension,
-                        metric_key="dimension_score",
-                        metric_score=score,
-                        metric_value=score,
-                        metric_unit="pt",
-                        source_field=f"raw.{dimension}.score",
-                        formula_expr="normalized_dimension_score",
-                        is_penalty=dimension == "risk",
-                        deduct_points=max(0.0, 100.0 - score)
-                        if dimension == "risk"
-                        else 0.0,
-                        source="seed",
-                    )
-                )
+            await repo.upsert_score(
+                shop_id="1001",
+                metric_date=metric_date,
+                total_score=values["total"],
+                product_score=values["product"],
+                logistics_score=values["logistics"],
+                service_score=values["service"],
+                bad_behavior_score=values["bad_behavior"],
+                source="seed",
+            )
 
-        rows.extend(
-            [
-                ExperienceMetricDaily(
-                    shop_id="1001",
-                    metric_date=date(2026, 3, 3),
-                    dimension="product",
-                    metric_key="product_quality_score",
-                    metric_score=93.0,
-                    metric_value=93.0,
-                    metric_unit="pt",
-                    source_field="raw.product.quality_score",
-                    formula_expr="quality_feedback_weighted",
-                    is_penalty=False,
-                    deduct_points=0.0,
-                    source="seed",
-                ),
-                ExperienceMetricDaily(
-                    shop_id="1001",
-                    metric_date=date(2026, 3, 3),
-                    dimension="product",
-                    metric_key="product_return_rate",
-                    metric_score=89.0,
-                    metric_value=1.8,
-                    metric_unit="%",
-                    source_field="raw.product.return_rate",
-                    formula_expr="returns/orders*100",
-                    is_penalty=False,
-                    deduct_points=0.0,
-                    source="seed",
-                ),
-                ExperienceMetricDaily(
-                    shop_id="1001",
-                    metric_date=date(2026, 3, 3),
-                    dimension="product",
-                    metric_key="product_negative_review_rate",
-                    metric_score=87.0,
-                    metric_value=2.4,
-                    metric_unit="%",
-                    source_field="raw.product.negative_review_rate",
-                    formula_expr="negative_reviews/reviews*100",
-                    is_penalty=False,
-                    deduct_points=0.0,
-                    source="seed",
-                ),
-            ]
+        await repo.replace_violations(
+            shop_id="1001",
+            metric_date=date(2026, 3, 3),
+            violations=[
+                {
+                    "violation_id": "issue_1",
+                    "violation_type": "product",
+                    "description": "product defect complaints",
+                    "score": 6,
+                    "source": "seed",
+                }
+            ],
         )
-
-        session.add_all(rows)
-        session.add_all(
-            [
-                ExperienceIssueDaily(
-                    shop_id="1001",
-                    metric_date=date(2026, 3, 3),
-                    dimension="product",
-                    issue_key="issue_1",
-                    issue_title="product defect complaints",
-                    status="pending",
-                    owner="owner_1",
-                    impact_score=18.5,
-                    deduct_points=6.2,
-                    occurred_at=datetime(2026, 3, 3, 9, 0, tzinfo=UTC),
-                    deadline_at=datetime(2026, 3, 6, 18, 0, tzinfo=UTC),
-                    source="seed",
-                ),
-                ExperienceIssueDaily(
-                    shop_id="1001",
-                    metric_date=date(2026, 3, 2),
-                    dimension="risk",
-                    issue_key="issue_2",
-                    issue_title="policy violation warning",
-                    status="resolved",
-                    owner="owner_2",
-                    impact_score=11.0,
-                    deduct_points=3.0,
-                    occurred_at=datetime(2026, 3, 2, 8, 0, tzinfo=UTC),
-                    deadline_at=None,
-                    source="seed",
-                ),
-            ]
+        await repo.replace_violations(
+            shop_id="1001",
+            metric_date=date(2026, 3, 2),
+            violations=[
+                {
+                    "violation_id": "issue_2",
+                    "violation_type": "risk",
+                    "description": "policy violation warning",
+                    "score": 3,
+                    "source": "seed",
+                }
+            ],
+        )
+        await repo.upsert_cold_metrics(
+            shop_id="1001",
+            metric_date=date(2026, 3, 1),
+            reason="cold reason fallback",
+            violations_detail=[],
+            arbitration_detail=[],
+            dsr_trend=[],
+            source="seed",
         )
         await session.commit()
 

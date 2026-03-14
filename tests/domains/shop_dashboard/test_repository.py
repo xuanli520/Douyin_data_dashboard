@@ -338,3 +338,81 @@ async def test_build_agent_context_includes_existing_cold_metrics(test_db):
         assert context["total_score"] == 4.86
         assert context["violations"]["waiting_list"][0]["id"] == "v-1"
         assert context["violations_detail"] == [{"id": "v-llm"}]
+
+
+async def test_list_display_materials_returns_grouped_daily_data(test_db):
+    async with test_db() as session:
+        repo = ShopDashboardRepository(session)
+        metric_date = date(2026, 3, 3)
+        await repo.upsert_score(
+            shop_id="shop-1",
+            metric_date=metric_date,
+            total_score=4.86,
+            product_score=4.88,
+            logistics_score=4.82,
+            service_score=4.90,
+            bad_behavior_score=0.2,
+            source="http",
+        )
+        await repo.replace_violations(
+            shop_id="shop-1",
+            metric_date=metric_date,
+            violations=[
+                {
+                    "violation_id": "v-1",
+                    "violation_type": "risk",
+                    "description": "description-a",
+                    "score": 4,
+                    "source": "http",
+                }
+            ],
+        )
+        await repo.upsert_cold_metrics(
+            shop_id="shop-1",
+            metric_date=metric_date,
+            reason="cold_metric",
+            violations_detail=[{"id": "v-llm"}],
+            arbitration_detail=[],
+            dsr_trend=[],
+            source="llm",
+        )
+        await session.commit()
+
+        items = await repo.list_display_materials(
+            shop_id="shop-1",
+            start_date=date(2026, 3, 1),
+            end_date=date(2026, 3, 5),
+        )
+
+        assert len(items) == 1
+        assert items[0]["shop_id"] == "shop-1"
+        assert items[0]["metric_date"] == "2026-03-03"
+        assert items[0]["total_score"] == 4.86
+        assert items[0]["violations"][0]["id"] == "v-1"
+        assert items[0]["cold_metrics"][0]["reason"] == "cold_metric"
+
+
+async def test_list_display_materials_includes_days_without_scores(test_db):
+    async with test_db() as session:
+        repo = ShopDashboardRepository(session)
+        await repo.upsert_cold_metrics(
+            shop_id="shop-1",
+            metric_date=date(2026, 3, 2),
+            reason="cold_metric",
+            violations_detail=[],
+            arbitration_detail=[],
+            dsr_trend=[],
+            source="llm",
+        )
+        await session.commit()
+
+        items = await repo.list_display_materials(
+            shop_id="shop-1",
+            start_date=date(2026, 3, 1),
+            end_date=date(2026, 3, 3),
+        )
+
+        assert len(items) == 1
+        assert items[0]["metric_date"] == "2026-03-02"
+        assert items[0]["total_score"] == 0.0
+        assert items[0]["cold_metrics"][0]["reason"] == "cold_metric"
