@@ -666,31 +666,43 @@ def _build_business_key(
     metric_date: str,
     *,
     plan_unit: Any | None = None,
+    queue_task_id: str | None = None,
 ) -> str:
     window_start = getattr(plan_unit, "window_start", None)
     window_end = getattr(plan_unit, "window_end", None)
     granular = getattr(plan_unit, "granularity", runtime.granularity)
+    normalized_queue_task_id = str(queue_task_id or "").strip()
     format_context = {
         "shop_id": runtime.shop_id,
         "date": metric_date,
         "metric_date": metric_date,
         "rule_id": runtime.rule_id,
         "execution_id": runtime.execution_id,
+        "queue_task_id": normalized_queue_task_id,
         "granularity": granular,
         "window_start": window_start.isoformat() if window_start else "",
         "window_end": window_end.isoformat() if window_end else "",
     }
     if runtime.dedupe_key:
+        business_key = ""
         try:
-            return runtime.dedupe_key.format(**format_context)
+            business_key = runtime.dedupe_key.format(**format_context)
         except KeyError:
-            return runtime.dedupe_key.format(
+            business_key = runtime.dedupe_key.format(
                 shop_id=runtime.shop_id,
                 date=metric_date,
                 rule_id=runtime.rule_id,
                 execution_id=runtime.execution_id,
             )
-    return f"{runtime.shop_id}:{metric_date}:{runtime.rule_id}:{runtime.execution_id}"
+        if normalized_queue_task_id and "{queue_task_id}" not in runtime.dedupe_key:
+            return f"{business_key}:{normalized_queue_task_id}"
+        return business_key
+    base_key = (
+        f"{runtime.shop_id}:{metric_date}:{runtime.rule_id}:{runtime.execution_id}"
+    )
+    if normalized_queue_task_id:
+        return f"{base_key}:{normalized_queue_task_id}"
+    return base_key
 
 
 async def _load_runtime_config(

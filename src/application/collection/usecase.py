@@ -134,6 +134,7 @@ class CollectionUseCase:
                 data_source_id=data_source_id,
                 rule_id=rule_id,
                 execution_id=execution_id,
+                queue_task_id=queue_task_id,
                 redis_client=redis_client,
                 session_factory=session_factory,
             )
@@ -353,6 +354,7 @@ class CollectionUseCase:
         data_source_id: int,
         rule_id: int,
         execution_id: str,
+        queue_task_id: str,
         redis_client: Any | None,
         session_factory,
     ) -> dict[str, Any]:
@@ -649,6 +651,7 @@ class CollectionUseCase:
                 unit_runtime,
                 plan_unit.metric_date,
                 plan_unit=plan_unit,
+                queue_task_id=queue_task_id,
             )
             cached = helper.get_cached_result(business_key)
             if cached:
