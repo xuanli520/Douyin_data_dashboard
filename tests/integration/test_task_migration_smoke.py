@@ -3,6 +3,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
 
 from src.config import get_settings
@@ -103,6 +104,7 @@ def test_contract_migration_executes_through_alembic(tmp_path, monkeypatch):
     get_settings.cache_clear()
     try:
         config = Config(str(root / "alembic.ini"))
+        expected_head = ScriptDirectory.from_config(config).get_current_head()
         command.upgrade(config, "head")
     finally:
         get_settings.cache_clear()
@@ -119,4 +121,4 @@ def test_contract_migration_executes_through_alembic(tmp_path, monkeypatch):
 
     assert "shop_id" not in data_source_columns
     assert "account_name" not in data_source_columns
-    assert version_num == "20260311_02"
+    assert version_num == expected_head
