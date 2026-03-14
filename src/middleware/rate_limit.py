@@ -1,5 +1,6 @@
 import time
 from typing import Callable
+from uuid import uuid4
 
 from redis.asyncio import Redis
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -24,7 +25,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._redis = redis_client
         self._settings = settings
         self._client_identifier = client_identifier or self._default_client_identifier
-        self._request_sequence = 0
 
     def _default_client_identifier(self, request: Request) -> str:
         forwarded = request.headers.get("X-Forwarded-For")
@@ -43,11 +43,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         now = time.time()
         window_start = now - window
         key = f"rate_limit:{endpoint}:{client_id}"
-        self._request_sequence += 1
+        member = f"{time.time_ns()}:{uuid4().hex}"
 
         pipe = redis.pipeline()
         pipe.zremrangebyscore(key, "-inf", str(window_start))
-        pipe.zadd(key, {str(self._request_sequence): now})
+        pipe.zadd(key, {member: now})
         pipe.zcard(key)
         pipe.expire(key, int(window) + 1)
         results = await pipe.execute()

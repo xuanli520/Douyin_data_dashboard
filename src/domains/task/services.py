@@ -359,7 +359,10 @@ class TaskService:
         except ScrapingFailedException as exc:
             message = str(exc).lower()
             if "not found" in message:
-                return
+                raise TaskInvalidPayloadException(
+                    message=str(exc),
+                    field="data_source_id",
+                ) from exc
             raise
 
     def _require_positive_int(self, payload: dict[str, Any], *, field: str) -> int:

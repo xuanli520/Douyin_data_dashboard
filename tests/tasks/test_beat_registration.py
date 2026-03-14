@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import text
@@ -46,6 +47,56 @@ def test_register_jobs_uses_collection_job_ids(monkeypatch):
     add_ids = [item[1] for item in calls if item[0] == "add"]
     assert add_ids == ["collection_job_99"]
     assert "shop_dashboard_full_sync" not in add_ids
+
+
+def test_register_jobs_removes_stale_collection_jobs(monkeypatch):
+    from src.tasks import beat as module
+
+    removed_ids: list[str] = []
+    added_ids: list[str] = []
+    existing_jobs = [
+        SimpleNamespace(id="collection_job_1"),
+        SimpleNamespace(id="collection_job_2"),
+        SimpleNamespace(id="non_collection_job"),
+    ]
+
+    class _FakeAps:
+        def get_jobs(self):
+            return list(existing_jobs)
+
+        def remove_job(self, job_id: str):
+            removed_ids.append(job_id)
+
+    class _FakeJobAdder:
+        def __init__(self, _func, job_store_kind="redis"):
+            _ = job_store_kind
+            self.aps_obj = _FakeAps()
+
+        def add_push_job(self, **kwargs):
+            added_ids.append(kwargs["id"])
+
+    monkeypatch.setattr(module, "ApsJobAdder", _FakeJobAdder)
+    monkeypatch.setattr(
+        module,
+        "_load_enabled_collection_jobs",
+        lambda: [
+            CollectionJob(
+                id=2,
+                name="beat-registration-job",
+                task_type=TaskType.SHOP_DASHBOARD_COLLECTION,
+                data_source_id=11,
+                rule_id=12,
+                schedule={"cron": "0 2 * * *"},
+                status=CollectionJobStatus.ACTIVE,
+            )
+        ],
+        raising=False,
+    )
+
+    module.register_jobs()
+
+    assert removed_ids == ["collection_job_1"]
+    assert added_ids == ["collection_job_2"]
 
 
 def test_main_initializes_db_before_register_jobs(monkeypatch):

@@ -6,6 +6,9 @@ from sqlalchemy import select
 
 from src.auth.captcha import get_captcha_service
 from src.cache import get_cache
+from src.domains.data_source.enums import DataSourceStatus, DataSourceType, TargetType
+from src.domains.data_source.models import DataSource
+from src.domains.scraping_rule.models import ScrapingRule
 from src.domains.task.enums import TaskDefinitionStatus, TaskType
 from src.domains.task.schemas import TaskDefinitionCreate
 from src.domains.task.services import TaskService
@@ -263,8 +266,28 @@ async def test_run_shop_dashboard_task_persists_payload_and_dispatches_overrides
     from src.tasks import bootstrap as module
 
     captured: dict[str, object] = {}
+    data_source_id = 0
+    rule_id = 0
 
     async with test_db() as session:
+        data_source = DataSource(
+            name="task-management-shop-data-source",
+            source_type=DataSourceType.DOUYIN_SHOP,
+            status=DataSourceStatus.ACTIVE,
+        )
+        session.add(data_source)
+        await session.flush()
+        data_source_id = data_source.id if data_source.id is not None else 0
+
+        rule = ScrapingRule(
+            name="task-management-shop-rule",
+            data_source_id=data_source_id,
+            target_type=TargetType.SHOP_OVERVIEW,
+        )
+        session.add(rule)
+        await session.flush()
+        rule_id = rule.id if rule.id is not None else 0
+
         service = TaskService(
             session=session,
             dispatcher_registry=build_task_dispatcher_registry(),
@@ -281,8 +304,16 @@ async def test_run_shop_dashboard_task_persists_payload_and_dispatches_overrides
         captured.update(kwargs)
         return SimpleNamespace(task_id="queue-shop-task-1")
 
+    async def _skip_validate_target_shops(*_args, **_kwargs):
+        return None
+
     monkeypatch.setattr(
         module.sync_shop_dashboard, "push", _fake_shop_push, raising=False
+    )
+    monkeypatch.setattr(
+        TaskService,
+        "_validate_shop_dashboard_target_shops",
+        _skip_validate_target_shops,
     )
 
     headers = await get_auth_headers(
@@ -295,8 +326,8 @@ async def test_run_shop_dashboard_task_persists_payload_and_dispatches_overrides
         f"/api/v1/tasks/{task.id}/run",
         json={
             "payload": {
-                "data_source_id": 10,
-                "rule_id": 20,
+                "data_source_id": data_source_id,
+                "rule_id": rule_id,
                 "execution_id": "shop-api-exec-1",
                 "all": True,
                 "shop_ids": ["shop-10", "shop-11"],
@@ -322,8 +353,8 @@ async def test_run_shop_dashboard_task_persists_payload_and_dispatches_overrides
     assert execution["queue_task_id"] == "queue-shop-task-1"
     assert execution["payload"]["timezone"] == "Asia/Shanghai"
     assert execution["payload"]["filters"]["region"] == "east"
-    assert captured["data_source_id"] == 10
-    assert captured["rule_id"] == 20
+    assert captured["data_source_id"] == data_source_id
+    assert captured["rule_id"] == rule_id
     assert captured["all"] is True
     assert captured["shop_ids"] == ["shop-10", "shop-11"]
     assert captured["timezone"] == "Asia/Shanghai"
@@ -438,3 +469,11 @@ async def test_run_shop_dashboard_task_requires_positive_ids(
     )
     assert invalid_int_resp.status_code == 400
     assert invalid_int_resp.json()["code"] == int(ErrorCode.TASK_INVALID_PAYLOAD)
+
+    missing_reference_resp = await api_client.post(
+        f"/api/v1/tasks/{task.id}/run",
+        json={"payload": {"data_source_id": 99999, "rule_id": 99999}},
+        headers=headers,
+    )
+    assert missing_reference_resp.status_code == 400
+    assert missing_reference_resp.json()["code"] == int(ErrorCode.TASK_INVALID_PAYLOAD)

@@ -352,6 +352,36 @@ async def test_collection_runtime_loader_should_capture_rule_version_and_snapsho
     assert loaded.effective_config_snapshot["rule_id"] == rule_id
 
 
+def test_collection_runtime_loader_should_inject_redis_client_for_default_catalog_service(
+    monkeypatch,
+):
+    from src.application.collection import runtime_loader as runtime_loader_module
+
+    captured: dict[str, Any] = {}
+    fake_redis_client = object()
+
+    class _FakeCatalogService:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(
+        runtime_loader_module,
+        "resolve_sync_redis_client",
+        lambda _redis_client=None: fake_redis_client,
+        raising=True,
+    )
+    monkeypatch.setattr(
+        runtime_loader_module,
+        "AccountShopCatalogService",
+        _FakeCatalogService,
+        raising=True,
+    )
+
+    runtime_loader_module.CollectionRuntimeLoader()
+
+    assert captured["redis_client"] is fake_redis_client
+
+
 @pytest.mark.asyncio
 async def test_collection_runtime_loader_should_resolve_all_mode_shop_ids_from_catalog_service(
     test_db,
