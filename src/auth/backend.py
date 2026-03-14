@@ -84,8 +84,16 @@ class RefreshTokenManager:
         token_created_time = parts[2]
 
         revoke_time = await self._cache.get(redis_keys.user_revoked(user_id=user_id))
-        if revoke_time and token_created_time <= revoke_time:
-            return None
+        if revoke_time:
+            try:
+                created_at = datetime.fromisoformat(token_created_time)
+                revoked_at = datetime.fromisoformat(revoke_time)
+            except ValueError:
+                if token_created_time <= revoke_time:
+                    return None
+            else:
+                if created_at <= revoked_at:
+                    return None
 
         return user_id
 

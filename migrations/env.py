@@ -10,7 +10,16 @@ from src.config import get_settings
 
 from src.auth.models import User  # noqa: F401
 from src.audit.schemas import AuditLog  # noqa: F401
-from src.domains.data_source.models import DataSource, ScrapingRule  # noqa: F401
+from src.domains.collection_job.models import CollectionJob  # noqa: F401
+from src.domains.data_source.models import DataSource  # noqa: F401
+from src.domains.scraping_rule.models import ScrapingRule  # noqa: F401
+from src.domains.shop_dashboard.models import (  # noqa: F401
+    ShopDashboardColdMetric,
+    ShopDashboardReview,
+    ShopDashboardScore,
+    ShopDashboardViolation,
+)
+from src.domains.task.models import TaskDefinition, TaskExecution  # noqa: F401
 
 config = context.config
 
@@ -19,7 +28,7 @@ settings = get_settings()
 config.set_main_option("sqlalchemy.url", settings.db.url)
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = SQLModel.metadata
 

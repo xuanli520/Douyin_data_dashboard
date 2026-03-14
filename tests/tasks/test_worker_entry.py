@@ -1,8 +1,8 @@
 def test_tasks_package_imports_task_modules():
     import src.tasks as tasks
 
-    assert hasattr(tasks, "douyin_orders")
-    assert hasattr(tasks, "douyin_products")
+    assert hasattr(tasks, "douyin_shop_dashboard")
+    assert hasattr(tasks, "douyin_shop_agent")
     assert hasattr(tasks, "etl_orders")
     assert hasattr(tasks, "etl_products")
 
@@ -11,16 +11,17 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
     from src.tasks import worker as module
 
     calls = []
+    monkeypatch.setattr(module, "_wait_forever", lambda: None)
     monkeypatch.setattr(
-        module.douyin_orders.sync_orders,
+        module.douyin_shop_dashboard.sync_shop_dashboard,
         "consume",
-        lambda: calls.append("collection_orders"),
+        lambda: calls.append("collection_shop_dashboard"),
         raising=False,
     )
     monkeypatch.setattr(
-        module.douyin_products.sync_products,
+        module.douyin_shop_agent.sync_shop_dashboard_agent,
         "consume",
-        lambda: calls.append("collection_products"),
+        lambda: calls.append("collection_shop_dashboard_agent"),
         raising=False,
     )
     monkeypatch.setattr(
@@ -36,15 +37,15 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
         raising=False,
     )
     monkeypatch.setattr(
-        module.douyin_orders.handle_collection_orders_dead_letter,
+        module.douyin_shop_dashboard.handle_collection_shop_dashboard_dead_letter,
         "consume",
-        lambda: calls.append("collection_orders_dlx"),
+        lambda: calls.append("collection_shop_dashboard_dlx"),
         raising=False,
     )
     monkeypatch.setattr(
-        module.douyin_products.handle_collection_products_dead_letter,
+        module.douyin_shop_agent.handle_collection_shop_dashboard_agent_dead_letter,
         "consume",
-        lambda: calls.append("collection_products_dlx"),
+        lambda: calls.append("collection_shop_dashboard_agent_dlx"),
         raising=False,
     )
     monkeypatch.setattr(
@@ -76,15 +77,47 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
     module.run_all(etl_processes=2)
     assert len(calls) == 8
     assert {
-        "collection_orders",
-        "collection_products",
+        "collection_shop_dashboard",
+        "collection_shop_dashboard_agent",
         ("etl_orders", 2),
         ("etl_products", 2),
-        "collection_orders_dlx",
-        "collection_products_dlx",
+        "collection_shop_dashboard_dlx",
+        "collection_shop_dashboard_agent_dlx",
         "etl_orders_dlx",
         "etl_products_dlx",
     } == set(calls)
+
+
+def test_worker_run_all_waits_for_non_blocking_consumers(monkeypatch):
+    from src.tasks import worker as module
+
+    calls = []
+
+    monkeypatch.setattr(
+        module,
+        "_queue_runners",
+        lambda _etl_processes: {
+            "collection_shop_dashboard": lambda: calls.append("consume_started")
+        },
+    )
+
+    class _FakeThread:
+        def __init__(self, target, name):
+            self._target = target
+            self.name = name
+
+        def start(self):
+            self._target()
+
+        def join(self):
+            return None
+
+    monkeypatch.setattr(module, "Thread", _FakeThread)
+    monkeypatch.setattr(module, "_wait_forever", lambda: calls.append("wait_forever"))
+
+    module.run_all(etl_processes=2)
+
+    assert calls == ["consume_started", "wait_forever"]
 
 
 def test_worker_run_queue_supports_dead_letter_queue(monkeypatch):

@@ -10,6 +10,8 @@ from src.domains.data_source.schemas import (
     DataSourceStatus,
     DataSourceType,
     DataSourceUpdate,
+)
+from src.domains.scraping_rule.schemas import (
     ScrapingRuleCreate,
     ScrapingRuleUpdate,
 )
@@ -172,6 +174,29 @@ class TestDataSourceCreateSchema:
         assert data["name"] == "Test Douyin Shop"
         assert data["type"] == "DOUYIN_SHOP"
 
+    async def test_create_endpoint_strips_request_method_and_masks_login_state(
+        self, test_client
+    ):
+        payload = DataSourceCreate(
+            name="Masked Login State DS",
+            type=DataSourceType.DOUYIN_SHOP,
+            config={
+                "api_key": "test_key",
+                "api_key_password": "test_password",
+                "api_base_url": "https://fxg.jinritemai.com",
+                "request_method": "POST",
+            },
+        )
+        response = await test_client.post(
+            "/api/v1/data-sources",
+            json=payload.model_dump(),
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["config"]["api_base_url"] == "https://fxg.jinritemai.com"
+        assert "request_method" not in data["config"]
+        assert "shop_dashboard_login_state" not in data["config"]
+
     async def test_create_endpoint_rejects_invalid_type(self, test_client):
         response = await test_client.post(
             "/api/v1/data-sources",
@@ -258,6 +283,40 @@ class TestDataSourceUpdateSchema:
         assert response.status_code == 200
         assert response.json()["data"]["config"]["host"] == "new_host"
 
+    async def test_update_endpoint_strips_request_method(self, test_client):
+        create_payload = DataSourceCreate(
+            name="Update Request Method DS",
+            type=DataSourceType.DOUYIN_SHOP,
+            config={
+                "api_key": "test_key",
+                "api_key_password": "test_password",
+                "api_base_url": "https://old.example.com",
+            },
+        )
+        create_response = await test_client.post(
+            "/api/v1/data-sources",
+            json=create_payload.model_dump(),
+        )
+        ds_id = create_response.json()["data"]["id"]
+
+        update_payload = DataSourceUpdate(
+            config={
+                "api_key": "test_key",
+                "api_key_password": "test_password",
+                "api_base_url": "https://new.example.com",
+                "request_method": "GET",
+            }
+        )
+        response = await test_client.put(
+            f"/api/v1/data-sources/{ds_id}",
+            json=update_payload.model_dump(exclude_none=True),
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["config"]["api_base_url"] == "https://new.example.com"
+        assert "request_method" not in data["config"]
+        assert "shop_dashboard_login_state" not in data["config"]
+
 
 class TestScrapingRuleCreateSchema:
     async def test_create_scraping_rule_endpoint(self, test_client):
@@ -277,7 +336,6 @@ class TestScrapingRuleCreateSchema:
             name="Order Collection Rule",
             target_type=TargetType.ORDER_FULFILLMENT,
             config={"batch_size": 100},
-            schedule="0 */6 * * *",
             description="Collect orders every 6 hours",
         )
         response = await test_client.post(
@@ -304,7 +362,7 @@ class TestScrapingRuleCreateSchema:
 
 
 class TestScrapingRuleUpdateSchema:
-    async def test_update_scraping_rule_schedule(self, test_client):
+    async def test_update_scraping_rule_config(self, test_client):
         ds_payload = DataSourceCreate(
             name="Test DS",
             type=DataSourceType.DOUYIN_SHOP,
@@ -320,7 +378,6 @@ class TestScrapingRuleUpdateSchema:
             data_source_id=ds_id,
             name="Test Rule",
             target_type=TargetType.ORDER_FULFILLMENT,
-            schedule="0 0 * * *",
         )
         rule_response = await test_client.post(
             "/api/v1/scraping-rules",
@@ -328,13 +385,13 @@ class TestScrapingRuleUpdateSchema:
         )
         rule_id = rule_response.json()["data"]["id"]
 
-        update_payload = ScrapingRuleUpdate(schedule="0 */12 * * *")
+        update_payload = ScrapingRuleUpdate(config={"batch_size": 200})
         response = await test_client.put(
             f"/api/v1/scraping-rules/{rule_id}",
             json=update_payload.model_dump(exclude_none=True),
         )
         assert response.status_code == 200
-        assert response.json()["data"]["schedule"] == "0 */12 * * *"
+        assert response.json()["data"]["config"]["batch_size"] == 200
 
     async def test_update_scraping_rule_deactivation(self, test_client):
         ds_payload = DataSourceCreate(
@@ -410,7 +467,6 @@ class TestSchemaResponseStructure:
             name="Field Test Rule",
             target_type=TargetType.CUSTOMER,
             config={"limit": 1000},
-            schedule="0 0 * * 0",
             is_active=True,
             description="Testing all response fields",
         )
@@ -427,8 +483,9 @@ class TestSchemaResponseStructure:
             "name",
             "target_type",
             "config",
-            "schedule",
             "is_active",
+            "status",
+            "version",
             "description",
             "created_at",
             "updated_at",

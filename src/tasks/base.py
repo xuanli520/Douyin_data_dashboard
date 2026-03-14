@@ -1,31 +1,142 @@
-from src.config import get_settings
 from src.tasks.funboost_compat import AbstractConsumer, FunctionResultStatus
+from src.tasks.status_store import write_finished_task_status
 
 
 class TaskStatusMixin(AbstractConsumer):
+    @staticmethod
+    def _normalize_int(value: object) -> int | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value) if value.is_integer() else None
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return None
+            try:
+                return int(text)
+            except ValueError:
+                try:
+                    float_value = float(text)
+                except ValueError:
+                    return None
+                return int(float_value) if float_value.is_integer() else None
+        return None
+
+    @classmethod
+    def _resolve_processed_rows(
+        cls,
+        *,
+        body: object,
+        result: object,
+    ) -> int | None:
+        if isinstance(result, dict):
+            if "processed_rows" in result:
+                normalized = cls._normalize_int(result.get("processed_rows"))
+                if normalized is not None:
+                    return max(normalized, 0)
+        if isinstance(body, dict) and "processed_rows" in body:
+            normalized = cls._normalize_int(body.get("processed_rows"))
+            if normalized is not None:
+                return max(normalized, 0)
+        return None
+
+    @classmethod
+    def _resolve_triggered_by(
+        cls,
+        *,
+        body: object,
+        result: object,
+    ) -> int | None:
+        normalized = None
+        if isinstance(result, dict):
+            normalized = cls._normalize_int(result.get("triggered_by"))
+        if normalized is None and isinstance(body, dict):
+            normalized = cls._normalize_int(body.get("triggered_by"))
+        if normalized is None or normalized <= 0:
+            return None
+        return normalized
+
+    @staticmethod
+    def _resolve_error_message(
+        *,
+        body: object,
+        result: object,
+        exception_msg: object,
+        success: bool,
+    ) -> str | None:
+        if success:
+            return None
+        error_message = None
+        if isinstance(result, dict):
+            result_error = result.get("error_message")
+            if isinstance(result_error, str) and result_error:
+                error_message = result_error
+        if error_message is None and isinstance(body, dict):
+            body_error = body.get("error_message")
+            if isinstance(body_error, str) and body_error:
+                error_message = body_error
+        if error_message is None and isinstance(exception_msg, str) and exception_msg:
+            error_message = exception_msg
+        return error_message
+
     def _sync_and_aio_frame_custom_record_process_info_func(
         self, current_function_result_status: FunctionResultStatus, kw: dict
     ) -> None:
-        task_id = "unknown"
+        task_id = ""
+        task_name = ""
+        success = False
+        body: object = {}
+        result: object = None
+        triggered_by: int | None = None
+        processed_rows: int | None = None
         try:
-            redis_client = self.publisher.redis_db_frame
-            task_id = str(current_function_result_status.task_id)
-            body = kw.get("body", {})
-            triggered_by = body.get("triggered_by") if isinstance(body, dict) else None
-            key = f"douyin:task:status:{task_id}"
-            redis_client.hset(
-                key,
-                mapping={
-                    "status": (
-                        "SUCCESS"
-                        if current_function_result_status.success
-                        else "FAILURE"
-                    ),
-                    "completed_at": current_function_result_status.time_end,
-                    "task_name": current_function_result_status.function,
-                    "triggered_by": triggered_by if triggered_by is not None else "",
-                },
+            raw_task_id = getattr(current_function_result_status, "task_id", None)
+            task_id = str(raw_task_id or "").strip()
+            task_name = str(
+                getattr(current_function_result_status, "function", "") or ""
             )
-            redis_client.expire(key, get_settings().funboost.status_ttl_seconds)
+            if not task_id:
+                self.logger.error(
+                    "skip writing task status because task_id is missing function=%s",
+                    task_name,
+                )
+                return
+            body = kw.get("body", {}) if isinstance(kw, dict) else {}
+            result = getattr(current_function_result_status, "result", None)
+            success = bool(current_function_result_status.success)
+            triggered_by = self._resolve_triggered_by(body=body, result=result)
+            processed_rows = self._resolve_processed_rows(body=body, result=result)
+            error_message = self._resolve_error_message(
+                body=body,
+                result=result,
+                exception_msg=getattr(
+                    current_function_result_status, "exception_msg", None
+                ),
+                success=success,
+            )
+            status_owner = getattr(self, "publisher", None) or self
+
+            write_finished_task_status(
+                owner=status_owner,
+                task_id=task_id,
+                task_name=task_name,
+                success=success,
+                completed_at=current_function_result_status.time_end,
+                triggered_by=triggered_by,
+                processed_rows=processed_rows,
+                error_message=error_message,
+            )
         except Exception:
-            self.logger.exception("failed to write task status: %s", task_id)
+            self.logger.exception(
+                "failed to write task status task_id=%s function=%s success=%s body_type=%s result_type=%s triggered_by=%s processed_rows=%s",
+                task_id,
+                task_name,
+                success,
+                type(body).__name__,
+                type(result).__name__,
+                triggered_by,
+                processed_rows,
+            )

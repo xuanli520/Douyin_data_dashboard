@@ -1,6 +1,7 @@
+import json
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 
 from src.audit import AuditService, get_audit_service
 from src.audit.schemas import AuditAction, AuditResult
@@ -15,21 +16,17 @@ from src.domains.data_source.schemas import (
     DataSourceStatus,
     DataSourceType,
     DataSourceUpdate,
-    ScrapingRuleCreate,
-    ScrapingRuleListItem,
-    ScrapingRuleResponse,
-    ScrapingRuleUpdate,
 )
-from src.domains.data_source.enums import ScrapingRuleStatus, TargetType
 from src.domains.data_source.services import (
     DataSourceService,
     get_data_source_service,
 )
 from src.responses.base import Response
+from src.exceptions import BusinessException
+from src.shared.errors import ErrorCode
 from src.shared.schemas import PaginatedData, PaginationParams
 
 router = APIRouter(prefix="/data-sources", tags=["data-source"])
-scraping_rule_router = APIRouter(prefix="/scraping-rules", tags=["scraping-rule"])
 
 
 @router.get("", response_model=PaginatedData[DataSourceResponse])
@@ -114,6 +111,104 @@ async def update_data_source(
         user_agent=user_agent,
         ip=ip,
         extra={"name": ds.name, "source_type": ds.type},
+    )
+    return Response.success(data=ds)
+
+
+@router.post(
+    "/{ds_id}/shop-dashboard/login-state",
+    response_model=Response[DataSourceResponse],
+)
+async def upload_shop_dashboard_login_state(
+    request: Request,
+    ds_id: int,
+    account_id: str = Form(...),
+    file: UploadFile = File(...),
+    service: DataSourceService = Depends(get_data_source_service),
+    user: User = Depends(current_user),
+    audit_service: AuditService = Depends(get_audit_service),
+    request_id: str = Depends(generate_request_id),
+    _=Depends(require_permissions(DataSourcePermission.UPDATE, bypass_superuser=True)),
+) -> Response[DataSourceResponse]:
+    normalized_account_id = account_id.strip()
+    if not normalized_account_id:
+        raise BusinessException(
+            ErrorCode.DATASOURCE_LOGIN_STATE_INVALID,
+            "account_id is required",
+        )
+
+    payload_bytes = await file.read()
+    try:
+        payload = json.loads(payload_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise BusinessException(
+            ErrorCode.DATASOURCE_LOGIN_STATE_INVALID,
+            "invalid storage_state payload",
+        ) from exc
+    if not isinstance(payload, dict):
+        raise BusinessException(
+            ErrorCode.DATASOURCE_LOGIN_STATE_INVALID,
+            "storage_state payload must be a JSON object",
+        )
+
+    ds = await service.update_shop_dashboard_login_state(
+        ds_id,
+        account_id=normalized_account_id,
+        storage_state=payload,
+        user_id=user.id,
+    )
+
+    user_agent, ip = extract_client_info(request)
+    meta = dict(ds.config.get("shop_dashboard_login_state_meta") or {})
+    await audit_service.log(
+        action=AuditAction.DATA_SOURCE_UPDATE,
+        result=AuditResult.SUCCESS,
+        actor_id=user.id,
+        resource_type="data_source",
+        resource_id=str(ds.id),
+        request_id=request_id,
+        user_agent=user_agent,
+        ip=ip,
+        extra={
+            "name": ds.name,
+            "source_type": ds.type,
+            "account_id": normalized_account_id,
+            "cookie_count": meta.get("cookie_count", 0),
+        },
+    )
+    return Response.success(data=ds)
+
+
+@router.delete(
+    "/{ds_id}/shop-dashboard/login-state",
+    response_model=Response[DataSourceResponse],
+)
+async def clear_shop_dashboard_login_state(
+    request: Request,
+    ds_id: int,
+    service: DataSourceService = Depends(get_data_source_service),
+    user: User = Depends(current_user),
+    audit_service: AuditService = Depends(get_audit_service),
+    request_id: str = Depends(generate_request_id),
+    _=Depends(require_permissions(DataSourcePermission.UPDATE, bypass_superuser=True)),
+) -> Response[DataSourceResponse]:
+    ds = await service.clear_shop_dashboard_login_state(ds_id, user_id=user.id)
+
+    user_agent, ip = extract_client_info(request)
+    await audit_service.log(
+        action=AuditAction.DATA_SOURCE_UPDATE,
+        result=AuditResult.SUCCESS,
+        actor_id=user.id,
+        resource_type="data_source",
+        resource_id=str(ds.id),
+        request_id=request_id,
+        user_agent=user_agent,
+        ip=ip,
+        extra={
+            "name": ds.name,
+            "source_type": ds.type,
+            "login_state": "cleared",
+        },
     )
     return Response.success(data=ds)
 
@@ -222,83 +317,3 @@ async def validate_connection(
         extra={"name": ds.name, "source_type": ds.type, "validation_result": result},
     )
     return Response.success(data=result)
-
-
-@router.get("/{ds_id}/scraping-rules", response_model=Response[list[Any]])
-async def list_scraping_rules_by_datasource(
-    ds_id: int,
-    service: DataSourceService = Depends(get_data_source_service),
-    user: User = Depends(current_user),
-    _=Depends(require_permissions(DataSourcePermission.VIEW, bypass_superuser=True)),
-) -> Response[list[Any]]:
-    rules = await service.list_scraping_rules(ds_id)
-    return Response.success(data=rules)
-
-
-@scraping_rule_router.post("", response_model=Response[ScrapingRuleResponse])
-async def create_scraping_rule(
-    data: ScrapingRuleCreate,
-    service: DataSourceService = Depends(get_data_source_service),
-    user: User = Depends(current_user),
-    _=Depends(require_permissions(DataSourcePermission.CREATE, bypass_superuser=True)),
-) -> Response[ScrapingRuleResponse]:
-    rule = await service.create_scraping_rule(data.data_source_id, data)
-    return Response.success(data=rule)
-
-
-@scraping_rule_router.get("", response_model=PaginatedData[ScrapingRuleListItem])
-async def list_scraping_rules(
-    pagination: PaginationParams = Depends(),
-    name: str | None = Query(None, max_length=100),
-    target_type: TargetType | None = Query(None),
-    status: ScrapingRuleStatus | None = Query(None),
-    data_source_id: int | None = Query(None, ge=1),
-    service: DataSourceService = Depends(get_data_source_service),
-    user: User = Depends(current_user),
-    _=Depends(require_permissions(DataSourcePermission.VIEW, bypass_superuser=True)),
-) -> PaginatedData[ScrapingRuleListItem]:
-    rules, total = await service.list_scraping_rules_paginated(
-        page=pagination.page,
-        size=pagination.size,
-        name=name,
-        target_type=target_type,
-        status=status,
-        data_source_id=data_source_id,
-    )
-    return PaginatedData.create(
-        items=rules, total=total, page=pagination.page, size=pagination.size
-    )
-
-
-@scraping_rule_router.put("/{rule_id}", response_model=Response[ScrapingRuleResponse])
-async def update_scraping_rule(
-    rule_id: int,
-    data: ScrapingRuleUpdate,
-    service: DataSourceService = Depends(get_data_source_service),
-    user: User = Depends(current_user),
-    _=Depends(require_permissions(DataSourcePermission.UPDATE, bypass_superuser=True)),
-) -> Response[ScrapingRuleResponse]:
-    rule = await service.update_scraping_rule(rule_id, data)
-    return Response.success(data=rule)
-
-
-@scraping_rule_router.get("/{rule_id}", response_model=Response[ScrapingRuleResponse])
-async def get_scraping_rule(
-    rule_id: int,
-    service: DataSourceService = Depends(get_data_source_service),
-    user: User = Depends(current_user),
-    _=Depends(require_permissions(DataSourcePermission.VIEW, bypass_superuser=True)),
-) -> Response[ScrapingRuleResponse]:
-    rule = await service.get_scraping_rule(rule_id)
-    return Response.success(data=rule)
-
-
-@scraping_rule_router.delete("/{rule_id}", response_model=Response[None])
-async def delete_scraping_rule(
-    rule_id: int,
-    service: DataSourceService = Depends(get_data_source_service),
-    user: User = Depends(current_user),
-    _=Depends(require_permissions(DataSourcePermission.DELETE, bypass_superuser=True)),
-) -> Response[None]:
-    await service.delete_scraping_rule(rule_id)
-    return Response.success()

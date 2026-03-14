@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 from typing import NamedTuple
 from json import JSONDecodeError
 
+from src.cache import CacheProtocol
+
 
 class ProgressData(NamedTuple):
     file_id: str
@@ -15,8 +17,8 @@ class ProgressData(NamedTuple):
 
 
 class ParseProgressStore:
-    def __init__(self, redis_cache):
-        self._cache = redis_cache
+    def __init__(self, cache: CacheProtocol):
+        self._cache = cache
         self._prefix = "data_import:progress:"
 
     def _key(self, file_id: str) -> str:

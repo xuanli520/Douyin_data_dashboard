@@ -3,13 +3,15 @@ from datetime import datetime
 import pytest
 from pydantic import ValidationError
 
-from src.domains.data_source.enums import TargetType
+from src.domains.data_source.enums import ScrapingRuleStatus, TargetType
 from src.domains.data_source.schemas import (
     DataSourceCreate,
     DataSourceResponse,
     DataSourceStatus,
     DataSourceType,
     DataSourceUpdate,
+)
+from src.domains.scraping_rule.schemas import (
     ScrapingRuleCreate,
     ScrapingRuleResponse,
     ScrapingRuleUpdate,
@@ -159,7 +161,6 @@ class TestScrapingRuleCreate:
             name="Test Rule",
             target_type=TargetType.ORDER_FULFILLMENT,
             config={"param": "value"},
-            schedule="0 */6 * * *",
             is_active=True,
             description="Test rule description",
         )
@@ -167,7 +168,6 @@ class TestScrapingRuleCreate:
         assert rule.name == "Test Rule"
         assert rule.target_type == TargetType.ORDER_FULFILLMENT
         assert rule.config == {"param": "value"}
-        assert rule.schedule == "0 */6 * * *"
         assert rule.is_active is True
         assert rule.description == "Test rule description"
 
@@ -178,7 +178,6 @@ class TestScrapingRuleCreate:
             target_type=TargetType.PRODUCT,
         )
         assert rule.config == {}
-        assert rule.schedule is None
         assert rule.is_active is True
         assert rule.description is None
 
@@ -215,16 +214,6 @@ class TestScrapingRuleCreate:
             )
         assert "name" in str(exc_info.value)
 
-    def test_schedule_max_length(self):
-        with pytest.raises(ValidationError) as exc_info:
-            ScrapingRuleCreate(
-                data_source_id=1,
-                name="Test",
-                target_type=TargetType.ORDER_FULFILLMENT,
-                schedule="x" * 101,
-            )
-        assert "schedule" in str(exc_info.value)
-
     def test_description_max_length(self):
         with pytest.raises(ValidationError) as exc_info:
             ScrapingRuleCreate(
@@ -241,7 +230,6 @@ class TestScrapingRuleUpdate:
         rule = ScrapingRuleUpdate(name="Updated Rule")
         assert rule.name == "Updated Rule"
         assert rule.config is None
-        assert rule.schedule is None
         assert rule.is_active is None
         assert rule.description is None
 
@@ -254,7 +242,6 @@ class TestScrapingRuleUpdate:
         rule = ScrapingRuleUpdate()
         assert rule.name is None
         assert rule.config is None
-        assert rule.schedule is None
         assert rule.is_active is None
         assert rule.description is None
 
@@ -267,11 +254,6 @@ class TestScrapingRuleUpdate:
         with pytest.raises(ValidationError) as exc_info:
             ScrapingRuleUpdate(name="x" * 101)
         assert "name" in str(exc_info.value)
-
-    def test_schedule_max_length_validation(self):
-        with pytest.raises(ValidationError) as exc_info:
-            ScrapingRuleUpdate(schedule="x" * 101)
-        assert "schedule" in str(exc_info.value)
 
     def test_description_max_length_validation(self):
         with pytest.raises(ValidationError) as exc_info:
@@ -288,8 +270,9 @@ class TestScrapingRuleResponse:
             name="Test Rule",
             target_type=TargetType.CONTENT_VIDEO,
             config={"param": "value"},
-            schedule="0 0 * * *",
             is_active=True,
+            status=ScrapingRuleStatus.ACTIVE,
+            version=1,
             description="Test description",
             created_at=now,
             updated_at=now,
@@ -325,8 +308,9 @@ class TestSchemaSerialization:
             name="Test Rule",
             target_type=TargetType.ORDER_FULFILLMENT,
             config={},
-            schedule=None,
             is_active=True,
+            status=ScrapingRuleStatus.ACTIVE,
+            version=1,
             description=None,
             created_at=now,
             updated_at=now,

@@ -9,7 +9,31 @@ services:
     env_file:
       - ../.env
     ports:
-      - "8000:8000"
+      - "${APP_EXPOSE_PORT:-8000}:8000"
+    depends_on:
+      - db
+      - redis
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: fastapi-boilerplate:latest
+    env_file:
+      - ../.env
+    command: ["sh", "-c", "${WORKER_COMMAND:-python -m src.tasks.worker}"]
+    depends_on:
+      - db
+      - redis
+
+  scheduler:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: fastapi-boilerplate:latest
+    env_file:
+      - ../.env
+    command: ["sh", "-c", "${SCHEDULER_COMMAND:-python -m src.tasks.beat}"]
     depends_on:
       - db
       - redis
@@ -17,24 +41,24 @@ services:
   db:
     image: postgres:15-alpine
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: appdb
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-S3curePg_7Qm9K2vX4rT8wL5}
+      POSTGRES_DB: ${POSTGRES_DB:-appdb}
     ports:
-      - "5432:5432"
+      - "${DB_EXPOSE_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--requirepass", "${REDIS_PASSWORD:-S3cureRd_6Np4Zx8Jq2Vt9Hy}"]
     ports:
-      - "6379:6379"
+      - "${REDIS_EXPOSE_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
 

@@ -1,6 +1,5 @@
 from collections.abc import AsyncGenerator
 from typing import Any, Callable
-from uuid import uuid4
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,25 +7,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.domains.data_source.enums import (
     DataSourceStatus as ModelDataSourceStatus,
     DataSourceType as ModelDataSourceType,
-    ScrapingRuleStatus,
-    TargetType,
 )
-from src.domains.data_source.models import DataSource, ScrapingRule
-from src.domains.data_source.repository import (
-    DataSourceRepository,
-    ScrapingRuleRepository,
+from src.domains.data_source.models import DataSource
+from src.domains.data_source.repository import DataSourceRepository
+from src.domains.data_source.login_state import (
+    build_login_state_meta,
+    normalize_login_state,
 )
-from src.domains.data_source.config_mapper import ScrapingRuleConfigMapper
 from src.domains.data_source.schemas import (
     DataSourceCreate,
     DataSourceResponse,
     DataSourceStatus,
     DataSourceType,
     DataSourceUpdate,
-    ScrapingRuleCreate,
-    ScrapingRuleListItem,
-    ScrapingRuleResponse,
-    ScrapingRuleUpdate,
 )
 from src.exceptions import BusinessException
 from src.session import get_session
@@ -94,15 +87,109 @@ class DataSourceTypeRegistry:
         return False, f"Unsupported source type: {ds.source_type}"
 
 
+def _extract_shop_dashboard_login_state(config: dict[str, Any]) -> dict[str, Any]:
+    payload = config.get("shop_dashboard_login_state")
+    if isinstance(payload, dict):
+        return dict(payload)
+    return {}
+
+
+def _extract_shop_dashboard_credentials(config: dict[str, Any]) -> dict[str, Any]:
+    login_state = _extract_shop_dashboard_login_state(config)
+    raw_credentials = login_state.get("credentials")
+    credentials: dict[str, Any] = {}
+    if isinstance(raw_credentials, dict):
+        credentials.update(
+            {
+                str(key): value
+                for key, value in raw_credentials.items()
+                if value is not None
+            }
+        )
+
+    api_key = config.get("api_key")
+    if api_key:
+        credentials.setdefault("api_key", api_key)
+    api_key_password = config.get("api_key_password") or config.get("api_secret")
+    if api_key_password:
+        credentials.setdefault("api_key_password", api_key_password)
+    access_token = config.get("access_token")
+    if access_token:
+        credentials.setdefault("access_token", access_token)
+    refresh_token = config.get("refresh_token")
+    if refresh_token:
+        credentials.setdefault("refresh_token", refresh_token)
+    token_expires_at = config.get("token_expires_at")
+    if token_expires_at:
+        credentials.setdefault("token_expires_at", token_expires_at)
+    return credentials
+
+
+def _normalize_shop_dashboard_config(config: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(config)
+    normalized.pop("request_method", None)
+
+    login_state = _extract_shop_dashboard_login_state(normalized)
+    credentials = _extract_shop_dashboard_credentials(normalized)
+    if credentials:
+        login_state["credentials"] = credentials
+    if login_state:
+        state_version = login_state.get("state_version")
+        login_state["state_version"] = (
+            str(state_version).strip() if state_version else "v1"
+        )
+        normalized["shop_dashboard_login_state"] = login_state
+
+    for key in (
+        "api_key",
+        "api_secret",
+        "api_key_password",
+        "access_token",
+        "refresh_token",
+        "token_expires_at",
+    ):
+        normalized.pop(key, None)
+    return normalized
+
+
+def _has_valid_storage_state_cookies(config: dict[str, Any]) -> bool:
+    login_state = _extract_shop_dashboard_login_state(config)
+    storage_state = login_state.get("storage_state")
+    if not isinstance(storage_state, dict):
+        return False
+    cookies = storage_state.get("cookies")
+    if not isinstance(cookies, list):
+        return False
+    for cookie in cookies:
+        if not isinstance(cookie, dict):
+            continue
+        name = cookie.get("name")
+        value = cookie.get("value")
+        if str(name or "").strip() and value is not None and str(value).strip():
+            return True
+    return False
+
+
+def _has_valid_cookie_mapping(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(
+            str(key or "").strip() and item is not None and str(item).strip()
+            for key, item in value.items()
+        )
+    if isinstance(value, str):
+        cookie_pairs = [item.strip() for item in value.split(";") if item.strip()]
+        for pair in cookie_pairs:
+            if "=" not in pair:
+                continue
+            key, item = pair.split("=", 1)
+            if key.strip() and item.strip():
+                return True
+    return False
+
+
 @DataSourceTypeRegistry.register_validator(DataSourceType.DOUYIN_SHOP)
 def _validate_douyin_api_config(config: dict[str, Any]) -> None:
-    required = ["api_key", "api_secret"]
-    missing = [f for f in required if not config.get(f)]
-    if missing:
-        raise BusinessException(
-            ErrorCode.DATA_VALIDATION_FAILED,
-            f"Missing required fields: {', '.join(missing)}",
-        )
+    _ = config
 
 
 @DataSourceTypeRegistry.register_validator(DataSourceType.FILE_IMPORT)
@@ -154,25 +241,18 @@ def _validate_douyin_api_config_v2(config: dict[str, Any]) -> None:
 
 @DataSourceTypeRegistry.register_extractor(DataSourceType.DOUYIN_SHOP)
 def _extract_douyin_api_config(config: dict[str, Any]) -> dict[str, Any]:
+    normalized = _normalize_shop_dashboard_config(config)
     return {
-        "extra_config": config,
-        "api_key": config.get("api_key"),
-        "api_secret": config.get("api_secret"),
-        "shop_id": config.get("shop_id"),
-        "access_token": config.get("access_token"),
-        "refresh_token": config.get("refresh_token"),
-        "rate_limit": config.get("rate_limit", 100),
-        "retry_count": config.get("retry_count", 3),
-        "timeout": config.get("timeout", 30),
+        "extra_config": normalized,
+        "rate_limit": normalized.get("rate_limit", 100),
+        "retry_count": normalized.get("retry_count", 3),
+        "timeout": normalized.get("timeout", 30),
     }
 
 
 @DataSourceTypeRegistry.register_extractor(DataSourceType.SELF_HOSTED)
 def _extract_database_config(config: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "extra_config": config,
-        "account_name": config.get("connection_string", ""),
-    }
+    return {"extra_config": config}
 
 
 @DataSourceTypeRegistry.register_extractor(DataSourceType.FILE_IMPORT)
@@ -197,9 +277,12 @@ def _extract_file_upload_config_v2(config: dict[str, Any]) -> dict[str, Any]:
 
 @DataSourceTypeRegistry.register_connection_tester(ModelDataSourceType.DOUYIN_SHOP)
 async def _test_douyin_shop_connection(ds: DataSource) -> tuple[bool, str]:
-    if not ds.api_key or not ds.api_secret:
-        return False, "Missing API credentials"
-    return True, "Connection validated"
+    config = dict(ds.extra_config or {})
+    if _has_valid_storage_state_cookies(config):
+        return True, "Connection validated"
+    if _has_valid_cookie_mapping(config.get("cookies")):
+        return True, "Connection validated"
+    return False, "Missing shop dashboard login state cookies"
 
 
 @DataSourceTypeRegistry.register_connection_tester(ModelDataSourceType.DOUYIN_API)
@@ -243,11 +326,9 @@ class DataSourceService:
     def __init__(
         self,
         ds_repo: DataSourceRepository,
-        rule_repo: ScrapingRuleRepository,
         session: AsyncSession,
     ):
         self.ds_repo = ds_repo
-        self.rule_repo = rule_repo
         self.session = session
 
     async def create(self, data: DataSourceCreate, user_id: int) -> DataSourceResponse:
@@ -327,6 +408,90 @@ class DataSourceService:
             )
 
         ds = await self.ds_repo.update(ds_id, update_data)
+        try:
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
+        return self._build_data_source_response(ds)
+
+    async def update_shop_dashboard_login_state(
+        self,
+        ds_id: int,
+        *,
+        account_id: str,
+        storage_state: dict[str, Any],
+        user_id: int,
+    ) -> DataSourceResponse:
+        ds = await self.ds_repo.get_by_id(ds_id)
+        if not ds:
+            raise BusinessException(
+                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
+            )
+        self._ensure_shop_dashboard_source_type(ds)
+
+        raw_state_version = storage_state.get("state_version")
+        normalized_storage_state = normalize_login_state(storage_state)
+        extra_config = dict(ds.extra_config or {})
+        current_login_state = _extract_shop_dashboard_login_state(extra_config)
+        credentials = current_login_state.get("credentials")
+        next_login_state: dict[str, Any] = {}
+        if isinstance(credentials, dict) and credentials:
+            next_login_state["credentials"] = dict(credentials)
+
+        state_version = (
+            str(raw_state_version).strip()
+            if raw_state_version is not None and str(raw_state_version).strip()
+            else str(current_login_state.get("state_version") or "").strip()
+        ) or str(normalized_storage_state.get("state_version") or "v1").strip()
+        normalized_storage_state["state_version"] = state_version
+        next_login_state["state_version"] = state_version
+        next_login_state["storage_state"] = normalized_storage_state
+
+        extra_config["shop_dashboard_login_state"] = next_login_state
+        extra_config["shop_dashboard_login_state_meta"] = build_login_state_meta(
+            normalized_storage_state,
+            account_id=account_id,
+        )
+
+        ds = await self.ds_repo.update(
+            ds_id,
+            {
+                "extra_config": extra_config,
+                "updated_by_id": user_id,
+            },
+        )
+        try:
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
+        return self._build_data_source_response(ds)
+
+    async def clear_shop_dashboard_login_state(
+        self,
+        ds_id: int,
+        *,
+        user_id: int,
+    ) -> DataSourceResponse:
+        ds = await self.ds_repo.get_by_id(ds_id)
+        if not ds:
+            raise BusinessException(
+                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
+            )
+        self._ensure_shop_dashboard_source_type(ds)
+
+        extra_config = dict(ds.extra_config or {})
+        extra_config.pop("shop_dashboard_login_state", None)
+        extra_config.pop("shop_dashboard_login_state_meta", None)
+
+        ds = await self.ds_repo.update(
+            ds_id,
+            {
+                "extra_config": extra_config,
+                "updated_by_id": user_id,
+            },
+        )
         try:
             await self.session.commit()
         except Exception:
@@ -421,180 +586,12 @@ class DataSourceService:
                 raise
             return {"valid": False, "message": message}
 
-    async def create_scraping_rule(
-        self, ds_id: int, data: ScrapingRuleCreate
-    ) -> ScrapingRuleResponse:
-        ds = await self.ds_repo.get_by_id(ds_id)
-        if not ds:
+    def _ensure_shop_dashboard_source_type(self, ds: DataSource) -> None:
+        if ds.source_type != ModelDataSourceType.DOUYIN_SHOP:
             raise BusinessException(
-                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
+                ErrorCode.DATASOURCE_UNSUPPORTED_TYPE,
+                "Shop dashboard login state is only supported for DOUYIN_SHOP",
             )
-
-        if ds.status != ModelDataSourceStatus.ACTIVE:
-            raise BusinessException(
-                ErrorCode.DATA_VALIDATION_FAILED,
-                "Cannot create rule for inactive data source",
-            )
-
-        rule_data = {
-            "data_source_id": ds_id,
-            "name": data.name,
-            "target_type": data.target_type,
-            "description": data.description,
-            "schedule": {"cron": data.schedule} if data.schedule else None,
-        }
-        rule_data.update(ScrapingRuleConfigMapper.map_to_model_fields(data.config))
-
-        rule = await self.rule_repo.create(rule_data)
-        try:
-            await self.session.commit()
-        except Exception:
-            await self.session.rollback()
-            raise
-        return self._build_scraping_rule_response(rule)
-
-    async def list_scraping_rules(self, ds_id: int) -> list[ScrapingRuleResponse]:
-        ds = await self.ds_repo.get_by_id(ds_id)
-        if not ds:
-            raise BusinessException(
-                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
-            )
-
-        rules = await self.rule_repo.get_by_data_source(ds_id)
-        return [self._build_scraping_rule_response(r) for r in rules]
-
-    async def list_scraping_rules_paginated(
-        self,
-        page: int,
-        size: int,
-        name: str | None = None,
-        target_type: TargetType | None = None,
-        status: ScrapingRuleStatus | None = None,
-        data_source_id: int | None = None,
-    ) -> tuple[list[ScrapingRuleListItem], int]:
-        rules, total = await self.rule_repo.get_paginated(
-            page=page,
-            size=size,
-            name=name,
-            rule_type=target_type,
-            status=ScrapingRuleStatus(status.value.upper()) if status else None,
-            data_source_id=data_source_id,
-        )
-
-        return [self._build_scraping_rule_list_item(r) for r in rules], total
-
-    def _build_scraping_rule_list_item(
-        self, rule: ScrapingRule
-    ) -> ScrapingRuleListItem:
-        return ScrapingRuleListItem(
-            id=rule.id if rule.id is not None else 0,
-            data_source_id=rule.data_source_id
-            if rule.data_source_id is not None
-            else 0,
-            name=rule.name,
-            target_type=rule.target_type,
-            config=ScrapingRuleConfigMapper.build_config_from_model(rule),
-            schedule=rule.schedule.get("cron") if rule.schedule else None,
-            is_active=rule.status == ScrapingRuleStatus.ACTIVE,
-            description=rule.description,
-            created_at=rule.created_at,
-            updated_at=rule.updated_at,
-            data_source_name=rule.data_source.name if rule.data_source else None,
-        )
-
-    async def get_scraping_rule(self, rule_id: int) -> ScrapingRuleResponse:
-        rule = await self.rule_repo.get_by_id(rule_id)
-        if not rule:
-            raise BusinessException(
-                ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
-            )
-        return self._build_scraping_rule_response(rule)
-
-    async def update_scraping_rule(
-        self, rule_id: int, data: ScrapingRuleUpdate
-    ) -> ScrapingRuleResponse:
-        rule = await self.rule_repo.get_by_id(rule_id)
-        if not rule:
-            raise BusinessException(
-                ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
-            )
-
-        update_data: dict[str, Any] = {}
-        if data.name is not None:
-            update_data["name"] = data.name
-        if data.description is not None:
-            update_data["description"] = data.description
-        if data.schedule is not None:
-            update_data["schedule"] = {"cron": data.schedule}
-        if data.is_active is not None:
-            update_data["status"] = (
-                ScrapingRuleStatus.ACTIVE
-                if data.is_active
-                else ScrapingRuleStatus.INACTIVE
-            )
-        if data.config is not None:
-            update_data.update(
-                ScrapingRuleConfigMapper.map_to_model_fields(data.config)
-            )
-
-        rule = await self.rule_repo.update(rule_id, update_data)
-        try:
-            await self.session.commit()
-        except Exception:
-            await self.session.rollback()
-            raise
-        return self._build_scraping_rule_response(rule)
-
-    async def delete_scraping_rule(self, rule_id: int) -> None:
-        await self.rule_repo.delete(rule_id)
-        try:
-            await self.session.commit()
-        except Exception:
-            await self.session.rollback()
-            raise
-
-    async def trigger_collection(
-        self, ds_id: int, rule_id: int | None = None
-    ) -> dict[str, Any]:
-        ds = await self.ds_repo.get_by_id(ds_id, include_rules=True)
-        if not ds:
-            raise BusinessException(
-                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
-            )
-
-        if ds.status != ModelDataSourceStatus.ACTIVE:
-            raise BusinessException(
-                ErrorCode.DATA_VALIDATION_FAILED,
-                "Cannot trigger collection for inactive data source",
-            )
-
-        rules = (
-            ds.scraping_rules
-            if rule_id is None
-            else [r for r in ds.scraping_rules if r.id == rule_id]
-        )
-        if rule_id and not rules:
-            raise BusinessException(
-                ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
-            )
-
-        triggered = []
-        for rule in rules:
-            execution_id = f"exec_{uuid4().hex}"
-            triggered.append(
-                {
-                    "rule_id": rule.id,
-                    "rule_name": rule.name,
-                    "execution_id": execution_id,
-                    "status": "pending",
-                }
-            )
-
-        return {
-            "data_source_id": ds_id,
-            "triggered_rules": triggered,
-            "total": len(triggered),
-        }
 
     def _map_schema_type_to_model_type(
         self, schema_type: DataSourceType | None
@@ -614,32 +611,21 @@ class DataSourceService:
             )
         return result
 
+    def _build_data_source_config(self, ds: DataSource) -> dict[str, Any]:
+        config = dict(ds.extra_config or {})
+        config.pop("shop_dashboard_login_state", None)
+        return config
+
     def _build_data_source_response(self, ds: DataSource) -> DataSourceResponse:
         return DataSourceResponse(
             id=ds.id if ds.id is not None else 0,
             name=ds.name,
             type=self._map_model_type_to_schema_type(ds.source_type),
-            config=ds.extra_config or {},
+            config=self._build_data_source_config(ds),
             status=DataSourceStatus(ds.status.value),
             description=ds.description,
             created_at=ds.created_at,
             updated_at=ds.updated_at,
-        )
-
-    def _build_scraping_rule_response(self, rule: ScrapingRule) -> ScrapingRuleResponse:
-        return ScrapingRuleResponse(
-            id=rule.id if rule.id is not None else 0,
-            data_source_id=rule.data_source_id
-            if rule.data_source_id is not None
-            else 0,
-            name=rule.name,
-            target_type=rule.target_type,
-            config=ScrapingRuleConfigMapper.build_config_from_model(rule),
-            schedule=rule.schedule.get("cron") if rule.schedule else None,
-            is_active=rule.status == ScrapingRuleStatus.ACTIVE,
-            description=rule.description,
-            created_at=rule.created_at,
-            updated_at=rule.updated_at,
         )
 
 
@@ -647,5 +633,4 @@ async def get_data_source_service(
     session: AsyncSession = Depends(get_session),
 ) -> AsyncGenerator[DataSourceService, None]:
     ds_repo = DataSourceRepository(session=session)
-    rule_repo = ScrapingRuleRepository(session=session)
-    yield DataSourceService(ds_repo=ds_repo, rule_repo=rule_repo, session=session)
+    yield DataSourceService(ds_repo=ds_repo, session=session)

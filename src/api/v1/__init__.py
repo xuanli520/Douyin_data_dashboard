@@ -3,6 +3,7 @@ from . import (
     analysis,
     dashboard,
     data_import,
+    shop_dashboard,
     experience,
     exports,
     metrics,
@@ -15,7 +16,6 @@ from . import (
     shops,
     system,
     task,
-    task_status,
 )
 from . import alerts as alert_module
 from .permissions import router as permissions_router
@@ -26,6 +26,7 @@ __all__ = [
     "analysis",
     "dashboard",
     "data_import",
+    "shop_dashboard",
     "experience",
     "exports",
     "metrics",
@@ -39,5 +40,4 @@ __all__ = [
     "shops",
     "system",
     "task",
-    "task_status",
 ]

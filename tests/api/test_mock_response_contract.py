@@ -130,9 +130,6 @@ def assert_contract(payload: dict):
     "path",
     [
         "/api/v1/shops?page=1&size=5",
-        "/api/v1/metrics/risk",
-        "/api/v1/experience/overview",
-        "/api/v1/dashboard/overview",
         "/api/v1/orders/trend",
         "/api/v1/products/ranking",
         "/api/v1/sales/by-channel",

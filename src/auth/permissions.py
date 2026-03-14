@@ -42,6 +42,12 @@ class DashboardPermission:
     VIEW = "dashboard:view"
 
 
+class ShopDashboardPermission:
+    TRIGGER = "shop_dashboard:trigger"
+    STATUS = "shop_dashboard:status"
+    QUERY = "shop_dashboard:query"
+
+
 class OrderPermission:
     VIEW = "order:view"
 

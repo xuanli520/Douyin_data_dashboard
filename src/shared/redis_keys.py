@@ -25,11 +25,101 @@ class _UserRevoked:
         return f"{self.namespace}:{user_id}"
 
 
+class _ShopDashboardShopCatalog:
+    namespace = "shop_dashboard:shop_catalog"
+
+    def __call__(self, account_id: str) -> str:
+        return f"{self.namespace}:{account_id}"
+
+
+class _ShopDashboardShopCatalogRefreshLock:
+    namespace = "shop_dashboard:shop_catalog_refresh_lock"
+
+    def __call__(self, account_id: str) -> str:
+        return f"{self.namespace}:account:{account_id}"
+
+
+class _ShopDashboardShopMismatchFailCount:
+    namespace = "shop_dashboard:shop_mismatch_fail_count"
+
+    def __call__(self, account_id: str, shop_id: str) -> str:
+        return f"{self.namespace}:account:{account_id}:shop:{shop_id}"
+
+
+class _ShopDashboardShopMismatchCircuit:
+    namespace = "shop_dashboard:shop_mismatch_circuit"
+
+    def __call__(self, account_id: str, shop_id: str) -> str:
+        return f"{self.namespace}:account:{account_id}:shop:{shop_id}"
+
+
+class _ExperienceMetrics:
+    namespace = "experience:metrics"
+
+    def __call__(self, shop_id: int | str, dimension: str, date_range: str) -> str:
+        return f"{self.namespace}:{shop_id}:{dimension}:{date_range}"
+
+
+class _ExperienceDashboard:
+    namespace = "experience:dashboard"
+
+    def __call__(self, shop_id: int | str, date_range: str, section: str) -> str:
+        return f"{self.namespace}:{shop_id}:{date_range}:{section}"
+
+
+class _ExperienceIssues:
+    namespace = "experience:issues"
+
+    def __call__(
+        self,
+        shop_id: int | str,
+        dimension: str,
+        status: str,
+        date_range: str,
+        page: int,
+        size: int,
+    ) -> str:
+        return f"{self.namespace}:{shop_id}:{dimension}:{status}:{date_range}:{page}:{size}"
+
+
+class _ExperienceCacheDateIndex:
+    namespace = "experience:cache_index:date"
+
+    def __call__(self, shop_id: int | str, metric_date: str) -> str:
+        return f"{self.namespace}:{shop_id}:{metric_date}"
+
+
+class _ShopDashboardUnsupportedHttpShopSwitch:
+    namespace = "shop_dashboard:unsupported_http_shop_switch"
+
+    def __call__(self, account_id: str) -> str:
+        return f"{self.namespace}:account:{account_id}"
+
+
+class _ShopDashboardAccountSwitchObservation:
+    namespace = "shop_dashboard:account_switch_observation"
+
+    def __call__(self, account_id: str) -> str:
+        return f"{self.namespace}:account:{account_id}"
+
+
 class RedisKeyRegistry:
     """Registry for all Redis keys used in the application."""
 
     refresh_token = _RefreshToken()
     user_revoked = _UserRevoked()
+    shop_dashboard_shop_catalog = _ShopDashboardShopCatalog()
+    shop_dashboard_shop_catalog_refresh_lock = _ShopDashboardShopCatalogRefreshLock()
+    shop_dashboard_shop_mismatch_fail_count = _ShopDashboardShopMismatchFailCount()
+    shop_dashboard_shop_mismatch_circuit = _ShopDashboardShopMismatchCircuit()
+    experience_metrics = _ExperienceMetrics()
+    experience_dashboard = _ExperienceDashboard()
+    experience_issues = _ExperienceIssues()
+    experience_cache_date_index = _ExperienceCacheDateIndex()
+    shop_dashboard_unsupported_http_shop_switch = (
+        _ShopDashboardUnsupportedHttpShopSwitch()
+    )
+    shop_dashboard_account_switch_observation = _ShopDashboardAccountSwitchObservation()
 
 
 redis_keys = RedisKeyRegistry()
