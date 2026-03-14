@@ -2,6 +2,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.domains.data_source.enums import DataSourceStatus, DataSourceType, TargetType
+from src.domains.data_source.models import DataSource
+from src.domains.scraping_rule.models import ScrapingRule
 from src.domains.task.enums import (
     TaskDefinitionStatus,
     TaskExecutionStatus,
@@ -40,10 +43,13 @@ async def test_run_task_dispatches_by_task_type_and_persists_queued_execution(
         assert kwargs["batch_date"] == "2026-03-08"
         return SimpleNamespace(task_id="queue-products-1")
 
+    data_source_id = 0
+    rule_id = 0
+
     def _shop_push(**kwargs):
         called["shop"] += 1
-        assert kwargs["data_source_id"] == 10
-        assert kwargs["rule_id"] == 20
+        assert kwargs["data_source_id"] == data_source_id
+        assert kwargs["rule_id"] == rule_id
         assert kwargs["all"] is True
         assert kwargs["shop_id"] == "shop-10"
         assert kwargs["shop_ids"] == ["shop-10", "shop-11"]
@@ -71,13 +77,39 @@ async def test_run_task_dispatches_by_task_type_and_persists_queued_execution(
         assert kwargs["extra_config"] == {"cursor": "cursor-1"}
         return SimpleNamespace(task_id="queue-shop-1")
 
+    async def _skip_validate_target_shops(*_args, **_kwargs):
+        return None
+
     monkeypatch.setattr(module.process_orders, "push", _orders_push, raising=False)
     monkeypatch.setattr(module.process_products, "push", _products_push, raising=False)
     monkeypatch.setattr(module.sync_shop_dashboard, "push", _shop_push, raising=False)
+    monkeypatch.setattr(
+        TaskService,
+        "_validate_shop_dashboard_target_shops",
+        _skip_validate_target_shops,
+    )
 
     async with test_db() as session:
         registry = build_task_dispatcher_registry()
         service = TaskService(session=session, dispatcher_registry=registry)
+        data_source = DataSource(
+            name="task-dispatch-shop-data-source",
+            source_type=DataSourceType.DOUYIN_SHOP,
+            status=DataSourceStatus.ACTIVE,
+        )
+        session.add(data_source)
+        await session.flush()
+        data_source_id = data_source.id if data_source.id is not None else 0
+
+        rule = ScrapingRule(
+            name="task-dispatch-shop-rule",
+            data_source_id=data_source_id,
+            target_type=TargetType.SHOP_OVERVIEW,
+        )
+        session.add(rule)
+        await session.flush()
+        rule_id = rule.id if rule.id is not None else 0
+
         task_orders = await service.create_task(
             TaskDefinitionCreate(name="orders", task_type=TaskType.ETL_ORDERS),
             created_by_id=1,
@@ -109,8 +141,8 @@ async def test_run_task_dispatches_by_task_type_and_persists_queued_execution(
         shop_execution = await service.run_task(
             task_id=task_shop.id if task_shop.id is not None else 0,
             payload={
-                "data_source_id": 10,
-                "rule_id": 20,
+                "data_source_id": data_source_id,
+                "rule_id": rule_id,
                 "execution_id": "shop-exec-1",
                 "all": True,
                 "shop_id": "shop-10",

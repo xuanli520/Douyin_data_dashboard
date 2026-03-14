@@ -43,17 +43,21 @@ class MockPipeline:
             if cmd[0] == "zremrangebyscore":
                 key = cmd[1]
                 if key not in self.redis.data:
-                    self.redis.data[key] = []
-                self.redis.data[key] = [
-                    (s, t) for s, t in self.redis.data[key] if float(s) >= float(cmd[2])
-                ]
+                    self.redis.data[key] = {}
+                min_score = float("-inf") if cmd[2] == "-inf" else float(cmd[2])
+                max_score = float("inf") if cmd[3] == "+inf" else float(cmd[3])
+                self.redis.data[key] = {
+                    member: score
+                    for member, score in self.redis.data[key].items()
+                    if not (min_score <= float(score) <= max_score)
+                }
                 results.append(0)
             elif cmd[0] == "zadd":
                 key = cmd[1]
                 if key not in self.redis.data:
-                    self.redis.data[key] = []
-                for score, member in cmd[2].items():
-                    self.redis.data[key].append((score, member))
+                    self.redis.data[key] = {}
+                for member, score in cmd[2].items():
+                    self.redis.data[key][member] = float(score)
                 results.append(1)
             elif cmd[0] == "zcard":
                 key = cmd[1]

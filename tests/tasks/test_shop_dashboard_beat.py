@@ -1,3 +1,5 @@
+from datetime import date as date_type
+
 from src.domains.collection_job.enums import CollectionJobStatus
 from src.domains.collection_job.models import CollectionJob
 from src.domains.data_source.enums import DataSourceStatus, DataSourceType, TargetType
@@ -104,6 +106,29 @@ def test_register_jobs_groups_by_task_type_and_reuses_single_adder(monkeypatch):
         "triggered_by": None,
         "execution_id": "cron_collection_job_3",
         "batch_date": "2026-03-10",
+    }
+
+
+def test_build_dispatch_kwargs_defaults_batch_date_for_etl():
+    from src.tasks import beat as module
+
+    kwargs = module._build_dispatch_kwargs(
+        CollectionJob(
+            id=5,
+            name="orders-job-without-batch-date",
+            task_type=TaskType.ETL_ORDERS,
+            data_source_id=1,
+            rule_id=1,
+            schedule={"cron": "0 9 * * *"},
+            status=CollectionJobStatus.ACTIVE,
+        ),
+        module.ScheduleConfig.model_validate({"cron": "0 9 * * *", "kwargs": {}}),
+    )
+
+    assert kwargs == {
+        "triggered_by": None,
+        "execution_id": "cron_collection_job_5",
+        "batch_date": date_type.today().isoformat(),
     }
 
 
