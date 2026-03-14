@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import defaultdict
+from datetime import date as date_type
 from typing import Any
 
 from sqlalchemy import inspect
@@ -80,6 +81,13 @@ def _build_dispatch_kwargs(
             if key in schedule_kwargs:
                 kwargs[key] = schedule_kwargs[key]
         return normalize_shop_selection_payload(kwargs)
+
+    if collection_job.task_type in {TaskType.ETL_ORDERS, TaskType.ETL_PRODUCTS}:
+        raw_batch_date = schedule_kwargs.get("batch_date")
+        batch_date = str(raw_batch_date).strip() if raw_batch_date is not None else ""
+        if not batch_date:
+            batch_date = date_type.today().isoformat()
+        schedule_kwargs["batch_date"] = batch_date
 
     return {
         "triggered_by": None,
