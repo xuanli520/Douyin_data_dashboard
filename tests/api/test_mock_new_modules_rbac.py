@@ -53,6 +53,7 @@ async def permission_data(test_db):
         perm_map = {p.code: p for p in result.scalars().all()}
         perms_to_create = [
             ("experience:view", "查看体验分析", "experience"),
+            ("metric:view", "查看指标分析", "metric"),
             ("dashboard:view", "查看看板", "dashboard"),
             ("order:view", "查看订单分析", "order"),
             ("product:view", "查看商品分析", "product"),
@@ -136,6 +137,7 @@ CASES = [
     ("GET", "/api/v1/experience/trend", None),
     ("GET", "/api/v1/experience/issues", None),
     ("GET", "/api/v1/experience/drilldown/product", None),
+    ("GET", "/api/v1/metrics/product", None),
     ("GET", "/api/v1/dashboard/overview", None),
     ("GET", "/api/v1/dashboard/kpis", None),
     ("GET", "/api/v1/orders/trend", None),

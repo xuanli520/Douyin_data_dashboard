@@ -30,7 +30,7 @@ async def query(
     query_start = min(start_date, end_date)
     query_end = max(start_date, end_date)
     repo = ShopDashboardRepository(session)
-    items = await repo.query_dashboard_results(
+    items = await repo.list_display_materials(
         shop_id=shop_id,
         start_date=query_start,
         end_date=query_end,

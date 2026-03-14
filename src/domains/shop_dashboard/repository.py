@@ -248,6 +248,19 @@ class ShopDashboardRepository(BaseRepository):
         start_date: date,
         end_date: date,
     ) -> list[dict[str, Any]]:
+        return await self.list_display_materials(
+            shop_id=shop_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+    async def list_display_materials(
+        self,
+        *,
+        shop_id: str,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict[str, Any]]:
         score_stmt = (
             select(ShopDashboardScore)
             .where(
@@ -255,11 +268,13 @@ class ShopDashboardRepository(BaseRepository):
                 ShopDashboardScore.metric_date >= start_date,
                 ShopDashboardScore.metric_date <= end_date,
             )
-            .order_by(ShopDashboardScore.metric_date.asc())
+            .order_by(
+                ShopDashboardScore.metric_date.asc(),
+                ShopDashboardScore.updated_at.desc(),
+                ShopDashboardScore.id.desc(),
+            )
         )
         scores = (await self.session.execute(score_stmt)).scalars().all()
-        if not scores:
-            return []
 
         review_stmt = select(ShopDashboardReview).where(
             ShopDashboardReview.shop_id == shop_id,
@@ -316,19 +331,33 @@ class ShopDashboardRepository(BaseRepository):
                 }
             )
 
-        items: list[dict[str, Any]] = []
+        latest_score_by_day: dict[date, ShopDashboardScore] = {}
         for row in scores:
-            metric_date = row.metric_date
+            if row.metric_date not in latest_score_by_day:
+                latest_score_by_day[row.metric_date] = row
+
+        metric_dates = sorted(
+            set(latest_score_by_day)
+            | set(reviews_by_day)
+            | set(violations_by_day)
+            | set(cold_by_day)
+        )
+        if not metric_dates:
+            return []
+
+        items: list[dict[str, Any]] = []
+        for metric_date in metric_dates:
+            row = latest_score_by_day.get(metric_date)
             items.append(
                 {
-                    "shop_id": row.shop_id,
+                    "shop_id": shop_id,
                     "metric_date": metric_date.isoformat(),
-                    "source": row.source,
-                    "total_score": float(row.total_score),
-                    "product_score": float(row.product_score),
-                    "logistics_score": float(row.logistics_score),
-                    "service_score": float(row.service_score),
-                    "bad_behavior_score": float(row.bad_behavior_score),
+                    "source": row.source if row else "",
+                    "total_score": float(row.total_score) if row else 0.0,
+                    "product_score": float(row.product_score) if row else 0.0,
+                    "logistics_score": float(row.logistics_score) if row else 0.0,
+                    "service_score": float(row.service_score) if row else 0.0,
+                    "bad_behavior_score": float(row.bad_behavior_score) if row else 0.0,
                     "reviews": reviews_by_day.get(metric_date, []),
                     "violations": violations_by_day.get(metric_date, []),
                     "cold_metrics": cold_by_day.get(metric_date, []),

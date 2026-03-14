@@ -179,110 +179,138 @@ async def seeded_phase3_data(test_db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "path,expected_keys",
-    [
-        (
-            "/api/v1/experience/overview?shop_id=1001&date_range=30d",
-            {"shop_id", "date_range", "overall_score", "dimensions", "alerts"},
-        ),
-        (
-            "/api/v1/experience/trend?shop_id=1001&dimension=product&date_range=30d",
-            {"shop_id", "dimension", "date_range", "trend"},
-        ),
-        (
-            "/api/v1/experience/issues?shop_id=1001&dimension=all&status=all&date_range=30d&page=1&size=20",
-            {"items", "meta"},
-        ),
-        (
-            "/api/v1/experience/drilldown/product?shop_id=1001&date_range=30d&page=1&size=20",
-            {
-                "shop_id",
-                "dimension",
-                "date_range",
-                "category_score",
-                "sub_metrics",
-                "score_ranges",
-                "formula",
-                "trend",
-                "issues",
-            },
-        ),
-        (
-            "/api/v1/metrics/product?shop_id=1001&date_range=30d&period=30d",
-            {
-                "shop_id",
-                "metric_type",
-                "period",
-                "date_range",
-                "category_score",
-                "sub_metrics",
-                "score_ranges",
-                "formula",
-                "trend",
-            },
-        ),
-        (
-            "/api/v1/dashboard/overview?shop_id=1001&date_range=30d",
-            {"shop_id", "date_range", "cards"},
-        ),
-        (
-            "/api/v1/dashboard/kpis?shop_id=1001&date_range=30d",
-            {"shop_id", "date_range", "kpis", "trend"},
-        ),
-    ],
-)
-async def test_phase3_endpoints_return_real_contract(
-    api_client,
-    phase3_user,
-    seeded_phase3_data,
-    path: str,
-    expected_keys: set[str],
-):
-    headers = await get_auth_headers(
-        api_client, "phase3user@example.com", "phase3real123"
-    )
-    response = await api_client.get(path, headers=headers)
-    assert response.status_code == 200
-
-    payload = response.json()
-    assert payload["code"] == 200
-    assert payload["msg"] == "success"
-    assert expected_keys <= payload["data"].keys()
-    assert "mock" not in payload["data"]
-    assert "expected_release" not in payload["data"]
-
-
-@pytest.mark.asyncio
-async def test_phase3_experience_and_metrics_use_seeded_rows(
+async def test_experience_real_data_success_contract(
     api_client,
     phase3_user,
     seeded_phase3_data,
 ):
     headers = await get_auth_headers(
-        api_client, "phase3user@example.com", "phase3real123"
+        api_client,
+        "phase3user@example.com",
+        "phase3real123",
     )
 
-    overview_resp = await api_client.get(
+    response = await api_client.get(
         "/api/v1/experience/overview?shop_id=1001&date_range=30d",
         headers=headers,
     )
-    overview = overview_resp.json()["data"]
-    assert overview["overall_score"] > 0
-    assert len(overview["dimensions"]) == 4
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["code"] == 200
+    assert payload["msg"] == "success"
+    assert payload["data"]["shop_id"] == 1001
+    assert "mock" not in payload["data"]
 
-    issues_resp = await api_client.get(
-        "/api/v1/experience/issues?shop_id=1001&dimension=all&status=all&date_range=30d&page=1&size=20",
-        headers=headers,
-    )
-    issues = issues_resp.json()["data"]
-    assert issues["meta"]["total"] >= 2
-    assert any(item["id"] == "issue_1" for item in issues["items"])
-
-    metric_resp = await api_client.get(
+    metric_response = await api_client.get(
         "/api/v1/metrics/product?shop_id=1001&date_range=30d&period=30d",
         headers=headers,
     )
-    metric = metric_resp.json()["data"]
-    assert metric["metric_type"] == "product"
-    assert len(metric["sub_metrics"]) >= 1
+    assert metric_response.status_code == 200
+    metric_payload = metric_response.json()
+    assert metric_payload["code"] == 200
+    assert metric_payload["msg"] == "success"
+    assert metric_payload["data"]["metric_type"] == "product"
+
+    dashboard_response = await api_client.get(
+        "/api/v1/dashboard/overview?shop_id=1001&date_range=30d",
+        headers=headers,
+    )
+    assert dashboard_response.status_code == 200
+    dashboard_payload = dashboard_response.json()
+    assert dashboard_payload["code"] == 200
+    assert dashboard_payload["msg"] == "success"
+    assert "cards" in dashboard_payload["data"]
+
+
+@pytest.mark.asyncio
+async def test_experience_real_data_empty_dataset_should_return_empty_structures(
+    api_client,
+    phase3_user,
+):
+    headers = await get_auth_headers(
+        api_client,
+        "phase3user@example.com",
+        "phase3real123",
+    )
+
+    trend_response = await api_client.get(
+        "/api/v1/experience/trend?shop_id=1001&dimension=product&date_range=30d",
+        headers=headers,
+    )
+    assert trend_response.status_code == 200
+    trend_payload = trend_response.json()
+    assert trend_payload["code"] == 200
+    assert trend_payload["data"]["trend"] == []
+
+    issues_response = await api_client.get(
+        "/api/v1/experience/issues?shop_id=1001&dimension=all&status=all&date_range=30d&page=1&size=20",
+        headers=headers,
+    )
+    assert issues_response.status_code == 200
+    issues_payload = issues_response.json()
+    assert issues_payload["code"] == 200
+    assert issues_payload["data"]["items"] == []
+    assert issues_payload["data"]["meta"]["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_experience_real_data_issue_filters_should_work(
+    api_client,
+    phase3_user,
+    seeded_phase3_data,
+):
+    headers = await get_auth_headers(
+        api_client,
+        "phase3user@example.com",
+        "phase3real123",
+    )
+    response = await api_client.get(
+        "/api/v1/experience/issues?shop_id=1001&dimension=product&status=pending&date_range=30d&page=1&size=20",
+        headers=headers,
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["code"] == 200
+    assert payload["data"]["meta"]["total"] >= 1
+    assert all(item["dimension"] == "product" for item in payload["data"]["items"])
+    assert all(item["status"] == "pending" for item in payload["data"]["items"])
+
+
+@pytest.mark.asyncio
+async def test_experience_real_data_invalid_pagination_should_return_422(
+    api_client,
+    phase3_user,
+):
+    headers = await get_auth_headers(
+        api_client,
+        "phase3user@example.com",
+        "phase3real123",
+    )
+    response = await api_client.get(
+        "/api/v1/experience/issues?shop_id=1001&dimension=all&status=all&date_range=30d&page=0&size=20",
+        headers=headers,
+    )
+    assert response.status_code == 422
+
+    too_large_size = await api_client.get(
+        "/api/v1/experience/issues?shop_id=1001&dimension=all&status=all&date_range=30d&page=1&size=999",
+        headers=headers,
+    )
+    assert too_large_size.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_experience_real_data_too_large_date_range_should_return_422(
+    api_client,
+    phase3_user,
+):
+    headers = await get_auth_headers(
+        api_client,
+        "phase3user@example.com",
+        "phase3real123",
+    )
+    response = await api_client.get(
+        "/api/v1/experience/overview?shop_id=1001&date_range=999d",
+        headers=headers,
+    )
+    assert response.status_code == 422

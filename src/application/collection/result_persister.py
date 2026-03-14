@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from datetime import date
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import src.cache as cache_module
+from src.domains.experience.services import ExperienceQueryService
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
+
+logger = logging.getLogger(__name__)
 
 
 class CollectionResultPersister:
@@ -96,6 +101,37 @@ class CollectionResultPersister:
             violations=violation_rows,
         )
         await session.commit()
+        try:
+            await self._invalidate_experience_cache(
+                session=session,
+                shop_id=resolved_shop_id,
+                metric_day=metric_day,
+            )
+        except Exception:
+            logger.exception(
+                "experience cache invalidation failed after persistence: shop_id=%s metric_day=%s",
+                resolved_shop_id,
+                metric_day.isoformat(),
+            )
+
+    async def _invalidate_experience_cache(
+        self,
+        *,
+        session: AsyncSession,
+        shop_id: str,
+        metric_day: date,
+    ) -> None:
+        cache = cache_module.cache
+        if cache is None:
+            return
+        service = ExperienceQueryService(
+            repo=ShopDashboardRepository(session=session),
+            cache=cache,
+        )
+        await service.invalidate_shop_date(
+            shop_id=shop_id,
+            metric_date=metric_day,
+        )
 
 
 def _extract_violation_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
