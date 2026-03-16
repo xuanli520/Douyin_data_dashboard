@@ -6,6 +6,7 @@ from src.domains.data_source.enums import DataSourceStatus, DataSourceType, Targ
 from src.domains.data_source.models import DataSource
 from src.domains.scraping_rule.models import ScrapingRule
 from src.domains.task.enums import TaskType
+from src.exceptions import BusinessException
 
 
 @pytest.mark.asyncio
@@ -74,7 +75,7 @@ async def test_collection_job_service_create_job_validates_schedule(test_db):
 
         service = CollectionJobService(session=session)
 
-        with pytest.raises(ValueError):
+        with pytest.raises(BusinessException):
             await service.create_job(
                 name="invalid-job",
                 task_type=TaskType.SHOP_DASHBOARD_COLLECTION,
@@ -83,7 +84,7 @@ async def test_collection_job_service_create_job_validates_schedule(test_db):
                 schedule={"cron": "invalid"},
             )
 
-        with pytest.raises(ValueError):
+        with pytest.raises(BusinessException):
             await service.create_job(
                 name="invalid-job-7-fields",
                 task_type=TaskType.SHOP_DASHBOARD_COLLECTION,

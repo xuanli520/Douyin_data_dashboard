@@ -3,6 +3,7 @@ import tempfile
 import os
 import gc
 from openpyxl import Workbook
+from src.exceptions import BusinessException
 
 
 def test_factory_creates_csv_parser():
@@ -222,7 +223,7 @@ def test_factory_supported_formats():
 def test_factory_raises_for_unknown_format():
     from src.domains.data_import.parser.factory import FileParser
 
-    with pytest.raises(ValueError, match="Unsupported file format"):
+    with pytest.raises(BusinessException, match="Unsupported file format"):
         FileParser("/path/to/file.unknown")
 
 
