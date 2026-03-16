@@ -26,6 +26,10 @@ from src.domains.task.events import (
     TaskStatusChangedEvent,
 )
 from src.domains.task.dispatch import TaskDispatcherRegistry
+from src.domains.task.exceptions import (
+    ScrapingFailedException,
+    ShopDashboardNoTargetShopsException,
+)
 from src.domains.task.models import TaskDefinition, TaskExecution
 from src.domains.task.repository import (
     TaskDefinitionRepository,
@@ -341,13 +345,25 @@ class TaskService:
         if not execution_id:
             execution_id = "api-run-task-validation"
         loader = CollectionRuntimeLoader()
-        await loader.load(
-            session=self.session,
-            data_source_id=int(payload["data_source_id"]),
-            rule_id=int(payload["rule_id"]),
-            execution_id=execution_id,
-            overrides=payload,
-        )
+        try:
+            await loader.load(
+                session=self.session,
+                data_source_id=int(payload["data_source_id"]),
+                rule_id=int(payload["rule_id"]),
+                execution_id=execution_id,
+                overrides=payload,
+            )
+        except (ScrapingFailedException, ShopDashboardNoTargetShopsException) as exc:
+            error_data = getattr(exc, "error_data", None)
+            field = "rule_id"
+            if isinstance(error_data, dict):
+                if "data_source_id" in error_data:
+                    field = "data_source_id"
+                elif "rule_id" in error_data:
+                    field = "rule_id"
+                elif "shop_id" in error_data or "shop_ids" in error_data:
+                    field = "shop_id"
+            raise TaskInvalidPayloadException(message=exc.msg, field=field) from exc
 
     def _require_positive_int(self, payload: dict[str, Any], *, field: str) -> int:
         raw = payload.get(field)

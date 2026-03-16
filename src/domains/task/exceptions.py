@@ -27,6 +27,9 @@ class TaskDomainException(BusinessException):
             data=resolved_error_data,
         )
 
+    def __str__(self) -> str:
+        return self.msg
+
 
 class ScrapingRateLimitException(TaskDomainException):
     default_message = "Rate limited"
