@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import time
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from typing import Mapping
@@ -28,6 +29,7 @@ from src.domains.task.exceptions import ShopDashboardShopMismatchException
 from src.domains.task.enums import TaskExecutionStatus
 from src.domains.task.enums import TaskTriggerMode
 from src.domains.task.enums import TaskType
+from src.domains.scraping_rule.repository import ScrapingRuleRepository
 from src.domains.task.repository import TaskDefinitionRepository
 from src.domains.task.repository import TaskExecutionRepository
 from src.middleware.monitor import observe_shop_dashboard_account_switch_unsupported
@@ -141,6 +143,8 @@ class CollectionUseCase:
             self._raise_when_all_units_failed(result)
             await self._mark_success(
                 execution_id=execution.id if execution.id is not None else 0,
+                rule_id=rule_id,
+                rule_execution_id=execution_id,
                 processed_rows=len(result["items"]),
                 result=result,
             )
@@ -300,6 +304,8 @@ class CollectionUseCase:
         self,
         *,
         execution_id: int,
+        rule_id: int,
+        rule_execution_id: str,
         processed_rows: int,
         result: dict[str, Any],
     ) -> None:
@@ -311,6 +317,7 @@ class CollectionUseCase:
             execution = await execution_repo.get_by_id(execution_id)
             if execution is None:
                 return
+            completed_at = execution.completed_at or datetime.now(tz=UTC)
             snapshot = dict(execution.effective_config_snapshot or {})
             snapshot["result"] = dict(result)
             await execution_repo.update(
@@ -322,6 +329,14 @@ class CollectionUseCase:
                     "error_message": "",
                 },
             )
+            rule_repo = ScrapingRuleRepository(db_session)
+            rule = await rule_repo.get_by_id(rule_id)
+            if rule is not None:
+                normalized_execution_id = str(rule_execution_id or "").strip()
+                rule.last_executed_at = completed_at
+                rule.last_execution_id = (
+                    normalized_execution_id[:100] if normalized_execution_id else None
+                )
             await db_session.commit()
 
     async def _mark_failed(

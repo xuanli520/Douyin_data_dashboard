@@ -33,6 +33,8 @@ class ScrapingRuleResponse(BaseModel):
     status: ScrapingRuleStatus
     version: int
     description: str | None = None
+    last_executed_at: datetime | None = None
+    last_execution_id: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -48,6 +50,8 @@ class ScrapingRuleListItem(BaseModel):
     status: ScrapingRuleStatus
     version: int
     description: str | None = None
+    last_executed_at: datetime | None = None
+    last_execution_id: str | None = None
     created_at: datetime
     updated_at: datetime
     data_source_name: str | None = None

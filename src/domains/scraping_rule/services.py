@@ -203,6 +203,8 @@ class ScrapingRuleService:
             status=rule.status,
             version=rule.version,
             description=rule.description,
+            last_executed_at=rule.last_executed_at,
+            last_execution_id=rule.last_execution_id,
             created_at=rule.created_at,
             updated_at=rule.updated_at,
         )
@@ -222,6 +224,8 @@ class ScrapingRuleService:
             status=rule.status,
             version=rule.version,
             description=rule.description,
+            last_executed_at=rule.last_executed_at,
+            last_execution_id=rule.last_execution_id,
             created_at=rule.created_at,
             updated_at=rule.updated_at,
             data_source_name=rule.data_source.name if rule.data_source else None,

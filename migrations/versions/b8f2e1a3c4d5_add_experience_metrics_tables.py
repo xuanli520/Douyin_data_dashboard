@@ -1,7 +1,7 @@
 """add_experience_metrics_tables
 
 Revision ID: b8f2e1a3c4d5
-Revises: 9f4e0f4e1d22
+Revises: 7b52f0d2c4aa
 Create Date: 2026-03-10 19:30:00.000000
 
 """
@@ -13,7 +13,7 @@ from alembic import op
 
 
 revision: str = "b8f2e1a3c4d5"
-down_revision: Union[str, Sequence[str], None] = "9f4e0f4e1d22"
+down_revision: Union[str, Sequence[str], None] = "7b52f0d2c4aa"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -8,6 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.domains.collection_job.enums import CollectionJobStatus
 from src.domains.task.enums import TaskType
+from src.exceptions import BusinessException
+from src.shared.errors import ErrorCode
 
 
 class ScheduleConfig(BaseModel):
@@ -20,12 +22,21 @@ class ScheduleConfig(BaseModel):
     def validate_cron(cls, value: str) -> str:
         cron = " ".join(value.split())
         if not cron:
-            raise ValueError("cron is required")
+            raise BusinessException(
+                ErrorCode.COLLECTION_JOB_INVALID_CRON,
+                "cron is required",
+            )
         fields = cron.split(" ")
         if len(fields) not in (5, 6):
-            raise ValueError("cron must contain 5 or 6 fields")
+            raise BusinessException(
+                ErrorCode.COLLECTION_JOB_INVALID_CRON,
+                "cron must contain 5 or 6 fields",
+            )
         if not croniter.is_valid(cron):
-            raise ValueError("invalid cron expression")
+            raise BusinessException(
+                ErrorCode.COLLECTION_JOB_INVALID_CRON,
+                "invalid cron expression",
+            )
         return cron
 
     def to_aps_job_kwargs(self) -> dict[str, Any]:
@@ -53,7 +64,10 @@ class ScheduleConfig(BaseModel):
                 "day_of_week": day_of_week,
                 "timezone": self.timezone,
             }
-        raise ValueError("cron must contain 5 or 6 fields")
+        raise BusinessException(
+            ErrorCode.COLLECTION_JOB_INVALID_CRON,
+            "cron must contain 5 or 6 fields",
+        )
 
 
 class CollectionJobCreate(BaseModel):

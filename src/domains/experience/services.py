@@ -4,7 +4,7 @@ import json
 from collections.abc import AsyncGenerator
 from datetime import date, datetime, timedelta
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.cache import CacheProtocol, get_cache
@@ -30,7 +30,9 @@ from src.domains.experience.schemas import (
     normalize_dimension_with_all,
 )
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
+from src.exceptions import BusinessException
 from src.session import get_session
+from src.shared.errors import ErrorCode
 from src.shared.redis_keys import redis_keys
 
 MAX_DATE_RANGE_DAYS = 365
@@ -510,12 +512,13 @@ class ExperienceQueryService:
         if clean.endswith("d") and clean[:-1].isdigit():
             days = max(int(clean[:-1]), 1)
             if days > MAX_DATE_RANGE_DAYS:
-                raise HTTPException(
-                    status_code=422,
-                    detail=(
+                raise BusinessException(
+                    ErrorCode.EXPERIENCE_DATE_RANGE_TOO_LARGE,
+                    (
                         "date_range is too large: "
                         f"maximum supported window is {MAX_DATE_RANGE_DAYS} days"
                     ),
+                    data={"max_days": MAX_DATE_RANGE_DAYS, "days": days},
                 )
             return today - timedelta(days=days - 1), today, f"{days}d"
 
@@ -525,12 +528,18 @@ class ExperienceQueryService:
     def _ensure_date_range_limit(start: date, end: date) -> None:
         days = (end - start).days + 1
         if days > MAX_DATE_RANGE_DAYS:
-            raise HTTPException(
-                status_code=422,
-                detail=(
+            raise BusinessException(
+                ErrorCode.EXPERIENCE_DATE_RANGE_TOO_LARGE,
+                (
                     "date_range is too large: "
                     f"maximum supported window is {MAX_DATE_RANGE_DAYS} days"
                 ),
+                data={
+                    "max_days": MAX_DATE_RANGE_DAYS,
+                    "start_date": start.isoformat(),
+                    "end_date": end.isoformat(),
+                    "days": days,
+                },
             )
 
 

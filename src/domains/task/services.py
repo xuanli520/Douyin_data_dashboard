@@ -46,6 +46,7 @@ from src.scrapers.shop_dashboard.shop_selection_validator import (
     normalize_shop_selection_payload,
 )
 from src.session import get_session
+from src.shared.errors import ErrorCode
 
 
 class TaskService:
@@ -60,7 +61,10 @@ class TaskService:
         self.task_repo = task_repo or TaskDefinitionRepository(session)
         self.execution_repo = execution_repo or TaskExecutionRepository(session)
         if dispatcher_registry is None:
-            raise TypeError("dispatcher_registry is required")
+            raise BusinessException(
+                ErrorCode.TASK_DISPATCHER_REQUIRED,
+                "dispatcher_registry is required",
+            )
         self.dispatcher_registry = dispatcher_registry
         self._events: list[TaskDomainEvent] = []
 

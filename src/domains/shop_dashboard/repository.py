@@ -7,12 +7,14 @@ from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.exceptions import BusinessException
 from src.domains.shop_dashboard.models import (
     ShopDashboardColdMetric,
     ShopDashboardReview,
     ShopDashboardScore,
     ShopDashboardViolation,
 )
+from src.shared.errors import ErrorCode
 from src.shared.mixins import now
 from src.shared.repository import BaseRepository
 
@@ -94,8 +96,10 @@ class ShopDashboardRepository(BaseRepository):
             await self.session.execute(stmt)
             operation = "unknown"
         else:
-            raise RuntimeError(
-                f"unsupported database dialect for upsert: {dialect_name}"
+            raise BusinessException(
+                ErrorCode.SHOP_DASHBOARD_UNSUPPORTED_DIALECT,
+                f"unsupported database dialect for upsert: {dialect_name}",
+                data={"dialect": dialect_name},
             )
 
         score_stmt = (
