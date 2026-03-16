@@ -10,7 +10,7 @@ from src.config import get_settings
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
 from src import session
 from src.tasks.base import TaskStatusMixin, write_started_status_safe
-from src.tasks.funboost_compat import boost
+from src.tasks.funboost_compat import boost, fct
 from src.tasks.idempotency import FunboostIdempotencyHelper
 from src.tasks.params import CollectionTaskParams
 
@@ -36,6 +36,7 @@ def sync_shop_dashboard_agent(
         triggered_by,
         logger=logger,
     )
+    queue_task_id = str(getattr(fct, "task_id", "") or "")
     redis_client = resolve_sync_redis_client()
     helper = FunboostIdempotencyHelper(
         redis_client=redis_client,
@@ -59,6 +60,7 @@ def sync_shop_dashboard_agent(
             "shop_id": shop_id,
             "metric_date": metric_date,
             "source": "llm",
+            "queue_task_id": queue_task_id,
         }
 
     try:
@@ -82,6 +84,7 @@ def sync_shop_dashboard_agent(
             "metric_date": metric_date,
             "reason": reason,
             "source": "llm",
+            "queue_task_id": queue_task_id,
         }
         for key, value in patch.items():
             if key in {"status", "source", "shop_id", "metric_date", "reason"}:

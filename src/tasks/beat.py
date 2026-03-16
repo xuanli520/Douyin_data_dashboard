@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import time
 from collections import defaultdict
 from datetime import date as date_type
 from typing import Any
@@ -27,8 +28,17 @@ from src.tasks.registry import get_task_type_task_func_mapping
 logger = logging.getLogger(__name__)
 
 
-async def register_jobs() -> Any | None:
-    collection_jobs = await _load_enabled_collection_jobs()
+def register_jobs() -> Any | None:
+    collection_jobs = _load_enabled_collection_jobs()
+    return _register_jobs(collection_jobs)
+
+
+async def register_jobs_async() -> Any | None:
+    collection_jobs = await _load_enabled_collection_jobs_async()
+    return _register_jobs(collection_jobs)
+
+
+def _register_jobs(collection_jobs: list[CollectionJob]) -> Any | None:
     jobs_by_task_type: dict[TaskType, list[CollectionJob]] = defaultdict(list)
     for collection_job in collection_jobs:
         jobs_by_task_type[collection_job.task_type].append(collection_job)
@@ -142,7 +152,11 @@ def _build_dispatch_kwargs(
     }
 
 
-async def _load_enabled_collection_jobs() -> list[CollectionJob]:
+def _load_enabled_collection_jobs() -> list[CollectionJob]:
+    return session.run_coro(_load_enabled_collection_jobs_async())
+
+
+async def _load_enabled_collection_jobs_async() -> list[CollectionJob]:
     session_factory = session.async_session_factory
     if session_factory is None:
         return []
@@ -162,6 +176,11 @@ async def _ensure_collection_jobs_table_ready(db_session: AsyncSession) -> None:
         raise RuntimeError(
             "collection_jobs table is missing; run alembic upgrade f4d5c6b7a8e9 before starting beat"
         )
+
+
+def _init_scheduler_db() -> None:
+    settings = get_settings()
+    session.run_coro(session.init_db(settings.db.url, settings.db.echo))
 
 
 def _configure_signal_handlers(stop_event: asyncio.Event) -> None:
@@ -204,7 +223,7 @@ async def main_async() -> None:
     await session.init_db(settings.db.url, settings.db.echo)
     _configure_signal_handlers(stop_event)
     try:
-        scheduler_aps_obj = await register_jobs()
+        scheduler_aps_obj = await register_jobs_async()
         await stop_event.wait()
     finally:
         _shutdown_scheduler(scheduler_aps_obj)
@@ -212,10 +231,10 @@ async def main_async() -> None:
 
 
 def main() -> None:
-    try:
-        asyncio.run(main_async())
-    except KeyboardInterrupt:
-        return
+    _init_scheduler_db()
+    register_jobs()
+    while True:
+        time.sleep(60)
 
 
 if __name__ == "__main__":

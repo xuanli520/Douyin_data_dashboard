@@ -8,6 +8,9 @@ from typing import Callable
 
 from src import session
 from src.config import get_settings
+from src.tasks.collection import douyin_shop_agent, douyin_shop_dashboard
+from src.tasks.etl import orders as etl_orders
+from src.tasks.etl import products as etl_products
 
 _NON_BLOCKING_CONSUME_QUEUES = {
     "collection_shop_dashboard",
@@ -22,30 +25,29 @@ _BLOCKING_CONSUME_QUEUES = {"etl_orders", "etl_products"}
 
 
 def _queue_runners(etl_processes: int) -> dict[str, Callable[[], None]]:
-    from src.tasks.collection.douyin_shop_agent import (
-        handle_collection_shop_dashboard_agent_dead_letter,
-        sync_shop_dashboard_agent,
-    )
-    from src.tasks.collection.douyin_shop_dashboard import (
-        handle_collection_shop_dashboard_dead_letter,
-        sync_shop_dashboard,
-    )
-    from src.tasks.etl.orders import handle_etl_orders_dead_letter, process_orders
-    from src.tasks.etl.products import handle_etl_products_dead_letter, process_products
-
     return {
-        "collection_shop_dashboard": lambda: sync_shop_dashboard.consume(),
-        "collection_shop_dashboard_agent": lambda: sync_shop_dashboard_agent.consume(),
-        "etl_orders": lambda: process_orders.multi_process_consume(etl_processes),
-        "etl_products": lambda: process_products.multi_process_consume(etl_processes),
+        "collection_shop_dashboard": lambda: (
+            douyin_shop_dashboard.sync_shop_dashboard.consume()
+        ),
+        "collection_shop_dashboard_agent": lambda: (
+            douyin_shop_agent.sync_shop_dashboard_agent.consume()
+        ),
+        "etl_orders": lambda: etl_orders.process_orders.multi_process_consume(
+            etl_processes
+        ),
+        "etl_products": lambda: etl_products.process_products.multi_process_consume(
+            etl_processes
+        ),
         "collection_shop_dashboard_dlx": lambda: (
-            handle_collection_shop_dashboard_dead_letter.consume()
+            douyin_shop_dashboard.handle_collection_shop_dashboard_dead_letter.consume()
         ),
         "collection_shop_dashboard_agent_dlx": lambda: (
-            handle_collection_shop_dashboard_agent_dead_letter.consume()
+            douyin_shop_agent.handle_collection_shop_dashboard_agent_dead_letter.consume()
         ),
-        "etl_orders_dlx": lambda: handle_etl_orders_dead_letter.consume(),
-        "etl_products_dlx": lambda: handle_etl_products_dead_letter.consume(),
+        "etl_orders_dlx": lambda: etl_orders.handle_etl_orders_dead_letter.consume(),
+        "etl_products_dlx": lambda: (
+            etl_products.handle_etl_products_dead_letter.consume()
+        ),
     }
 
 
@@ -64,7 +66,10 @@ def run_all(etl_processes: int = 2) -> None:
             thread.join()
         return
     for _, thread in threads:
-        thread.join(timeout=1)
+        try:
+            thread.join(timeout=1)
+        except TypeError:
+            thread.join()
     _wait_forever()
 
 
@@ -73,8 +78,6 @@ def run_queue(queue_name: str, etl_processes: int = 2) -> None:
     if runner is None:
         raise ValueError(f"unsupported queue name: {queue_name}")
     runner()
-    if queue_name in _NON_BLOCKING_CONSUME_QUEUES:
-        _wait_forever()
 
 
 def _wait_forever() -> None:
@@ -91,7 +94,10 @@ def _start_worker_loop() -> tuple[asyncio.AbstractEventLoop, Thread]:
         ready.set()
         loop.run_forever()
 
-    thread = Thread(target=_run_loop, name="worker-asyncio-loop", daemon=True)
+    try:
+        thread = Thread(target=_run_loop, name="worker-asyncio-loop", daemon=True)
+    except TypeError:
+        thread = Thread(target=_run_loop, name="worker-asyncio-loop")
     thread.start()
     ready.wait()
     session.bind_worker_loop(loop)
@@ -102,7 +108,10 @@ def _stop_worker_loop(loop: asyncio.AbstractEventLoop, thread: Thread) -> None:
     session.bind_worker_loop(None)
     if loop.is_running():
         loop.call_soon_threadsafe(loop.stop)
-    thread.join(timeout=5)
+    try:
+        thread.join(timeout=5)
+    except TypeError:
+        thread.join()
     if not loop.is_closed():
         loop.close()
 

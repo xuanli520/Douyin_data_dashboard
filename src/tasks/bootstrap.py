@@ -5,8 +5,13 @@ from typing import Any
 
 from src.domains.task.dispatch import TaskDispatcherRegistry
 from src.domains.task.enums import TaskType
-from src.tasks.queue_mapping import validate_task_type_queue_mapping
-from src.tasks.registry import get_task_func, get_task_type_task_func_mapping
+from src.tasks.collection.douyin_shop_dashboard import sync_shop_dashboard
+from src.tasks.etl.orders import process_orders
+from src.tasks.etl.products import process_products
+from src.tasks.queue_mapping import (
+    TASK_TYPE_QUEUE_NAME_MAPPING as _TASK_TYPE_QUEUE_NAME_MAPPING,
+    validate_task_type_queue_mapping,
+)
 from src.scrapers.shop_dashboard.shop_selection_validator import (
     normalize_shop_selection_payload,
 )
@@ -33,9 +38,16 @@ SHOP_DASHBOARD_OVERRIDE_KEYS: tuple[str, ...] = (
     "extra_config",
 )
 
+TASK_TYPE_TASK_FUNC_MAPPING: dict[TaskType, Any] = {
+    TaskType.ETL_ORDERS: process_orders,
+    TaskType.ETL_PRODUCTS: process_products,
+    TaskType.SHOP_DASHBOARD_COLLECTION: sync_shop_dashboard,
+}
+TASK_TYPE_QUEUE_NAME_MAPPING = _TASK_TYPE_QUEUE_NAME_MAPPING
+
 
 def build_task_dispatcher_registry() -> TaskDispatcherRegistry:
-    validate_task_type_queue_mapping(get_task_type_task_func_mapping())
+    validate_task_type_queue_mapping(TASK_TYPE_TASK_FUNC_MAPPING)
     registry = TaskDispatcherRegistry()
     registry.register(TaskType.ETL_ORDERS, _dispatch_orders)
     registry.register(TaskType.ETL_PRODUCTS, _dispatch_products)
@@ -91,7 +103,7 @@ def _dispatch_shop_dashboard(
 
 
 def _require_task_func(task_type: TaskType) -> Any:
-    task_func = get_task_func(task_type)
+    task_func = TASK_TYPE_TASK_FUNC_MAPPING.get(task_type)
     if task_func is None:
         raise RuntimeError(f"task function not found for task_type={task_type.value}")
     return task_func
