@@ -36,8 +36,6 @@ from src.domains.task.schemas import (
     TaskExecutionCreate,
 )
 from src.application.collection.runtime_loader import CollectionRuntimeLoader
-from src.domains.task.exceptions import ScrapingFailedException
-from src.domains.task.exceptions import ShopDashboardNoTargetShopsException
 from src.scrapers.shop_dashboard.shop_selection_validator import (
     ensure_explicit_shop_selection_valid,
     has_explicit_shop_selection,
@@ -343,27 +341,13 @@ class TaskService:
         if not execution_id:
             execution_id = "api-run-task-validation"
         loader = CollectionRuntimeLoader()
-        try:
-            await loader.load(
-                session=self.session,
-                data_source_id=int(payload["data_source_id"]),
-                rule_id=int(payload["rule_id"]),
-                execution_id=execution_id,
-                overrides=payload,
-            )
-        except ShopDashboardNoTargetShopsException as exc:
-            raise TaskInvalidPayloadException(
-                message=str(exc),
-                field="shop_id",
-            ) from exc
-        except ScrapingFailedException as exc:
-            message = str(exc).lower()
-            if "not found" in message:
-                raise TaskInvalidPayloadException(
-                    message=str(exc),
-                    field="data_source_id",
-                ) from exc
-            raise
+        await loader.load(
+            session=self.session,
+            data_source_id=int(payload["data_source_id"]),
+            rule_id=int(payload["rule_id"]),
+            execution_id=execution_id,
+            overrides=payload,
+        )
 
     def _require_positive_int(self, payload: dict[str, Any], *, field: str) -> int:
         raw = payload.get(field)
