@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -9,9 +10,15 @@ from typing import Any
 
 from redis.exceptions import ResponseError
 
+from src.application.collection.redis_client import RedisClient
+from src.application.collection.redis_client import resolve_collection_redis_client
 from src.config import get_settings
 from src.scrapers.shop_dashboard.account_shop_resolver import AccountShopResolver
+from src.shared.shop_ids import normalize_shop_ids
 from src.shared.redis_keys import redis_keys
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,7 +41,7 @@ class AccountShopCatalogService:
         self,
         *,
         account_shop_resolver: AccountShopResolver | None = None,
-        redis_client: Any | None = None,
+        redis_client: RedisClient | None = None,
         catalog_cache_ttl_seconds: int | None = None,
         catalog_cache_ttl_cap_seconds: int | None = None,
         catalog_stale_allow_seconds: int | None = None,
@@ -42,7 +49,11 @@ class AccountShopCatalogService:
     ) -> None:
         settings = get_settings().shop_dashboard
         self._resolver = account_shop_resolver or AccountShopResolver()
-        self._redis = redis_client
+        self._redis = resolve_collection_redis_client(
+            redis_client,
+            component="account_shop_catalog_service",
+            logger=logger,
+        )
         default_ttl = int(
             catalog_cache_ttl_seconds or settings.catalog_cache_ttl_seconds or 3600
         )
@@ -123,7 +134,7 @@ class AccountShopCatalogService:
                 extra_config=extra_config,
                 refresh_login_callback=refresh_login_callback,
             )
-            shop_ids = _normalize_shop_ids(shop_ids)
+            shop_ids = normalize_shop_ids(shop_ids)
             if shop_ids:
                 self._save_catalog_cache(catalog_key, shop_ids)
             return AccountShopCatalogResult(
@@ -151,7 +162,7 @@ class AccountShopCatalogService:
                 extra_config=extra_config,
                 refresh_login_callback=refresh_login_callback,
             )
-            shop_ids = _normalize_shop_ids(shop_ids)
+            shop_ids = normalize_shop_ids(shop_ids)
             if shop_ids:
                 self._save_catalog_cache(catalog_key, shop_ids)
                 return AccountShopCatalogResult(
@@ -198,14 +209,15 @@ class AccountShopCatalogService:
             ensure_ascii=False,
             separators=(",", ":"),
         )
-        redis_set = getattr(self._redis, "set", None)
-        if callable(redis_set):
-            redis_set(
+        try:
+            self._redis.set(
                 key,
                 payload,
                 ex=self._catalog_cache_store_seconds,
             )
             return
+        except Exception:
+            pass
         now = time.time()
         self._memory_cache[key] = (
             list(shop_ids),
@@ -214,11 +226,9 @@ class AccountShopCatalogService:
         )
 
     def _load_catalog_cache(self, key: str, *, allow_stale: bool) -> list[str]:
-        redis_get = getattr(self._redis, "get", None)
-        raw: Any = None
-        if callable(redis_get):
-            raw = redis_get(key)
-        else:
+        try:
+            raw: Any = self._redis.get(key)
+        except Exception:
             cached = self._memory_cache.get(key)
             if cached is None:
                 return []
@@ -227,7 +237,7 @@ class AccountShopCatalogService:
                 self._memory_cache.pop(key, None)
                 return []
             if self._is_cache_usable(updated_at=updated_at, allow_stale=allow_stale):
-                return _normalize_shop_ids(shop_ids)
+                return normalize_shop_ids(shop_ids)
             return []
         if raw is None:
             return []
@@ -244,7 +254,7 @@ class AccountShopCatalogService:
             return []
         if not isinstance(payload, dict):
             return []
-        shop_ids = _normalize_shop_ids(payload.get("shop_ids"))
+        shop_ids = normalize_shop_ids(payload.get("shop_ids"))
         if not shop_ids:
             return []
         updated_at_raw = payload.get("updated_at")
@@ -267,9 +277,8 @@ class AccountShopCatalogService:
 
     def _acquire_lock(self, key: str) -> str | None:
         token = os.urandom(16).hex()
-        redis_set = getattr(self._redis, "set", None)
-        if callable(redis_set):
-            acquired = redis_set(
+        try:
+            acquired = self._redis.set(
                 key,
                 token,
                 nx=True,
@@ -278,6 +287,8 @@ class AccountShopCatalogService:
             if acquired:
                 return token
             return None
+        except Exception:
+            pass
         cached = self._memory_locks.get(key)
         now = time.time()
         if cached is not None and cached[1] > now:
@@ -291,35 +302,21 @@ class AccountShopCatalogService:
     def _release_lock(self, key: str, token: str | None) -> None:
         if not token:
             return
-        redis_eval = getattr(self._redis, "eval", None)
-        if callable(redis_eval):
-            try:
-                redis_eval(self._RELEASE_SCRIPT, 1, key, token)
-                return
-            except ResponseError as exc:
-                message = str(exc).lower()
-                if "unknown command" not in message or "eval" not in message:
-                    raise
-        redis_get = getattr(self._redis, "get", None)
-        redis_delete = getattr(self._redis, "delete", None)
-        if callable(redis_get) and callable(redis_delete):
-            if redis_get(key) == token:
-                redis_delete(key)
+        try:
+            self._redis.eval(self._RELEASE_SCRIPT, 1, key, token)
             return
+        except ResponseError as exc:
+            message = str(exc).lower()
+            if "unknown command" not in message or "eval" not in message:
+                raise
+        except Exception:
+            pass
+        try:
+            if self._redis.get(key) == token:
+                self._redis.delete(key)
+            return
+        except Exception:
+            pass
         current = self._memory_locks.get(key)
         if current is not None and current[0] == token:
             self._memory_locks.pop(key, None)
-
-
-def _normalize_shop_ids(value: Any) -> list[str]:
-    if not isinstance(value, list | tuple | set):
-        return []
-    result: list[str] = []
-    seen: set[str] = set()
-    for item in value:
-        text = str(item or "").strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        result.append(text)
-    return result

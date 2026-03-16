@@ -1,16 +1,26 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
+from src.application.collection.redis_client import RedisClient
+from src.application.collection.redis_client import resolve_collection_redis_client
 from src.config import get_settings
 from src.shared.redis_keys import redis_keys
 
 
+logger = logging.getLogger(__name__)
+
+
 class ShopSwitchCapabilityService:
-    def __init__(self, *, redis_client: Any) -> None:
+    def __init__(self, *, redis_client: RedisClient | None) -> None:
         settings = get_settings().shop_dashboard
-        self._redis = redis_client
+        self._redis = resolve_collection_redis_client(
+            redis_client,
+            component="shop_switch_capability_service",
+            logger=logger,
+        )
         self._mismatch_threshold = max(
             int(settings.account_switch_mismatch_threshold),
             1,
@@ -40,21 +50,22 @@ class ShopSwitchCapabilityService:
         key = redis_keys.shop_dashboard_unsupported_http_shop_switch(
             account_id=account_id,
         )
-        redis_get = getattr(self._redis, "get", None)
-        if callable(redis_get):
-            value = redis_get(key)
-            if value in {None, "", b"", 0, "0", b"0", False}:
-                return False
-            return True
-        return False
+        try:
+            value = self._redis.get(key)
+        except Exception:
+            return False
+        if value in {None, "", b"", 0, "0", b"0", False}:
+            return False
+        return True
 
     def mark_unsupported_http_shop_switch(self, account_id: str) -> None:
         key = redis_keys.shop_dashboard_unsupported_http_shop_switch(
             account_id=account_id,
         )
-        redis_set = getattr(self._redis, "set", None)
-        if callable(redis_set):
-            redis_set(key, "1", ex=self._unsupported_ttl_seconds)
+        try:
+            self._redis.set(key, "1", ex=self._unsupported_ttl_seconds)
+        except Exception:
+            return
 
     def record_mismatch_evidence(
         self,
@@ -120,18 +131,20 @@ class ShopSwitchCapabilityService:
         key = redis_keys.shop_dashboard_account_switch_observation(
             account_id=account_id
         )
-        redis_delete = getattr(self._redis, "delete", None)
-        if callable(redis_delete):
-            try:
-                redis_delete(key)
-            except Exception:
-                return
+        try:
+            self._redis.delete(key)
+        except Exception as exc:
+            logger.warning(
+                "failed to clear shop switch observation account_id=%s error=%s",
+                account_id,
+                exc,
+            )
 
     def _load_observation(self, key: str) -> dict[str, Any]:
-        redis_get = getattr(self._redis, "get", None)
-        if not callable(redis_get):
+        try:
+            raw = self._redis.get(key)
+        except Exception:
             return {}
-        raw = redis_get(key)
         if raw is None:
             return {}
         if isinstance(raw, bytes):
@@ -150,11 +163,11 @@ class ShopSwitchCapabilityService:
         return {}
 
     def _save_observation(self, key: str, payload: dict[str, Any]) -> None:
-        redis_set = getattr(self._redis, "set", None)
-        if not callable(redis_set):
+        try:
+            self._redis.set(
+                key,
+                json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                ex=self._observation_ttl_seconds,
+            )
+        except Exception:
             return
-        redis_set(
-            key,
-            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-            ex=self._observation_ttl_seconds,
-        )
