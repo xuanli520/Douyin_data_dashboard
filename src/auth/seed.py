@@ -67,6 +67,8 @@ PERMISSIONS = [
     ("export:create", "创建导出", "export", "创建导出任务"),
     ("export:download", "下载导出", "export", "下载导出文件"),
     ("schedule:view", "查看调度", "schedule", "查看任务调度"),
+    ("schedule:update", "修改调度", "schedule", "修改任务调度"),
+    ("schedule:delete", "删除调度", "schedule", "删除任务调度"),
     ("analysis:view", "查看分析", "analysis", "查看数据分析"),
     ("alert:view", "查看预警", "alert", "查看风险预警"),
     ("alert:assign", "指派预警", "alert", "指派预警负责人"),

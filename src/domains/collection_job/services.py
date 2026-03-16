@@ -9,7 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.domains.collection_job.enums import CollectionJobStatus
 from src.domains.collection_job.models import CollectionJob
 from src.domains.collection_job.repository import CollectionJobRepository
-from src.domains.collection_job.schemas import CollectionJobCreate, ScheduleConfig
+from src.domains.collection_job.schemas import (
+    CollectionJobCreate,
+    CollectionJobUpdate,
+    ScheduleConfig,
+)
 from src.domains.task.enums import TaskType
 from src.session import get_session
 
@@ -65,6 +69,33 @@ class CollectionJobService:
         resolved_task_type = self._resolve_task_type(task_type)
         jobs = await self.repo.list_enabled(task_type=resolved_task_type)
         return [self._normalize_schedule(job) for job in jobs]
+
+    async def update_job(
+        self,
+        job_id: int,
+        payload: CollectionJobUpdate,
+    ) -> CollectionJob | None:
+        job = await self.repo.get_by_id(job_id)
+        if job is None:
+            return None
+
+        data = payload.model_dump(exclude_none=True)
+        if "schedule" in data:
+            schedule_config = ScheduleConfig.model_validate(data["schedule"])
+            data["schedule"] = schedule_config.model_dump(mode="python")
+
+        updated = await self.repo.update(job, data)
+        await self.session.commit()
+        return self._normalize_schedule(updated)
+
+    async def delete_job(self, job_id: int) -> bool:
+        job = await self.repo.get_by_id(job_id)
+        if job is None:
+            return False
+
+        await self.repo.delete(job)
+        await self.session.commit()
+        return True
 
     def _resolve_task_type(self, task_type: TaskType | str | None) -> TaskType | None:
         if task_type is None or isinstance(task_type, TaskType):

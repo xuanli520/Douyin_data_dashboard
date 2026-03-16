@@ -78,6 +78,8 @@ class ExportPermission:
 
 class SchedulePermission:
     VIEW = "schedule:view"
+    UPDATE = "schedule:update"
+    DELETE = "schedule:delete"
 
 
 class AnalysisPermission:

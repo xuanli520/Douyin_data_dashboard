@@ -79,6 +79,12 @@ class CollectionJobCreate(BaseModel):
     status: CollectionJobStatus = CollectionJobStatus.ACTIVE
 
 
+class CollectionJobUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    schedule: ScheduleConfig | None = None
+    status: CollectionJobStatus | None = None
+
+
 class CollectionJobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

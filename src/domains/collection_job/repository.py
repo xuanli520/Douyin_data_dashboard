@@ -25,6 +25,16 @@ class CollectionJobRepository(BaseRepository):
         stmt = select(CollectionJob).where(CollectionJob.id == job_id)
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def update(self, job: CollectionJob, data: dict[str, Any]) -> CollectionJob:
+        for key, value in data.items():
+            if value is not None:
+                setattr(job, key, value)
+        await self._flush()
+        return job
+
+    async def delete(self, job: CollectionJob) -> None:
+        await self._delete(job)
+
     async def list_enabled(
         self,
         *,
