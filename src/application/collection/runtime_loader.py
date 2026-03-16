@@ -21,6 +21,7 @@ from src.scrapers.shop_dashboard.contracts import ScrapingRuleContract
 from src.scrapers.shop_dashboard.account_shop_resolver import AccountShopResolver
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.scrapers.shop_dashboard.runtime import build_runtime_config
+from src.shared.shop_ids import normalize_shop_ids
 
 
 @dataclass(slots=True)
@@ -120,7 +121,10 @@ class CollectionRuntimeLoader:
             runtime=runtime,
             data_source=data_source_contract,
         )
-        self._validate_target_shops(runtime=runtime, data_source_id=data_source_id)
+        runtime = self._validate_target_shops(
+            runtime=runtime,
+            data_source_id=data_source_id,
+        )
         if not runtime.api_groups:
             raise ScrapingFailedException(
                 "No API groups resolved for runtime",
@@ -214,8 +218,8 @@ class CollectionRuntimeLoader:
         *,
         runtime: ShopDashboardRuntimeConfig,
         data_source_id: int,
-    ) -> None:
-        resolved_shop_ids = _normalize_shop_ids(runtime.resolved_shop_ids)
+    ) -> ShopDashboardRuntimeConfig:
+        resolved_shop_ids = normalize_shop_ids(runtime.resolved_shop_ids, dedupe=False)
         if runtime.shop_mode == "ALL" and not resolved_shop_ids:
             raise ShopDashboardNoTargetShopsException(
                 "No target shops resolved",
@@ -243,26 +247,12 @@ class CollectionRuntimeLoader:
                         "shop_mode": runtime.shop_mode,
                     },
                 )
-            runtime.resolved_shop_ids = list(resolved_shop_ids)
-            runtime.shop_id = resolved_shop_ids[0]
+        return replace(
+            runtime,
+            resolved_shop_ids=list(resolved_shop_ids),
+            shop_id=resolved_shop_ids[0],
+        )
 
 
 def _as_enum_value(value: Any) -> Any:
     return value.value if hasattr(value, "value") else value
-
-
-def _normalize_shop_ids(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, str):
-        parts = [item for chunk in value.split(",") for item in chunk.split("|")]
-    elif isinstance(value, list | tuple | set):
-        parts = list(value)
-    else:
-        return []
-    normalized: list[str] = []
-    for part in parts:
-        text = str(part or "").strip()
-        if text:
-            normalized.append(text)
-    return normalized

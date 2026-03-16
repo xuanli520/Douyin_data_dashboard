@@ -1,11 +1,30 @@
 from __future__ import annotations
 
+import json
 from calendar import monthrange
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-import json
 from typing import Any
+from typing import Protocol
 from zoneinfo import ZoneInfo
+
+from src.shared.shop_ids import normalize_shop_ids
+
+
+class CollectionConfig(Protocol):
+    granularity: str | None
+    timezone: str | None
+    resolved_shop_ids: Any
+    shop_ids: Any
+    shop_id: Any
+    time_range: Mapping[str, Any] | None
+    incremental_mode: str | None
+    data_latency: str | None
+    backfill_last_n_days: Any
+    cursor: str | None
+    filters: Mapping[str, Any] | None
+    extra_config: Mapping[str, Any] | None
 
 
 @dataclass(slots=True)
@@ -31,14 +50,14 @@ class CollectionPlanUnit:
 
 
 def build_collection_plan(
-    config: Any,
+    config: CollectionConfig,
     *,
     now: datetime | None = None,
 ) -> list[CollectionPlanUnit]:
     if now is not None and now.tzinfo is None:
         raise ValueError("now must be an aware datetime")
-    granularity = str(getattr(config, "granularity", "DAY")).upper()
-    timezone_name = str(getattr(config, "timezone", "Asia/Shanghai") or "Asia/Shanghai")
+    granularity = str(config.granularity or "DAY").upper()
+    timezone_name = str(config.timezone or "Asia/Shanghai")
     timezone = _resolve_timezone(timezone_name)
     current_now = (now or datetime.now(UTC)).astimezone(timezone)
 
@@ -72,28 +91,28 @@ def build_collection_plan(
     return plan_units
 
 
-def _resolve_shop_ids(config: Any) -> list[str]:
-    resolved_shop_ids = _normalize_shop_ids(getattr(config, "resolved_shop_ids", None))
+def _resolve_shop_ids(config: CollectionConfig) -> list[str]:
+    resolved_shop_ids = normalize_shop_ids(config.resolved_shop_ids)
     if resolved_shop_ids:
         return resolved_shop_ids
 
-    explicit_shop_ids = _normalize_shop_ids(getattr(config, "shop_ids", None))
+    explicit_shop_ids = normalize_shop_ids(config.shop_ids)
     if explicit_shop_ids:
         return explicit_shop_ids
 
-    explicit_shop_id = str(getattr(config, "shop_id", "") or "").strip()
+    explicit_shop_id = str(config.shop_id or "").strip()
     if explicit_shop_id:
         return [explicit_shop_id]
     return []
 
 
 def _resolve_windows(
-    config: Any,
+    config: CollectionConfig,
     *,
     granularity: str,
     now: datetime,
 ) -> list[tuple[datetime, datetime]]:
-    time_range = getattr(config, "time_range", None)
+    time_range = config.time_range
     if isinstance(time_range, dict):
         start_value = time_range.get("start")
         end_value = time_range.get("end")
@@ -112,15 +131,15 @@ def _resolve_windows(
                 ),
             )
 
-    incremental_mode = str(getattr(config, "incremental_mode", "BY_DATE")).upper()
-    latency_days = _parse_data_latency(str(getattr(config, "data_latency", "T+1")))
+    incremental_mode = str(config.incremental_mode or "BY_DATE").upper()
+    latency_days = _parse_data_latency(str(config.data_latency or "T+1"))
     base_time = now - timedelta(days=latency_days)
 
     if incremental_mode == "BY_CURSOR":
         start, end = _build_single_window(base_time, granularity=granularity)
         return [(start, end)]
 
-    backfill = _parse_non_negative_int(getattr(config, "backfill_last_n_days", 1))
+    backfill = _parse_non_negative_int(config.backfill_last_n_days)
     window_count = max(backfill, 1)
     windows: list[tuple[datetime, datetime]] = []
     for offset in range(window_count):
@@ -148,16 +167,16 @@ def _build_windows_from_time_range(
     return windows
 
 
-def _resolve_cursor(config: Any) -> str | None:
-    cursor = _normalize_text(getattr(config, "cursor", None))
+def _resolve_cursor(config: CollectionConfig) -> str | None:
+    cursor = _normalize_text(config.cursor)
     if cursor:
         return cursor
-    filters = getattr(config, "filters", {}) or {}
+    filters = config.filters or {}
     if isinstance(filters, dict):
         filter_cursor = _normalize_text(filters.get("cursor"))
         if filter_cursor:
             return filter_cursor
-    extra_config = getattr(config, "extra_config", {}) or {}
+    extra_config = config.extra_config or {}
     if isinstance(extra_config, dict):
         extra_cursor = _normalize_text(extra_config.get("cursor"))
         if extra_cursor:
@@ -167,13 +186,13 @@ def _resolve_cursor(config: Any) -> str | None:
 
 def _build_effective_filters(
     *,
-    config: Any,
+    config: CollectionConfig,
     shop_id: str,
     cursor: str | None,
 ) -> dict[str, Any]:
-    raw_filters = getattr(config, "filters", {}) or {}
+    raw_filters = config.filters or {}
     base_filters = dict(raw_filters) if isinstance(raw_filters, dict) else {}
-    date_range = _normalize_json_object(getattr(config, "time_range", None))
+    date_range = _normalize_json_object(config.time_range)
     extra_filters: dict[str, Any] = {}
     for key, value in base_filters.items():
         key_text = str(key).strip()
@@ -306,26 +325,6 @@ def _parse_non_negative_int(value: Any) -> int:
         return max(int(value), 0)
     except (TypeError, ValueError):
         return 0
-
-
-def _normalize_shop_ids(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, str):
-        candidates = [part for token in value.split(",") for part in token.split("|")]
-    elif isinstance(value, list | tuple | set):
-        candidates = list(value)
-    else:
-        return []
-    result: list[str] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        text = _normalize_text(candidate)
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        result.append(text)
-    return result
 
 
 def _normalize_json_object(value: Any) -> dict[str, Any] | None:

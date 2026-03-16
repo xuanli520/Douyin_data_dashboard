@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import inspect
+import logging
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,14 +13,20 @@ from typing import Mapping
 from sqlalchemy.exc import IntegrityError
 
 from src import session
-from src.application.collection.plan_builder import CollectionPlanBuilder
+from src.application.collection.contracts import Bootstrapper
+from src.application.collection.contracts import SessionFactory
+from src.application.collection.executor import CollectionExecutor
+from src.application.collection.executor import TaskModuleCollectionExecutor
+from src.application.collection.plan_builder_impl import CollectionPlanUnit
+from src.application.collection.plan_builder_impl import build_collection_plan
+from src.application.collection.redis_client import RedisClient
+from src.application.collection.redis_client import resolve_collection_redis_client
 from src.application.collection.result_persister import CollectionResultPersister
 from src.application.collection.runtime_loader import CollectionRuntimeLoader
 from src.application.collection.runtime_loader import LoadedCollectionRuntime
 from src.application.collection.shop_switch_capability import (
     ShopSwitchCapabilityService,
 )
-from src.cache import resolve_sync_redis_client
 from src.config import get_settings
 from src.domains.task.exceptions import ScrapingFailedException
 from src.domains.task.exceptions import ShopDashboardNoTargetShopsException
@@ -35,30 +43,44 @@ from src.domains.task.repository import TaskExecutionRepository
 from src.middleware.monitor import observe_shop_dashboard_account_switch_unsupported
 from src.middleware.monitor import observe_shop_dashboard_bootstrap_verify_failed
 from src.middleware.monitor import observe_shop_dashboard_collection
-from src.scrapers.shop_dashboard.browser_scraper import BrowserScraper
 from src.scrapers.shop_dashboard.exceptions import DataIncompleteError
 from src.scrapers.shop_dashboard.exceptions import LoginExpiredError
 from src.scrapers.shop_dashboard.exceptions import ShopDashboardScraperError
-from src.scrapers.shop_dashboard.lock_manager import LockManager
-from src.scrapers.shop_dashboard.login_state_manager import LoginStateManager
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
-from src.scrapers.shop_dashboard.session_bootstrapper import SessionBootstrapper
-from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
 from src.shared.redis_keys import redis_keys
-from src.shared.idempotency import FunboostIdempotencyHelper
+
+
+logger = logging.getLogger(__name__)
 
 
 class CollectionUseCase:
+    _SHOP_MISMATCH_RECORD_SCRIPT = """
+    local count = redis.call('incr', KEYS[1])
+    redis.call('expire', KEYS[1], tonumber(ARGV[1]))
+    local circuit_open = 0
+    if count >= tonumber(ARGV[2]) then
+        redis.call('set', KEYS[2], '1', 'EX', tonumber(ARGV[3]))
+        circuit_open = 1
+    end
+    return {count, circuit_open}
+    """
+
     def __init__(
         self,
         *,
         runtime_loader: CollectionRuntimeLoader | None = None,
-        plan_builder: CollectionPlanBuilder | None = None,
+        plan_builder: Callable[[ShopDashboardRuntimeConfig], list[CollectionPlanUnit]]
+        | None = None,
         result_persister: CollectionResultPersister | None = None,
+        executor: CollectionExecutor | None = None,
     ) -> None:
         self.runtime_loader = runtime_loader or CollectionRuntimeLoader()
-        self.plan_builder = plan_builder or CollectionPlanBuilder()
+        self.plan_builder = plan_builder or build_collection_plan
         self.result_persister = result_persister or CollectionResultPersister()
+        self.executor = executor or TaskModuleCollectionExecutor()
+        self._local_shop_mismatch_failures: dict[str, tuple[int, float]] = {}
+        self._local_shop_mismatch_circuits: dict[str, float] = {}
+        self._local_mismatch_warning_logged = False
 
     def execute(
         self,
@@ -120,6 +142,7 @@ class CollectionUseCase:
 
         loaded_runtime: LoadedCollectionRuntime | None = None
         try:
+            resolved_redis_client = self._resolve_redis_client(redis_client)
             loaded_runtime = await self._load_runtime(
                 data_source_id=data_source_id,
                 rule_id=rule_id,
@@ -137,7 +160,7 @@ class CollectionUseCase:
                 rule_id=rule_id,
                 execution_id=execution_id,
                 queue_task_id=queue_task_id,
-                redis_client=redis_client,
+                redis_client=resolved_redis_client,
                 session_factory=session_factory,
             )
             self._raise_when_all_units_failed(result)
@@ -370,10 +393,10 @@ class CollectionUseCase:
         rule_id: int,
         execution_id: str,
         queue_task_id: str,
-        redis_client: Any | None,
-        session_factory,
+        redis_client: RedisClient,
+        session_factory: SessionFactory,
     ) -> dict[str, Any]:
-        plan_units = self.plan_builder.build(runtime)
+        plan_units = self.plan_builder(runtime)
         if not plan_units:
             raise ShopDashboardNoTargetShopsException(
                 "No target shops resolved",
@@ -385,30 +408,17 @@ class CollectionUseCase:
                 },
             )
 
-        from src.tasks.collection import douyin_shop_dashboard as task_module
-
-        resolved_redis = self._resolve_redis_client(redis_client)
-        rate_limiter_cls = getattr(task_module, "_RateLimiter")
-        build_business_key = getattr(task_module, "_build_business_key")
-        collect_one_day = getattr(task_module, "_collect_one_day")
-        materialize_runtime_storage_state = getattr(
-            task_module,
-            "_materialize_runtime_storage_state",
-        )
-        helper_cls = getattr(
-            task_module,
-            "FunboostIdempotencyHelper",
-            FunboostIdempotencyHelper,
-        )
-        helper = helper_cls(
-            redis_client=resolved_redis,
+        helper = self.executor.create_idempotency_helper(
+            redis_client=redis_client,
             task_name="sync_shop_dashboard",
         )
-        state_store_cls = getattr(task_module, "SessionStateStore", SessionStateStore)
-        state_store = state_store_cls(
+        state_store = self.executor.create_state_store(
             base_dir=Path(".runtime") / "shop_dashboard_state"
         )
-        runtime = materialize_runtime_storage_state(runtime, state_store)
+        runtime = self.executor.materialize_runtime_storage_state(
+            runtime=runtime,
+            state_store=state_store,
+        )
         runtimes_by_shop: dict[str, ShopDashboardRuntimeConfig] = {
             runtime.shop_id: runtime,
         }
@@ -419,30 +429,17 @@ class CollectionUseCase:
                 runtime, shop_id=plan_unit.shop_id
             )
 
-        browser_cls = getattr(task_module, "BrowserScraper", BrowserScraper)
-        lock_manager_cls = getattr(task_module, "LockManager", LockManager)
-        login_state_manager_cls = getattr(
-            task_module,
-            "LoginStateManager",
-            LoginStateManager,
-        )
-        bootstrapper_cls = getattr(
-            task_module,
-            "SessionBootstrapper",
-            SessionBootstrapper,
-        )
-        browser = browser_cls()
-        lock_manager = lock_manager_cls(redis_client=resolved_redis)
-        login_state_manager = login_state_manager_cls(
+        browser = self.executor.create_browser_scraper()
+        lock_manager = self.executor.create_lock_manager(redis_client=redis_client)
+        login_state_manager = self.executor.create_login_state_manager(
             state_store=state_store,
-            redis_client=resolved_redis,
+            redis_client=redis_client,
         )
-        bootstrapper = bootstrapper_cls(
+        bootstrapper = self.executor.create_bootstrapper(
             state_store=state_store,
             browser_scraper=browser,
         )
-        collector_supports_shared_helpers = _supports_shared_helpers(collect_one_day)
-        rate_limiter = rate_limiter_cls(runtime.rate_limit)
+        rate_limiter = self.executor.create_rate_limiter(runtime.rate_limit)
         items: list[dict[str, Any]] = []
         requested_shop_ids = list(runtime.resolved_shop_ids)
         if not requested_shop_ids:
@@ -458,7 +455,7 @@ class CollectionUseCase:
             shop_ids=requested_shop_ids,
             verify_metric_date_by_shop=verify_metric_date_by_shop,
         )
-        capability_service = ShopSwitchCapabilityService(redis_client=resolved_redis)
+        capability_service = ShopSwitchCapabilityService(redis_client=redis_client)
         bootstrap_rebuild_count = 0
         bootstrap_verify_failed_count = 0
         shop_mismatch_count = 0
@@ -515,7 +512,7 @@ class CollectionUseCase:
                 )
                 continue
             if self._is_shop_circuit_open(
-                redis_client=resolved_redis,
+                redis_client=redis_client,
                 account_id=storage_account_id,
                 shop_id=plan_unit.shop_id,
             ):
@@ -589,7 +586,7 @@ class CollectionUseCase:
                 if bootstrap_error_code == "verify_shop_mismatch":
                     shop_mismatch_count += 1
                     mismatch_state = self._record_shop_mismatch_failure(
-                        redis_client=resolved_redis,
+                        redis_client=redis_client,
                         account_id=storage_account_id,
                         shop_id=plan_unit.shop_id,
                     )
@@ -662,7 +659,7 @@ class CollectionUseCase:
                     ),
                 )
                 continue
-            business_key = build_business_key(
+            business_key = self.executor.build_business_key(
                 unit_runtime,
                 plan_unit.metric_date,
                 plan_unit=plan_unit,
@@ -717,8 +714,6 @@ class CollectionUseCase:
             status = "failed"
             try:
                 collected = self._collect_one_unit_payload(
-                    collect_one_day=collect_one_day,
-                    collector_supports_shared_helpers=collector_supports_shared_helpers,
                     runtime=unit_runtime,
                     metric_date=plan_unit.metric_date,
                     browser=browser,
@@ -766,8 +761,6 @@ class CollectionUseCase:
                                     common_query=merged_common_query,
                                 )
                         collected = self._collect_one_unit_payload(
-                            collect_one_day=collect_one_day,
-                            collector_supports_shared_helpers=collector_supports_shared_helpers,
                             runtime=unit_runtime,
                             metric_date=plan_unit.metric_date,
                             browser=browser,
@@ -794,7 +787,7 @@ class CollectionUseCase:
                 collected["account_id_status"] = account_id_status
                 if mismatch_status == "mismatched":
                     mismatch_state = self._record_shop_mismatch_failure(
-                        redis_client=resolved_redis,
+                        redis_client=redis_client,
                         account_id=storage_account_id,
                         shop_id=target_shop_id,
                     )
@@ -852,7 +845,7 @@ class CollectionUseCase:
                     )
                     continue
                 self._clear_shop_mismatch_failure(
-                    redis_client=resolved_redis,
+                    redis_client=redis_client,
                     account_id=storage_account_id,
                     shop_id=target_shop_id,
                 )
@@ -977,8 +970,6 @@ class CollectionUseCase:
     def _collect_one_unit_payload(
         self,
         *,
-        collect_one_day: Any,
-        collector_supports_shared_helpers: bool,
         runtime: ShopDashboardRuntimeConfig,
         metric_date: str,
         browser: Any,
@@ -986,19 +977,13 @@ class CollectionUseCase:
         state_store: Any,
         login_state_manager: Any,
     ) -> dict[str, Any]:
-        if collector_supports_shared_helpers:
-            return collect_one_day(
-                runtime,
-                metric_date,
-                browser,
-                lock_manager=lock_manager,
-                state_store=state_store,
-                login_state_manager=login_state_manager,
-            )
-        return collect_one_day(
-            runtime,
-            metric_date,
-            browser,
+        return self.executor.collect_one_day(
+            runtime=runtime,
+            metric_date=metric_date,
+            browser=browser,
+            lock_manager=lock_manager,
+            state_store=state_store,
+            login_state_manager=login_state_manager,
         )
 
     def _resolve_actual_shop_id(
@@ -1035,7 +1020,7 @@ class CollectionUseCase:
     def _is_shop_circuit_open(
         self,
         *,
-        redis_client: Any,
+        redis_client: RedisClient,
         account_id: str,
         shop_id: str,
     ) -> bool:
@@ -1043,16 +1028,22 @@ class CollectionUseCase:
             account_id=account_id,
             shop_id=shop_id,
         )
-        redis_get = getattr(redis_client, "get", None)
-        if callable(redis_get):
-            value = redis_get(circuit_key)
-            return value not in {None, "", "0", 0, False}
-        return False
+        if self._is_local_circuit_open(circuit_key=circuit_key):
+            return True
+        try:
+            value = redis_client.get(circuit_key)
+        except Exception as exc:
+            self._log_local_mismatch_fallback(
+                operation="is_circuit_open",
+                error=exc,
+            )
+            return self._is_local_circuit_open(circuit_key=circuit_key)
+        return value not in {None, "", "0", 0, False}
 
     def _record_shop_mismatch_failure(
         self,
         *,
-        redis_client: Any,
+        redis_client: RedisClient,
         account_id: str,
         shop_id: str,
     ) -> dict[str, Any]:
@@ -1068,42 +1059,60 @@ class CollectionUseCase:
         window_seconds = max(int(settings.shop_mismatch_failure_window_seconds), 1)
         threshold = max(self._resolve_shop_mismatch_threshold(account_id), 1)
         circuit_open_seconds = max(int(settings.shop_mismatch_circuit_open_seconds), 1)
-        count = 0
-        redis_incr = getattr(redis_client, "incr", None)
-        redis_expire = getattr(redis_client, "expire", None)
-        redis_get = getattr(redis_client, "get", None)
-        redis_set = getattr(redis_client, "set", None)
-        if callable(redis_incr):
-            try:
-                count = int(redis_incr(fail_count_key))
-            except Exception:
-                count = 0
-        elif callable(redis_get) and callable(redis_set):
-            current = redis_get(fail_count_key)
-            try:
-                count = int(current or 0) + 1
-            except (TypeError, ValueError):
-                count = 1
-            redis_set(fail_count_key, count, ex=window_seconds)
-        if count <= 0 and callable(redis_get):
-            try:
-                count = int(redis_get(fail_count_key) or 0)
-            except (TypeError, ValueError):
-                count = 0
-        if callable(redis_expire):
-            try:
-                redis_expire(fail_count_key, window_seconds)
-            except Exception:
-                pass
-        circuit_open = count >= threshold
-        if circuit_open and callable(redis_set):
-            redis_set(circuit_key, "1", ex=circuit_open_seconds)
-        return {"count": count, "circuit_open": circuit_open}
+        try:
+            result = redis_client.eval(
+                self._SHOP_MISMATCH_RECORD_SCRIPT,
+                2,
+                fail_count_key,
+                circuit_key,
+                window_seconds,
+                threshold,
+                circuit_open_seconds,
+            )
+            if isinstance(result, (list, tuple)) and len(result) >= 2:
+                count = int(result[0] or 0)
+                circuit_open = bool(int(result[1] or 0))
+            else:
+                count = int(result or 0)
+                circuit_open = count >= threshold
+            if count <= 0:
+                raise ValueError("shop mismatch eval returned non-positive count")
+            return {"count": count, "circuit_open": circuit_open}
+        except Exception as exc:
+            self._log_local_mismatch_fallback(
+                operation="record_failure_eval",
+                error=exc,
+            )
+
+        try:
+            pipeline = redis_client.pipeline(transaction=True)
+            pipeline.incr(fail_count_key)
+            pipeline.expire(fail_count_key, window_seconds)
+            result = pipeline.execute()
+            count = int(result[0] or 0)
+            circuit_open = count >= threshold
+            if circuit_open:
+                redis_client.set(circuit_key, "1", ex=circuit_open_seconds)
+            return {"count": count, "circuit_open": circuit_open}
+        except Exception as exc:
+            self._log_local_mismatch_fallback(
+                operation="record_failure_pipeline",
+                error=exc,
+            )
+
+        self._log_local_mismatch_fallback(operation="record_failure")
+        return self._record_local_shop_mismatch_failure(
+            fail_count_key=fail_count_key,
+            circuit_key=circuit_key,
+            window_seconds=window_seconds,
+            threshold=threshold,
+            circuit_open_seconds=circuit_open_seconds,
+        )
 
     def _clear_shop_mismatch_failure(
         self,
         *,
-        redis_client: Any,
+        redis_client: RedisClient,
         account_id: str,
         shop_id: str,
     ) -> None:
@@ -1115,18 +1124,19 @@ class CollectionUseCase:
             account_id=account_id,
             shop_id=shop_id,
         )
-        redis_delete = getattr(redis_client, "delete", None)
-        if callable(redis_delete):
-            try:
-                redis_delete(fail_count_key)
-                redis_delete(circuit_key)
-            except Exception:
-                return
+        try:
+            redis_client.delete(fail_count_key, circuit_key)
+            self._clear_local_shop_mismatch_failure(
+                fail_count_key=fail_count_key,
+                circuit_key=circuit_key,
+            )
             return
-        redis_set = getattr(redis_client, "set", None)
-        if callable(redis_set):
-            redis_set(fail_count_key, "0", ex=1)
-            redis_set(circuit_key, "0", ex=1)
+        except Exception:
+            self._log_local_mismatch_fallback(operation="clear_failure")
+        self._clear_local_shop_mismatch_failure(
+            fail_count_key=fail_count_key,
+            circuit_key=circuit_key,
+        )
 
     def _resolve_shop_mismatch_threshold(self, account_id: str) -> int:
         settings = get_settings().shop_dashboard
@@ -1149,10 +1159,74 @@ class CollectionUseCase:
             return max(degraded_threshold, 1)
         return default_threshold
 
+    def _record_local_shop_mismatch_failure(
+        self,
+        *,
+        fail_count_key: str,
+        circuit_key: str,
+        window_seconds: int,
+        threshold: int,
+        circuit_open_seconds: int,
+    ) -> dict[str, Any]:
+        now = time.monotonic()
+        cached = self._local_shop_mismatch_failures.get(fail_count_key)
+        count = 1
+        if cached is not None and cached[1] > now:
+            count = int(cached[0]) + 1
+        self._local_shop_mismatch_failures[fail_count_key] = (
+            count,
+            now + float(window_seconds),
+        )
+        circuit_open = count >= threshold
+        if circuit_open:
+            self._local_shop_mismatch_circuits[circuit_key] = now + float(
+                circuit_open_seconds
+            )
+        return {"count": count, "circuit_open": circuit_open}
+
+    def _is_local_circuit_open(self, *, circuit_key: str) -> bool:
+        expires_at = self._local_shop_mismatch_circuits.get(circuit_key)
+        if expires_at is None:
+            return False
+        if expires_at <= time.monotonic():
+            self._local_shop_mismatch_circuits.pop(circuit_key, None)
+            return False
+        return True
+
+    def _clear_local_shop_mismatch_failure(
+        self,
+        *,
+        fail_count_key: str,
+        circuit_key: str,
+    ) -> None:
+        self._local_shop_mismatch_failures.pop(fail_count_key, None)
+        self._local_shop_mismatch_circuits.pop(circuit_key, None)
+
+    def _log_local_mismatch_fallback(
+        self,
+        *,
+        operation: str,
+        error: Exception | None = None,
+    ) -> None:
+        if self._local_mismatch_warning_logged:
+            return
+        self._local_mismatch_warning_logged = True
+        if error is None:
+            logger.warning(
+                "shop mismatch guard degraded to process-local best effort operation=%s",
+                operation,
+            )
+            return
+        logger.warning(
+            "shop mismatch guard degraded to process-local best effort operation=%s error=%s",
+            operation,
+            error,
+        )
+
     async def _bootstrap_shops(
         self,
         *,
-        bootstrapper: Any,
+        bootstrapper: Bootstrapper,
         runtime: ShopDashboardRuntimeConfig,
         shop_ids: list[str],
         verify_metric_date_by_shop: Mapping[str, str],
@@ -1177,7 +1251,7 @@ class CollectionUseCase:
     async def _bootstrap_shop(
         self,
         *,
-        bootstrapper: Any,
+        bootstrapper: Bootstrapper,
         runtime: ShopDashboardRuntimeConfig,
         shop_id: str,
         verify_metric_date: str,
@@ -1265,21 +1339,9 @@ class CollectionUseCase:
             )
         return exc
 
-    def _resolve_redis_client(self, redis_client: Any | None) -> Any:
-        return resolve_sync_redis_client(redis_client)
-
-
-def _supports_shared_helpers(collector: Any) -> bool:
-    try:
-        signature = inspect.signature(collector)
-    except (TypeError, ValueError):
-        return True
-
-    parameters = signature.parameters
-    if any(
-        parameter.kind == inspect.Parameter.VAR_KEYWORD
-        for parameter in parameters.values()
-    ):
-        return True
-    required = {"lock_manager", "state_store", "login_state_manager"}
-    return required.issubset(parameters.keys())
+    def _resolve_redis_client(self, redis_client: Any | None) -> RedisClient:
+        return resolve_collection_redis_client(
+            redis_client,
+            component="collection_usecase",
+            logger=logger,
+        )

@@ -72,6 +72,12 @@ shop_dashboard_account_switch_unsupported_total = Counter(
     "Shop dashboard account switch unsupported count",
 )
 
+shop_dashboard_redis_degraded_total = Counter(
+    "shop_dashboard_redis_degraded_total",
+    "Shop dashboard redis degraded to null client count",
+    ["component"],
+)
+
 shop_dashboard_score_upsert_total = Counter(
     "shop_dashboard_score_upsert_total",
     "Shop dashboard score upsert total",
@@ -130,6 +136,11 @@ def observe_shop_dashboard_bootstrap_verify_failed(*, error_code: str) -> None:
 
 def observe_shop_dashboard_account_switch_unsupported() -> None:
     shop_dashboard_account_switch_unsupported_total.inc()
+
+
+def observe_shop_dashboard_redis_degraded(*, component: str) -> None:
+    safe_component = component if component else "unknown"
+    shop_dashboard_redis_degraded_total.labels(component=safe_component).inc()
 
 
 def observe_shop_dashboard_score_upsert(
