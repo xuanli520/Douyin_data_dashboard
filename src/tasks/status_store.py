@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
+import threading
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -11,6 +13,8 @@ from src.cache import resolve_sync_redis_client
 from src.config import get_settings
 from src.domains.task.enums import TaskExecutionStatus
 from src.domains.task.repository import TaskExecutionRepository
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_status_redis_client(owner: Any) -> Any:
@@ -122,6 +126,116 @@ def _is_shutdown_runtime_error(exc: RuntimeError) -> bool:
     )
 
 
+def _handle_status_sync_task_done(
+    task: asyncio.Task[None],
+    *,
+    queue_task_id: str,
+    status: TaskExecutionStatus,
+    started_at: datetime | None,
+    completed_at: datetime | None,
+    processed_rows: int | None,
+    error_message: str | None,
+    triggered_by: int | None,
+) -> None:
+    if task.cancelled():
+        return
+    try:
+        task_exception = task.exception()
+    except asyncio.CancelledError:
+        return
+    if task_exception is None:
+        return
+    logger.error(
+        "async status sync failed queue_task_id=%s status=%s triggered_by=%s started_at=%s completed_at=%s",
+        queue_task_id,
+        status.value,
+        triggered_by,
+        started_at,
+        completed_at,
+        exc_info=(
+            type(task_exception),
+            task_exception,
+            task_exception.__traceback__,
+        ),
+    )
+    _start_status_sync_fallback(
+        queue_task_id=queue_task_id,
+        status=status,
+        started_at=started_at,
+        completed_at=completed_at,
+        processed_rows=processed_rows,
+        error_message=error_message,
+        triggered_by=triggered_by,
+    )
+
+
+def _start_status_sync_fallback(
+    *,
+    queue_task_id: str,
+    status: TaskExecutionStatus,
+    started_at: datetime | None,
+    completed_at: datetime | None,
+    processed_rows: int | None,
+    error_message: str | None,
+    triggered_by: int | None,
+) -> None:
+    if sys.is_finalizing():
+        return
+    thread = threading.Thread(
+        target=_run_status_sync_fallback,
+        kwargs={
+            "queue_task_id": queue_task_id,
+            "status": status,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "processed_rows": processed_rows,
+            "error_message": error_message,
+            "triggered_by": triggered_by,
+        },
+        name=f"task-status-sync-{queue_task_id[:32]}",
+        daemon=True,
+    )
+    thread.start()
+
+
+def _run_status_sync_fallback(
+    *,
+    queue_task_id: str,
+    status: TaskExecutionStatus,
+    started_at: datetime | None,
+    completed_at: datetime | None,
+    processed_rows: int | None,
+    error_message: str | None,
+    triggered_by: int | None,
+) -> None:
+    try:
+        asyncio.run(
+            _sync_execution_status_async(
+                queue_task_id=queue_task_id,
+                status=status,
+                started_at=started_at,
+                completed_at=completed_at,
+                processed_rows=processed_rows,
+                error_message=error_message,
+                triggered_by=triggered_by,
+            )
+        )
+    except RuntimeError as exc:
+        if _is_shutdown_runtime_error(exc):
+            return
+        logger.exception(
+            "status sync fallback failed queue_task_id=%s status=%s",
+            queue_task_id,
+            status.value,
+        )
+    except Exception:
+        logger.exception(
+            "status sync fallback failed queue_task_id=%s status=%s",
+            queue_task_id,
+            status.value,
+        )
+
+
 def _sync_execution_status(
     *,
     queue_task_id: str,
@@ -156,12 +270,24 @@ def _sync_execution_status(
             raise
         return
     try:
-        loop.create_task(coro)
+        task = loop.create_task(coro)
     except RuntimeError as exc:
         coro.close()
         if _is_shutdown_runtime_error(exc):
             return
         raise
+    task.add_done_callback(
+        lambda done_task: _handle_status_sync_task_done(
+            done_task,
+            queue_task_id=queue_task_id,
+            status=status,
+            started_at=started_at,
+            completed_at=completed_at,
+            processed_rows=processed_rows,
+            error_message=error_message,
+            triggered_by=triggered_by,
+        )
+    )
 
 
 async def _sync_execution_status_async(

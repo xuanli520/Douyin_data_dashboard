@@ -9,26 +9,12 @@ from src.cache import resolve_sync_redis_client
 from src.config import get_settings
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
 from src import session
-from src.tasks.base import TaskStatusMixin
-from src.tasks.funboost_compat import boost, fct
+from src.tasks.base import TaskStatusMixin, write_started_status_safe
+from src.tasks.funboost_compat import boost
 from src.tasks.idempotency import FunboostIdempotencyHelper
 from src.tasks.params import CollectionTaskParams
-from src.tasks.status_store import write_started_task_status
 
 logger = logging.getLogger(__name__)
-
-
-def _write_started_status(task_func, task_name: str, triggered_by: int | None) -> None:
-    try:
-        task_id = str(getattr(fct, "task_id", "unknown"))
-        write_started_task_status(
-            owner=task_func,
-            task_id=task_id,
-            task_name=task_name,
-            triggered_by=triggered_by,
-        )
-    except Exception:
-        logger.exception("failed to write started task status: %s", task_name)
 
 
 @boost(
@@ -44,10 +30,11 @@ def sync_shop_dashboard_agent(
     reason: str = "agent_backfill",
     triggered_by: int | None = None,
 ) -> dict[str, Any]:
-    _write_started_status(
+    write_started_status_safe(
         sync_shop_dashboard_agent,
         "sync_shop_dashboard_agent",
         triggered_by,
+        logger=logger,
     )
     redis_client = resolve_sync_redis_client()
     helper = FunboostIdempotencyHelper(

@@ -14,6 +14,8 @@ T = TypeVar("T")
 
 async def init_db(url: str, echo: bool = False) -> None:
     global engine, async_session_factory
+    if engine is not None:
+        await engine.dispose()
     engine = create_async_engine(url, echo=echo)
 
     if "sqlite" in url:
@@ -30,9 +32,13 @@ async def init_db(url: str, echo: bool = False) -> None:
 
 
 async def close_db() -> None:
+    global engine, async_session_factory
     if engine is None:
+        async_session_factory = None
         return
     await engine.dispose()
+    engine = None
+    async_session_factory = None
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

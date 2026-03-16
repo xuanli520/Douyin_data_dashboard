@@ -1,5 +1,30 @@
-from src.tasks.funboost_compat import AbstractConsumer, FunctionResultStatus
-from src.tasks.status_store import write_finished_task_status
+from __future__ import annotations
+
+from typing import Any
+
+from src.tasks.funboost_compat import AbstractConsumer, FunctionResultStatus, fct
+from src.tasks.status_store import write_finished_task_status, write_started_task_status
+
+
+def write_started_status_safe(
+    task_func: Any,
+    task_name: str,
+    triggered_by: int | None,
+    *,
+    logger: Any,
+    execution_id: int | None = None,
+) -> None:
+    try:
+        task_id = str(getattr(fct, "task_id", "unknown"))
+        write_started_task_status(
+            owner=task_func,
+            task_id=task_id,
+            task_name=task_name,
+            triggered_by=triggered_by,
+            execution_id=execution_id,
+        )
+    except Exception:
+        logger.exception("failed to write started task status: %s", task_name)
 
 
 class TaskStatusMixin(AbstractConsumer):

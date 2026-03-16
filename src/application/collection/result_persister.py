@@ -13,6 +13,7 @@ from src.domains.experience.services import ExperienceQueryService
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
 from src.middleware.monitor import observe_shop_dashboard_score_upsert
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
+from src.shared.payload_extractors import extract_nested_list
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +173,7 @@ def _extract_violation_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
     if isinstance(raw, dict):
         raw_violations = raw.get("violations")
         if isinstance(raw_violations, dict):
-            extracted = _extract_list(raw_violations.get("waiting_list"))
+            extracted = extract_nested_list(raw_violations.get("waiting_list"))
             fallback = _normalize_violation_items(extracted)
             if fallback:
                 return fallback
@@ -188,27 +189,6 @@ def _normalize_violation_items(value: Any) -> list[dict[str, Any]]:
         if isinstance(item, Mapping):
             rows.append(dict(item))
     return rows
-
-
-def _extract_list(value: Any) -> list[Any]:
-    if isinstance(value, list):
-        return value
-    if not isinstance(value, Mapping):
-        return []
-
-    for key in ("list", "items", "records", "waiting_list", "rows", "result", "data"):
-        nested = value.get(key)
-        if isinstance(nested, list):
-            return nested
-
-    for key in ("data", "result", "records"):
-        nested = value.get(key)
-        if isinstance(nested, Mapping):
-            extracted = _extract_list(nested)
-            if extracted:
-                return extracted
-
-    return []
 
 
 def _to_int(value: Any) -> int:

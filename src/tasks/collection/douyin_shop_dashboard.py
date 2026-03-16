@@ -31,12 +31,12 @@ from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
 from src.scrapers.shop_dashboard.shop_selection_validator import (
     normalize_shop_selection_payload,
 )
+from src.shared.payload_extractors import extract_nested_list
 from src import session
-from src.tasks.base import TaskStatusMixin
+from src.tasks.base import TaskStatusMixin, write_started_status_safe
 from src.tasks.exceptions import ScrapingFailedException
 from src.tasks.funboost_compat import boost, fct
 from src.tasks.params import CollectionTaskParams
-from src.tasks.status_store import write_started_task_status
 
 logger = logging.getLogger(__name__)
 
@@ -77,25 +77,6 @@ class _RateLimiter:
                 sleep_seconds = (1.0 - self._tokens) / self._qps
             if sleep_seconds > 0:
                 time.sleep(sleep_seconds)
-
-
-def _write_started_status(
-    task_func,
-    task_name: str,
-    triggered_by: int | None,
-    execution_id: int | None = None,
-) -> None:
-    try:
-        task_id = str(getattr(fct, "task_id", "unknown"))
-        write_started_task_status(
-            owner=task_func,
-            task_id=task_id,
-            task_name=task_name,
-            triggered_by=triggered_by,
-            execution_id=execution_id,
-        )
-    except Exception:
-        logger.exception("failed to write started task status: %s", task_name)
 
 
 def _resolve_account_id(runtime: ShopDashboardRuntimeConfig) -> str:
@@ -140,7 +121,12 @@ def sync_shop_dashboard(
     session_level: bool | None = None,
     extra_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    _write_started_status(sync_shop_dashboard, "sync_shop_dashboard", triggered_by)
+    write_started_status_safe(
+        sync_shop_dashboard,
+        "sync_shop_dashboard",
+        triggered_by,
+        logger=logger,
+    )
     redis_client = resolve_sync_redis_client()
     runtime_overrides = {
         key: value
@@ -664,6 +650,18 @@ def _resolve_shop_lock_id(shop_id: str, account_id: str) -> str:
     return "account:anonymous"
 
 
+class _SafeFormatContext(dict[str, Any]):
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"
+
+
+def _safe_format_business_key(template: str, context: dict[str, Any]) -> str:
+    try:
+        return template.format_map(_SafeFormatContext(context))
+    except Exception:
+        return template
+
+
 def _build_business_key(
     runtime: ShopDashboardRuntimeConfig,
     metric_date: str,
@@ -687,16 +685,7 @@ def _build_business_key(
         "window_end": window_end.isoformat() if window_end else "",
     }
     if runtime.dedupe_key:
-        business_key = ""
-        try:
-            business_key = runtime.dedupe_key.format(**format_context)
-        except KeyError:
-            business_key = runtime.dedupe_key.format(
-                shop_id=runtime.shop_id,
-                date=metric_date,
-                rule_id=runtime.rule_id,
-                execution_id=runtime.execution_id,
-            )
+        business_key = _safe_format_business_key(runtime.dedupe_key, format_context)
         if normalized_queue_task_id and "{queue_task_id}" not in runtime.dedupe_key:
             return f"{business_key}:{normalized_queue_task_id}"
         return business_key
@@ -878,7 +867,7 @@ def _extract_violation_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
     if isinstance(raw, dict):
         raw_violations = raw.get("violations")
         if isinstance(raw_violations, dict):
-            extracted = _extract_list(raw_violations.get("waiting_list"))
+            extracted = extract_nested_list(raw_violations.get("waiting_list"))
             fallback = _normalize_violation_items(extracted)
             if fallback:
                 return fallback
@@ -894,27 +883,6 @@ def _normalize_violation_items(value: Any) -> list[dict[str, Any]]:
         if isinstance(item, Mapping):
             rows.append(dict(item))
     return rows
-
-
-def _extract_list(value: Any) -> list[Any]:
-    if isinstance(value, list):
-        return value
-    if not isinstance(value, Mapping):
-        return []
-
-    for key in ("list", "items", "records", "waiting_list", "rows", "result", "data"):
-        nested = value.get(key)
-        if isinstance(nested, list):
-            return nested
-
-    for key in ("data", "result", "records"):
-        nested = value.get(key)
-        if isinstance(nested, Mapping):
-            extracted = _extract_list(nested)
-            if extracted:
-                return extracted
-
-    return []
 
 
 def _to_int(value: Any) -> int:
