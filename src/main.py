@@ -14,16 +14,10 @@ from src.api import (
     collection_job_router,
     data_import_router,
     task_router,
-    shop_dashboard_router,
     alerts_router,
     shops_router,
     metrics_router,
     experience_router,
-    dashboard_router,
-    orders_router,
-    products_router,
-    sales_router,
-    after_sales_router,
     notifications_router,
     reports_router,
     exports_router,
@@ -114,16 +108,10 @@ def create_app() -> FastAPI:
     app.include_router(monitor_router, prefix="/monitor")
     app.include_router(data_import_router, prefix="/api/v1", tags=["data-import"])
     app.include_router(task_router, prefix="/api/v1", tags=["task"])
-    app.include_router(shop_dashboard_router, prefix="/api/v1", tags=["shop-dashboard"])
     app.include_router(alerts_router, prefix="/api/v1", tags=["alerts"])
     app.include_router(shops_router, prefix="/api/v1", tags=["shops"])
     app.include_router(metrics_router, prefix="/api/v1", tags=["metrics"])
     app.include_router(experience_router, prefix="/api/v1", tags=["experience"])
-    app.include_router(dashboard_router, prefix="/api/v1", tags=["dashboard"])
-    app.include_router(orders_router, prefix="/api/v1", tags=["orders"])
-    app.include_router(products_router, prefix="/api/v1", tags=["products"])
-    app.include_router(sales_router, prefix="/api/v1", tags=["sales"])
-    app.include_router(after_sales_router, prefix="/api/v1", tags=["after-sales"])
     app.include_router(notifications_router, prefix="/api/v1", tags=["notifications"])
     app.include_router(reports_router, prefix="/api/v1", tags=["reports"])
     app.include_router(exports_router, prefix="/api/v1", tags=["exports"])

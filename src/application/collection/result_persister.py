@@ -5,11 +5,13 @@ from collections.abc import Mapping
 from datetime import date
 from typing import Any
 
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import src.cache as cache_module
 from src.domains.experience.services import ExperienceQueryService
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
+from src.middleware.monitor import observe_shop_dashboard_score_upsert
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 
 logger = logging.getLogger(__name__)
@@ -26,17 +28,35 @@ class CollectionResultPersister:
     ) -> None:
         repo = ShopDashboardRepository(session)
         metric_day = date.fromisoformat(metric_date)
-        actual_shop_id = str(
-            payload.get("actual_shop_id") or payload.get("shop_id") or runtime.shop_id
-        ).strip()
-        target_shop_id = (
-            str(payload.get("target_shop_id") or runtime.shop_id).strip()
-            or runtime.shop_id
+        metric_day_text = metric_day.isoformat()
+        runtime_shop_id = _normalize_shop_id(runtime.shop_id)
+        actual_shop_id = _normalize_shop_id(
+            payload.get("actual_shop_id") or payload.get("shop_id") or runtime_shop_id
         )
-        if actual_shop_id != target_shop_id:
+        target_shop_id = _normalize_shop_id(
+            payload.get("target_shop_id") or runtime_shop_id
+        )
+        resolved_shop_id = actual_shop_id or runtime_shop_id
+        if not resolved_shop_id or not target_shop_id:
+            logger.warning(
+                "skip dashboard persistence due to empty shop key: target_shop_id=%s actual_shop_id=%s resolved_shop_id=%s metric_date=%s",
+                target_shop_id,
+                actual_shop_id,
+                resolved_shop_id,
+                metric_day_text,
+            )
             return
-        resolved_shop_id = actual_shop_id or runtime.shop_id
-        await repo.upsert_score(
+        if actual_shop_id != target_shop_id:
+            logger.warning(
+                "skip dashboard persistence due to shop mismatch: target_shop_id=%s actual_shop_id=%s resolved_shop_id=%s metric_date=%s",
+                target_shop_id,
+                actual_shop_id,
+                resolved_shop_id,
+                metric_day_text,
+            )
+            return
+        source = str(payload.get("source", "script"))
+        score = await repo.upsert_score(
             shop_id=resolved_shop_id,
             metric_date=metric_day,
             total_score=float(payload.get("total_score", 0.0)),
@@ -44,7 +64,14 @@ class CollectionResultPersister:
             logistics_score=float(payload.get("logistics_score", 0.0)),
             service_score=float(payload.get("service_score", 0.0)),
             bad_behavior_score=float(payload.get("bad_behavior_score", 0.0)),
-            source=str(payload.get("source", "script")),
+            shop_name=str(payload.get("shop_name", "")).strip() or None,
+            source=source,
+        )
+        insert_or_update = sa_inspect(score).info.get("insert_or_update", "update")
+        observe_shop_dashboard_score_upsert(
+            insert_or_update=str(insert_or_update),
+            shop_id=resolved_shop_id,
+            metric_date=metric_day_text,
         )
 
         reviews = payload.get("reviews", {}).get("items", [])
@@ -55,7 +82,7 @@ class CollectionResultPersister:
                     "review_id": review.get("id") or review.get("review_id") or "",
                     "content": review.get("content") or "",
                     "is_replied": bool(review.get("shop_reply")),
-                    "source": str(payload.get("source", "script")),
+                    "source": source,
                 }
             )
         await repo.replace_reviews(
@@ -92,7 +119,7 @@ class CollectionResultPersister:
                         or item.get("points")
                         or 0
                     ),
-                    "source": str(payload.get("source", "script")),
+                    "source": source,
                 }
             )
         await repo.replace_violations(
@@ -111,7 +138,7 @@ class CollectionResultPersister:
             logger.exception(
                 "experience cache invalidation failed after persistence: shop_id=%s metric_day=%s",
                 resolved_shop_id,
-                metric_day.isoformat(),
+                metric_day_text,
             )
 
     async def _invalidate_experience_cache(
@@ -189,3 +216,12 @@ def _to_int(value: Any) -> int:
         return int(float(value))
     except (TypeError, ValueError):
         return 0
+
+
+def _normalize_shop_id(value: Any) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return ""
+    if normalized.isdigit():
+        return str(int(normalized))
+    return normalized

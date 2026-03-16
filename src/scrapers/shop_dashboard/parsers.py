@@ -77,14 +77,11 @@ def parse_comment_summary(
     product_payload: Mapping[str, Any],
 ) -> dict[str, Any]:
     ensure_payload_success(statistics_payload)
-    ensure_payload_success(unreply_payload)
-    ensure_payload_success(tags_payload)
-    ensure_payload_success(product_payload)
 
     statistics_data = _extract_data(statistics_payload)
-    unreply_data = _extract_data(unreply_payload)
-    tags_data = _extract_data(tags_payload)
-    product_data = _extract_data(product_payload)
+    unreply_data = _safe_extract_data(unreply_payload)
+    tags_data = _safe_extract_data(tags_payload)
+    product_data = _safe_extract_data(product_payload)
 
     return {
         "negative_comment_count": _first_int(
@@ -198,6 +195,21 @@ def extract_actual_shop_id(
         text = str(candidate or "").strip()
         if text:
             return text
+    return None
+
+
+def extract_shop_name(
+    analysis_payload: Mapping[str, Any],
+    overview_payload: Mapping[str, Any],
+) -> str | None:
+    analysis_data = _extract_data(analysis_payload)
+    overview_data = _extract_data(overview_payload)
+    for payload in (analysis_data, overview_data):
+        for key in ("shop_name", "shopName", "name", "shop_nick_name"):
+            value = payload.get(key)
+            text = str(value or "").strip()
+            if text:
+                return text
     return None
 
 

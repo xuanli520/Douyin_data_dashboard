@@ -72,6 +72,12 @@ shop_dashboard_account_switch_unsupported_total = Counter(
     "Shop dashboard account switch unsupported count",
 )
 
+shop_dashboard_score_upsert_total = Counter(
+    "shop_dashboard_score_upsert_total",
+    "Shop dashboard score upsert total",
+    ["insert_or_update", "shop_id", "metric_date"],
+)
+
 PATH_PARAMETER_PATTERN = re.compile(r"/(?:\d+|[0-9a-fA-F-]{36})")
 
 
@@ -124,6 +130,24 @@ def observe_shop_dashboard_bootstrap_verify_failed(*, error_code: str) -> None:
 
 def observe_shop_dashboard_account_switch_unsupported() -> None:
     shop_dashboard_account_switch_unsupported_total.inc()
+
+
+def observe_shop_dashboard_score_upsert(
+    *,
+    insert_or_update: str,
+    shop_id: str,
+    metric_date: str,
+) -> None:
+    safe_insert_or_update = (
+        insert_or_update if insert_or_update in {"insert", "update"} else "update"
+    )
+    safe_shop_id = shop_id if shop_id else "unknown"
+    safe_metric_date = metric_date if metric_date else "unknown"
+    shop_dashboard_score_upsert_total.labels(
+        insert_or_update=safe_insert_or_update,
+        shop_id=safe_shop_id,
+        metric_date=safe_metric_date,
+    ).inc()
 
 
 class MonitorMiddleware(BaseHTTPMiddleware):

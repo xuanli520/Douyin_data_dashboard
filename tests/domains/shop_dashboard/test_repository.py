@@ -23,6 +23,7 @@ async def test_upsert_score_by_shop_and_date(test_db):
             product_score=4.88,
             logistics_score=4.82,
             service_score=4.90,
+            shop_name="shop-old",
             source="http",
         )
         second = await repo.upsert_score(
@@ -32,6 +33,7 @@ async def test_upsert_score_by_shop_and_date(test_db):
             product_score=4.89,
             logistics_score=4.83,
             service_score=4.91,
+            shop_name="demo-shop",
             source="browser",
         )
 
@@ -46,6 +48,7 @@ async def test_upsert_score_by_shop_and_date(test_db):
 
         assert first.id == second.id
         assert second.total_score == 4.88
+        assert second.shop_name == "demo-shop"
         assert second.source == "browser"
         assert count == 1
 

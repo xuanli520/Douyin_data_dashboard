@@ -508,6 +508,9 @@ def _normalize_task_result(
         "retry_count": retry_count,
         "fallback_trace": list(fallback_trace or []),
     }
+    shop_name = str(payload.get("shop_name", "")).strip()
+    if shop_name:
+        result["shop_name"] = shop_name
     if "reason" in payload:
         result["reason"] = payload.get("reason")
     for key in ("violations_detail", "arbitration_detail", "dsr_trend"):
@@ -764,16 +767,34 @@ async def _persist_result(
     async with session_factory() as db_session:
         repo = ShopDashboardRepository(db_session)
         metric_day = date.fromisoformat(metric_date)
-        actual_shop_id = str(
-            payload.get("actual_shop_id") or payload.get("shop_id") or runtime.shop_id
-        ).strip()
-        target_shop_id = (
-            str(payload.get("target_shop_id") or runtime.shop_id).strip()
-            or runtime.shop_id
+        metric_day_text = metric_day.isoformat()
+        runtime_shop_id = _normalize_shop_id(runtime.shop_id)
+        actual_shop_id = _normalize_shop_id(
+            payload.get("actual_shop_id") or payload.get("shop_id") or runtime_shop_id
         )
-        if actual_shop_id != target_shop_id:
+        target_shop_id = _normalize_shop_id(
+            payload.get("target_shop_id") or runtime_shop_id
+        )
+        resolved_shop_id = actual_shop_id or runtime_shop_id
+        if not resolved_shop_id or not target_shop_id:
+            logger.warning(
+                "skip dashboard persistence due to empty shop key: target_shop_id=%s actual_shop_id=%s resolved_shop_id=%s metric_date=%s",
+                target_shop_id,
+                actual_shop_id,
+                resolved_shop_id,
+                metric_day_text,
+            )
             return
-        resolved_shop_id = actual_shop_id or runtime.shop_id
+        if actual_shop_id != target_shop_id:
+            logger.warning(
+                "skip dashboard persistence due to shop mismatch: target_shop_id=%s actual_shop_id=%s resolved_shop_id=%s metric_date=%s",
+                target_shop_id,
+                actual_shop_id,
+                resolved_shop_id,
+                metric_day_text,
+            )
+            return
+        source = str(payload.get("source", "script"))
         await repo.upsert_score(
             shop_id=resolved_shop_id,
             metric_date=metric_day,
@@ -782,7 +803,8 @@ async def _persist_result(
             logistics_score=float(payload.get("logistics_score", 0.0)),
             service_score=float(payload.get("service_score", 0.0)),
             bad_behavior_score=float(payload.get("bad_behavior_score", 0.0)),
-            source=str(payload.get("source", "script")),
+            shop_name=str(payload.get("shop_name", "")).strip() or None,
+            source=source,
         )
 
         reviews = payload.get("reviews", {}).get("items", [])
@@ -793,7 +815,7 @@ async def _persist_result(
                     "review_id": review.get("id") or review.get("review_id") or "",
                     "content": review.get("content") or "",
                     "is_replied": bool(review.get("shop_reply")),
-                    "source": str(payload.get("source", "script")),
+                    "source": source,
                 }
             )
         await repo.replace_reviews(
@@ -830,7 +852,7 @@ async def _persist_result(
                         or item.get("points")
                         or 0
                     ),
-                    "source": str(payload.get("source", "script")),
+                    "source": source,
                 }
             )
         await repo.replace_violations(
@@ -900,6 +922,15 @@ def _to_int(value: Any) -> int:
         return int(float(value))
     except (TypeError, ValueError):
         return 0
+
+
+def _normalize_shop_id(value: Any) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return ""
+    if normalized.isdigit():
+        return str(int(normalized))
+    return normalized
 
 
 def _supports_shared_helpers(collector: Any) -> bool:

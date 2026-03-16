@@ -50,34 +50,32 @@ async def permission_data(test_db):
     from src.auth.models import Permission, Role, RolePermission, UserRole
 
     password_helper = PasswordHelper()
-    hashed_password = password_helper.hash("shopdashboard123")
+    hashed_password = password_helper.hash("shops123")
 
     async with test_db() as session:
         result = await session.execute(select(Permission))
         perm_map = {p.code: p for p in result.scalars().all()}
 
-        code = "shop_dashboard:query"
+        code = "shop:view"
         if code not in perm_map:
-            perm = Permission(code=code, name=code, module="shop_dashboard")
+            perm = Permission(code=code, name=code, module="shop")
             session.add(perm)
             await session.commit()
             perm_map[code] = perm
 
         role_result = await session.execute(
-            select(Role).where(Role.name == "shop_dashboard_reader")
+            select(Role).where(Role.name == "shops_reader")
         )
         role = role_result.scalar_one_or_none()
         if not role:
-            role = Role(
-                name="shop_dashboard_reader", description="Shop Dashboard Reader"
-            )
+            role = Role(name="shops_reader", description="Shops Reader")
             session.add(role)
             await session.commit()
             await session.refresh(role)
 
         user = User(
-            username="shopdashboard",
-            email="shopdashboard@example.com",
+            username="shopsuser",
+            email="shopsuser@example.com",
             hashed_password=hashed_password,
             is_active=True,
             is_verified=True,
@@ -94,7 +92,7 @@ async def permission_data(test_db):
 
 
 @pytest.mark.asyncio
-async def test_shop_dashboard_query_only(api_client, permission_data, test_db):
+async def test_shops_query_only(api_client, permission_data, test_db):
     async with test_db() as session:
         repo = ShopDashboardRepository(session)
         metric_date = date(2026, 3, 2)
@@ -105,6 +103,7 @@ async def test_shop_dashboard_query_only(api_client, permission_data, test_db):
             product_score=4.7,
             logistics_score=4.9,
             service_score=4.8,
+            shop_name="demo-shop",
             source="script",
         )
         await repo.replace_reviews(
@@ -136,26 +135,78 @@ async def test_shop_dashboard_query_only(api_client, permission_data, test_db):
 
     auth_headers = await get_auth_headers(
         api_client,
-        "shopdashboard@example.com",
-        "shopdashboard123",
+        "shopsuser@example.com",
+        "shops123",
     )
 
     query_resp = await api_client.get(
-        "/api/v1/shop-dashboard/query?shop_id=shop-1&start_date=2026-03-01&end_date=2026-03-03",
+        "/api/v1/shops?shop_id=shop-1&start_date=2026-03-01&end_date=2026-03-03",
         headers=auth_headers,
     )
     assert query_resp.status_code == 200
     assert query_resp.json()["data"]["items"][0]["shop_id"] == "shop-1"
+    assert query_resp.json()["data"]["items"][0]["shop_name"] == "demo-shop"
 
 
 @pytest.mark.asyncio
-async def test_shop_dashboard_task_control_endpoints_removed(
-    api_client, permission_data
-):
+async def test_shops_root_returns_all_shops(api_client, permission_data, test_db):
+    async with test_db() as session:
+        repo = ShopDashboardRepository(session)
+        await repo.upsert_score(
+            shop_id="shop-2",
+            metric_date=date(2026, 3, 1),
+            total_score=4.5,
+            product_score=4.4,
+            logistics_score=4.6,
+            service_score=4.5,
+            bad_behavior_score=0.0,
+            shop_name="shop-two",
+            source="script",
+        )
+        await repo.upsert_score(
+            shop_id="shop-1",
+            metric_date=date(2026, 3, 1),
+            total_score=4.3,
+            product_score=4.2,
+            logistics_score=4.4,
+            service_score=4.3,
+            bad_behavior_score=0.0,
+            shop_name="shop-one-old",
+            source="script",
+        )
+        await repo.upsert_score(
+            shop_id="shop-1",
+            metric_date=date(2026, 3, 2),
+            total_score=4.9,
+            product_score=4.8,
+            logistics_score=4.9,
+            service_score=4.9,
+            bad_behavior_score=0.0,
+            shop_name="shop-one-new",
+            source="script",
+        )
+        await session.commit()
+
     auth_headers = await get_auth_headers(
         api_client,
-        "shopdashboard@example.com",
-        "shopdashboard123",
+        "shopsuser@example.com",
+        "shops123",
+    )
+
+    response = await api_client.get("/api/v1/shops", headers=auth_headers)
+    assert response.status_code == 200
+    items = response.json()["data"]["items"]
+    assert [item["shop_id"] for item in items] == ["shop-1", "shop-2"]
+    assert items[0]["shop_name"] == "shop-one-new"
+    assert items[0]["metric_date"] == "2026-03-02"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_related_endpoints_removed(api_client, permission_data):
+    auth_headers = await get_auth_headers(
+        api_client,
+        "shopsuser@example.com",
+        "shops123",
     )
 
     trigger_resp = await api_client.post(
@@ -170,3 +221,9 @@ async def test_shop_dashboard_task_control_endpoints_removed(
         headers=auth_headers,
     )
     assert status_resp.status_code == 404
+
+    dashboard_resp = await api_client.get(
+        "/api/v1/dashboard/overview?shop_id=shop-1&date_range=30d",
+        headers=auth_headers,
+    )
+    assert dashboard_resp.status_code == 404

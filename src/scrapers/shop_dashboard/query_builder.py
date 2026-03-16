@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -41,7 +41,7 @@ def build_endpoint_query_context(
     resolved_metric_date = (
         metric_date
         or _resolve_text(getattr(plan_unit, "metric_date", None))
-        or datetime.utcnow().date().isoformat()
+        or datetime.now(UTC).date().isoformat()
     )
 
     cursor = _resolve_cursor(config=config, plan_unit=plan_unit, filters=filters)

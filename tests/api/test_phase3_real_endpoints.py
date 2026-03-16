@@ -51,7 +51,7 @@ async def phase3_user(test_db):
 
     password_helper = PasswordHelper()
     hashed_password = password_helper.hash("phase3real123")
-    permission_codes = ["experience:view", "metric:view", "dashboard:view"]
+    permission_codes = ["experience:view", "metric:view"]
 
     async with test_db() as session:
         result = await session.execute(select(Permission))
@@ -221,14 +221,6 @@ async def seeded_phase3_data(test_db):
                 "formula",
                 "trend",
             },
-        ),
-        (
-            "/api/v1/dashboard/overview?shop_id=1001&date_range=30d",
-            {"shop_id", "date_range", "cards"},
-        ),
-        (
-            "/api/v1/dashboard/kpis?shop_id=1001&date_range=30d",
-            {"shop_id", "date_range", "kpis", "trend"},
         ),
     ],
 )

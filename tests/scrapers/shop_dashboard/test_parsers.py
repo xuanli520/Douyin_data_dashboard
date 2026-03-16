@@ -1,5 +1,6 @@
 from src.scrapers.shop_dashboard.parsers import (
     extract_actual_shop_id,
+    extract_shop_name,
     parse_comment_details,
     parse_core_scores,
     parse_violation_summary,
@@ -82,3 +83,13 @@ def test_extract_actual_shop_id_prefers_analysis_then_overview():
 
     empty_analysis = {"code": 0, "data": {}}
     assert extract_actual_shop_id(empty_analysis, overview_payload) == "shop-b"
+
+
+def test_extract_shop_name_prefers_analysis_then_overview():
+    analysis_payload = {"code": 0, "data": {"shop_name": "shop-a"}}
+    overview_payload = {"code": 0, "data": {"shop_name": "shop-b"}}
+
+    assert extract_shop_name(analysis_payload, overview_payload) == "shop-a"
+
+    empty_analysis = {"code": 0, "data": {}}
+    assert extract_shop_name(empty_analysis, overview_payload) == "shop-b"

@@ -6,15 +6,21 @@ from sqlmodel import Field, SQLModel
 
 from src.shared.mixins import TimestampMixin
 
+UQ_SHOP_DASHBOARD_SCORE_DAY = "uq_shop_dashboard_score_day"
+UQ_SHOP_DASHBOARD_REVIEW_DAY = "uq_shop_dashboard_review_day"
+UQ_SHOP_DASHBOARD_VIOLATION_DAY = "uq_shop_dashboard_violation_day"
+UQ_SHOP_DASHBOARD_COLD_METRIC_DAY_REASON = "uq_shop_dashboard_cold_metric_day_reason"
+
 
 class ShopDashboardScore(SQLModel, TimestampMixin, table=True):
     __tablename__ = "shop_dashboard_scores"
     __table_args__ = (
-        UniqueConstraint("shop_id", "metric_date", name="uq_shop_dashboard_score_day"),
+        UniqueConstraint("shop_id", "metric_date", name=UQ_SHOP_DASHBOARD_SCORE_DAY),
     )
 
     id: int | None = Field(default=None, primary_key=True)
     shop_id: str = Field(max_length=50, index=True)
+    shop_name: str | None = Field(default=None, max_length=200)
     metric_date: date = Field(index=True)
     total_score: float
     product_score: float
@@ -31,7 +37,7 @@ class ShopDashboardReview(SQLModel, TimestampMixin, table=True):
             "shop_id",
             "metric_date",
             "review_id",
-            name="uq_shop_dashboard_review_day",
+            name=UQ_SHOP_DASHBOARD_REVIEW_DAY,
         ),
     )
 
@@ -51,7 +57,7 @@ class ShopDashboardViolation(SQLModel, TimestampMixin, table=True):
             "shop_id",
             "metric_date",
             "violation_id",
-            name="uq_shop_dashboard_violation_day",
+            name=UQ_SHOP_DASHBOARD_VIOLATION_DAY,
         ),
     )
 
@@ -72,7 +78,7 @@ class ShopDashboardColdMetric(SQLModel, TimestampMixin, table=True):
             "shop_id",
             "metric_date",
             "reason",
-            name="uq_shop_dashboard_cold_metric_day_reason",
+            name=UQ_SHOP_DASHBOARD_COLD_METRIC_DAY_REASON,
         ),
     )
 

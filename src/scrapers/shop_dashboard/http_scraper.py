@@ -14,6 +14,7 @@ import httpx
 from src.scrapers.shop_dashboard.parsers import (
     ensure_payload_success,
     extract_actual_shop_id,
+    extract_shop_name,
     parse_comment_details,
     parse_comment_summary,
     parse_core_scores,
@@ -298,6 +299,11 @@ class HttpScraper:
                 payloads["analysis"],
                 payloads["overview"],
             ),
+            "shop_name": extract_shop_name(
+                payloads["analysis"],
+                payloads["overview"],
+            )
+            or "",
             "metric_date": date,
             "source": source,
             **parse_core_scores(overview_payload),

@@ -7,6 +7,7 @@ import pytest
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.scrapers.shop_dashboard.exceptions import LoginExpiredError
 from src.scrapers.shop_dashboard.exceptions import ShopDashboardScraperError
+from src.scrapers.shop_dashboard.parsers import extract_shop_name
 
 
 def _build_runtime(
@@ -74,7 +75,17 @@ def _build_handler():
                 },
             )
         if path.endswith("/governance/shop/experiencescore/getAnalysisScore"):
-            return httpx.Response(200, json={"code": 0, "data": {"trend": [1, 2, 3]}})
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "trend": [1, 2, 3],
+                        "shop_id": "shop-1",
+                        "shop_name": "demo-shop",
+                    },
+                },
+            )
         if path.endswith(
             "/governance/ecology/fxg/experience-score/diagnosis-reason-v9"
         ):
@@ -165,8 +176,18 @@ def test_http_scraper_maps_core_scores():
     assert result["product_score"] == 4.7
     assert result["logistics_score"] == 4.9
     assert result["service_score"] == 4.6
+    assert result["shop_name"] == "demo-shop"
     assert result["reviews"]["summary"]["negative_comment_count"] == 4
     assert result["violations"]["summary"]["ticket_count"] == 5
+
+
+def test_http_scraper_extract_shop_name_fallback_to_overview():
+    analysis_without_name = {"code": 0, "data": {"shop_id": "shop-1"}}
+    overview_with_name = {"code": 0, "data": {"shop_name": "fallback-shop"}}
+
+    assert (
+        extract_shop_name(analysis_without_name, overview_with_name) == "fallback-shop"
+    )
 
 
 def test_http_scraper_raises_when_login_expired():

@@ -51,7 +51,7 @@ async def phase3_user(test_db):
 
     password_helper = PasswordHelper()
     hashed_password = password_helper.hash("phase3real123")
-    permission_codes = ["experience:view", "metric:view", "dashboard:view"]
+    permission_codes = ["experience:view", "metric:view"]
 
     async with test_db() as session:
         result = await session.execute(select(Permission))
@@ -210,16 +210,6 @@ async def test_experience_real_data_success_contract(
     assert metric_payload["code"] == 200
     assert metric_payload["msg"] == "success"
     assert metric_payload["data"]["metric_type"] == "product"
-
-    dashboard_response = await api_client.get(
-        "/api/v1/dashboard/overview?shop_id=1001&date_range=30d",
-        headers=headers,
-    )
-    assert dashboard_response.status_code == 200
-    dashboard_payload = dashboard_response.json()
-    assert dashboard_payload["code"] == 200
-    assert dashboard_payload["msg"] == "success"
-    assert "cards" in dashboard_payload["data"]
 
 
 @pytest.mark.asyncio

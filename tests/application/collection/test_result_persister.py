@@ -46,6 +46,7 @@ async def test_persist_should_invalidate_experience_cache_after_commit(
                     "logistics_score": 78.0,
                     "service_score": 81.0,
                     "bad_behavior_score": 0.0,
+                    "shop_name": "demo-shop",
                     "source": "script",
                     "reviews": {"items": []},
                     "violations": {"waiting_list": []},
@@ -96,6 +97,7 @@ async def test_persist_should_not_fail_when_cache_invalidation_raises(
                     "logistics_score": 78.0,
                     "service_score": 81.0,
                     "bad_behavior_score": 0.0,
+                    "shop_name": "demo-shop",
                     "source": "script",
                     "reviews": {"items": []},
                     "violations": {"waiting_list": []},
@@ -117,3 +119,4 @@ async def test_persist_should_not_fail_when_cache_invalidation_raises(
 
     assert score is not None
     assert float(score.total_score) == 80.0
+    assert score.shop_name == "demo-shop"

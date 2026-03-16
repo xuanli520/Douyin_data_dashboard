@@ -52,13 +52,9 @@ async def permission_data(test_db):
         result = await session.execute(select(Permission))
         perm_map = {p.code: p for p in result.scalars().all()}
         perms_to_create = [
+            ("shop:view", "查看店铺", "shop"),
             ("experience:view", "查看体验分析", "experience"),
             ("metric:view", "查看指标分析", "metric"),
-            ("dashboard:view", "查看看板", "dashboard"),
-            ("order:view", "查看订单分析", "order"),
-            ("product:view", "查看商品分析", "product"),
-            ("sale:view", "查看销售分析", "sale"),
-            ("after_sale:view", "查看售后分析", "after_sale"),
             ("notification:view", "查看通知渠道", "notification"),
             ("notification:test", "测试通知渠道", "notification"),
             ("export:view", "查看导出", "export"),
@@ -133,21 +129,16 @@ async def superuser_data(test_db):
 
 
 CASES = [
+    (
+        "GET",
+        "/api/v1/shops?shop_id=shop-1&start_date=2026-03-01&end_date=2026-03-03",
+        None,
+    ),
     ("GET", "/api/v1/experience/overview", None),
     ("GET", "/api/v1/experience/trend", None),
     ("GET", "/api/v1/experience/issues", None),
     ("GET", "/api/v1/experience/drilldown/product", None),
     ("GET", "/api/v1/metrics/product", None),
-    ("GET", "/api/v1/dashboard/overview", None),
-    ("GET", "/api/v1/dashboard/kpis", None),
-    ("GET", "/api/v1/orders/trend", None),
-    ("GET", "/api/v1/orders/analysis", None),
-    ("GET", "/api/v1/products/funnel", None),
-    ("GET", "/api/v1/products/ranking", None),
-    ("GET", "/api/v1/sales/summary", None),
-    ("GET", "/api/v1/sales/by-channel", None),
-    ("GET", "/api/v1/after-sales/refund-rate", None),
-    ("GET", "/api/v1/after-sales/causes", None),
     ("GET", "/api/v1/notifications/channels", None),
     ("POST", "/api/v1/notifications/channels/channel_wecom/test", {}),
     ("GET", "/api/v1/exports", None),
@@ -209,8 +200,12 @@ async def test_new_module_endpoints_with_permission(
 @pytest.mark.parametrize(
     "method,path,payload",
     [
+        (
+            "GET",
+            "/api/v1/shops?shop_id=shop-1&start_date=2026-03-01&end_date=2026-03-03",
+            None,
+        ),
         ("GET", "/api/v1/experience/overview", None),
-        ("GET", "/api/v1/dashboard/overview", None),
         ("GET", "/api/v1/system/config", None),
     ],
 )

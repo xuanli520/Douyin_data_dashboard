@@ -229,14 +229,13 @@ class TestAlertsRBAC:
 
 
 class TestShopsRBAC:
-    @pytest.mark.asyncio
-    async def test_shops_requires_permission(self, api_client):
-        response = await api_client.get("/api/v1/shops")
-        assert response.status_code == 401
+    SHOPS_QUERY_PATH = (
+        "/api/v1/shops?shop_id=shop-1&start_date=2026-03-01&end_date=2026-03-03"
+    )
 
     @pytest.mark.asyncio
-    async def test_shop_score_requires_permission(self, api_client):
-        response = await api_client.get("/api/v1/shops/1/score")
+    async def test_shops_requires_permission(self, api_client):
+        response = await api_client.get(self.SHOPS_QUERY_PATH)
         assert response.status_code == 401
 
     @pytest.mark.asyncio
@@ -244,17 +243,7 @@ class TestShopsRBAC:
         headers = await get_auth_headers(
             api_client, "shopuser@example.com", "shopuser123"
         )
-        response = await api_client.get("/api/v1/shops", headers=headers)
-        assert response.status_code == 200
-        data = response.json()
-        assert "data" in data
-
-    @pytest.mark.asyncio
-    async def test_shop_score_with_permission(self, api_client, permission_data):
-        headers = await get_auth_headers(
-            api_client, "shopuser@example.com", "shopuser123"
-        )
-        response = await api_client.get("/api/v1/shops/1/score", headers=headers)
+        response = await api_client.get(self.SHOPS_QUERY_PATH, headers=headers)
         assert response.status_code == 200
         data = response.json()
         assert "data" in data
@@ -264,7 +253,7 @@ class TestShopsRBAC:
         headers = await get_auth_headers(
             api_client, "superuser@example.com", "superuser123"
         )
-        response = await api_client.get("/api/v1/shops", headers=headers)
+        response = await api_client.get(self.SHOPS_QUERY_PATH, headers=headers)
         assert response.status_code == 200
 
 

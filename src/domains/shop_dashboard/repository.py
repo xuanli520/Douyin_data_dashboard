@@ -2,7 +2,9 @@ from collections import defaultdict
 from datetime import date
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import and_, delete, func, inspect as sa_inspect, literal_column, select
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domains.shop_dashboard.models import (
@@ -29,39 +31,91 @@ class ShopDashboardRepository(BaseRepository):
         logistics_score: float,
         service_score: float,
         bad_behavior_score: float | None = None,
+        shop_name: str | None = None,
         source: str,
     ) -> ShopDashboardScore:
         normalized_bad_behavior_score = (
             0.0 if bad_behavior_score is None else float(bad_behavior_score)
         )
-        stmt = select(ShopDashboardScore).where(
-            ShopDashboardScore.shop_id == shop_id,
-            ShopDashboardScore.metric_date == metric_date,
-        )
-        score = (await self.session.execute(stmt)).scalar_one_or_none()
-        if score is None:
-            score = ShopDashboardScore(
-                shop_id=shop_id,
-                metric_date=metric_date,
-                total_score=total_score,
-                product_score=product_score,
-                logistics_score=logistics_score,
-                service_score=service_score,
-                bad_behavior_score=normalized_bad_behavior_score,
-                source=source,
-            )
-            self.session.add(score)
-        else:
-            score.total_score = total_score
-            score.product_score = product_score
-            score.logistics_score = logistics_score
-            score.service_score = service_score
-            score.bad_behavior_score = normalized_bad_behavior_score
-            score.source = source
-            score.updated_at = now()
+        normalized_shop_name = str(shop_name or "").strip() or None
+        insert_timestamp = now()
+        update_timestamp = now()
+        values = {
+            "shop_id": shop_id,
+            "metric_date": metric_date,
+            "total_score": total_score,
+            "product_score": product_score,
+            "logistics_score": logistics_score,
+            "service_score": service_score,
+            "bad_behavior_score": normalized_bad_behavior_score,
+            "shop_name": normalized_shop_name,
+            "source": source,
+            "created_at": insert_timestamp,
+            "updated_at": insert_timestamp,
+        }
+        update_values = {
+            "total_score": total_score,
+            "product_score": product_score,
+            "logistics_score": logistics_score,
+            "service_score": service_score,
+            "bad_behavior_score": normalized_bad_behavior_score,
+            "shop_name": normalized_shop_name,
+            "source": source,
+            "updated_at": update_timestamp,
+        }
+        bind = self.session.get_bind()
+        dialect_name = bind.dialect.name if bind is not None else ""
 
-        await self._flush()
-        await self.session.refresh(score)
+        if dialect_name == "postgresql":
+            stmt = (
+                postgresql_insert(ShopDashboardScore)
+                .values(**values)
+                .on_conflict_do_update(
+                    index_elements=["shop_id", "metric_date"],
+                    set_=update_values,
+                )
+                .returning(
+                    ShopDashboardScore,
+                    literal_column("xmax = 0").label("is_insert"),
+                )
+            )
+            row = (await self.session.execute(stmt)).one()
+            operation = "insert" if bool(row[1]) else "update"
+        elif dialect_name == "sqlite":
+            stmt = (
+                sqlite_insert(ShopDashboardScore)
+                .values(**values)
+                .on_conflict_do_update(
+                    index_elements=["shop_id", "metric_date"],
+                    set_=update_values,
+                )
+                .returning(ShopDashboardScore)
+            )
+            await self.session.execute(stmt)
+            operation = "unknown"
+        else:
+            raise RuntimeError(
+                f"unsupported database dialect for upsert: {dialect_name}"
+            )
+
+        score_stmt = (
+            select(ShopDashboardScore)
+            .where(
+                ShopDashboardScore.shop_id == shop_id,
+                ShopDashboardScore.metric_date == metric_date,
+            )
+            .execution_options(populate_existing=True)
+        )
+        score = (await self.session.execute(score_stmt)).scalar_one()
+        if operation == "unknown":
+            operation = (
+                "insert"
+                if score.created_at == insert_timestamp
+                and score.updated_at == insert_timestamp
+                else "update"
+            )
+
+        sa_inspect(score).info["insert_or_update"] = operation
         return score
 
     async def replace_reviews(
@@ -214,7 +268,7 @@ class ShopDashboardRepository(BaseRepository):
                     {
                         "id": row.review_id,
                         "content": row.content,
-                        "shop_reply": row.is_replied,
+                        "is_replied": row.is_replied,
                     }
                     for row in reviews
                 ],
@@ -253,6 +307,48 @@ class ShopDashboardRepository(BaseRepository):
             start_date=start_date,
             end_date=end_date,
         )
+
+    async def list_shops(self) -> list[dict[str, Any]]:
+        latest_metric_date_subquery = (
+            select(
+                ShopDashboardScore.shop_id.label("shop_id"),
+                func.max(ShopDashboardScore.metric_date).label("metric_date"),
+            )
+            .group_by(ShopDashboardScore.shop_id)
+            .subquery()
+        )
+        stmt = (
+            select(ShopDashboardScore)
+            .join(
+                latest_metric_date_subquery,
+                and_(
+                    ShopDashboardScore.shop_id == latest_metric_date_subquery.c.shop_id,
+                    ShopDashboardScore.metric_date
+                    == latest_metric_date_subquery.c.metric_date,
+                ),
+            )
+            .order_by(ShopDashboardScore.shop_id.asc())
+        )
+        rows = (await self.session.execute(stmt)).scalars().all()
+
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            items.append(
+                {
+                    "shop_id": row.shop_id,
+                    "shop_name": row.shop_name or "",
+                    "metric_date": row.metric_date.isoformat(),
+                    "source": row.source,
+                    "total_score": float(row.total_score),
+                    "product_score": float(row.product_score),
+                    "logistics_score": float(row.logistics_score),
+                    "service_score": float(row.service_score),
+                    "bad_behavior_score": float(row.bad_behavior_score),
+                    "updated_at": row.updated_at.isoformat(),
+                }
+            )
+
+        return items
 
     async def list_display_materials(
         self,
@@ -351,6 +447,7 @@ class ShopDashboardRepository(BaseRepository):
             items.append(
                 {
                     "shop_id": shop_id,
+                    "shop_name": (row.shop_name if row else None) or "",
                     "metric_date": metric_date.isoformat(),
                     "source": row.source if row else "",
                     "total_score": float(row.total_score) if row else 0.0,

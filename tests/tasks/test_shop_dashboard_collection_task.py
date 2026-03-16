@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from types import SimpleNamespace
 from typing import Any
 
@@ -12,6 +13,7 @@ from src.domains.data_source.enums import DataSourceStatus
 from src.domains.data_source.enums import DataSourceType
 from src.domains.data_source.models import DataSource
 from src.domains.scraping_rule.models import ScrapingRule
+from src.domains.shop_dashboard.models import ShopDashboardScore
 from src.domains.task.enums import TaskExecutionStatus
 from src.domains.task.models import TaskExecution
 from src.tasks.collection import douyin_shop_dashboard as module
@@ -94,6 +96,20 @@ class _FakeStateStore:
 class _FakeLockManager:
     def __init__(self, redis_client=None):
         self.redis_client = redis_client
+
+    def acquire_shop_lock(self, _shop_id, ttl_seconds=None):
+        _ = ttl_seconds
+        return "shop-token"
+
+    def release_shop_lock(self, _shop_id, _token):
+        return None
+
+    def acquire_account_lock(self, _account_id, ttl_seconds=None):
+        _ = ttl_seconds
+        return "account-token"
+
+    def release_account_lock(self, _account_id, _token):
+        return None
 
 
 class _FakeLoginStateManager:
@@ -368,3 +384,93 @@ def test_sync_shop_dashboard_sets_recommended_mode_for_unsupported(monkeypatch):
     )
 
     assert result["recommended_collection_mode"] == "per_shop_account"
+
+
+@pytest.mark.asyncio
+async def test_collection_usecase_should_persist_shop_name_from_http_chain(
+    test_db,
+    monkeypatch,
+):
+    data_source_id, rule_id = await _seed_runtime_entities(test_db)
+    monkeypatch.setattr(
+        db_session_module,
+        "async_session_factory",
+        test_db,
+        raising=False,
+    )
+
+    class _FakeHttpScraper:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, _exc_val, _exc_tb):
+            return None
+
+        def close(self):
+            return None
+
+        def fetch_dashboard_with_context(self, runtime_config, metric_date):
+            return {
+                "status": "success",
+                "shop_id": runtime_config.shop_id,
+                "actual_shop_id": runtime_config.shop_id,
+                "shop_name": "demo-shop",
+                "metric_date": metric_date,
+                "rule_id": runtime_config.rule_id,
+                "execution_id": runtime_config.execution_id,
+                "source": "script",
+                "total_score": 4.8,
+                "product_score": 4.7,
+                "logistics_score": 4.9,
+                "service_score": 4.6,
+                "bad_behavior_score": 0.0,
+                "reviews": {"summary": {}, "items": []},
+                "violations": {"summary": {}, "waiting_list": []},
+                "raw": {},
+            }
+
+    monkeypatch.setattr(module, "HttpScraper", _FakeHttpScraper)
+    monkeypatch.setattr(module, "BrowserScraper", lambda: object())
+    monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
+    monkeypatch.setattr(
+        module,
+        "SessionBootstrapper",
+        _FakeSessionBootstrapper,
+        raising=False,
+    )
+    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
+    monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
+    monkeypatch.setattr(
+        module,
+        "_materialize_runtime_storage_state",
+        lambda runtime, _store: runtime,
+    )
+
+    usecase = CollectionUseCase()
+    result = await usecase._execute_async(
+        data_source_id=data_source_id,
+        rule_id=rule_id,
+        execution_id="exec-usecase-shop-name",
+        queue_task_id="task-shop-name",
+        triggered_by=1,
+        overrides={},
+        redis_client=_FakeRedis(),
+    )
+
+    assert result["items"][0]["shop_name"] == "demo-shop"
+
+    async with test_db() as db_session:
+        score = (
+            await db_session.execute(
+                select(ShopDashboardScore).where(
+                    ShopDashboardScore.shop_id == "shop-1",
+                    ShopDashboardScore.metric_date == date(2026, 3, 1),
+                )
+            )
+        ).scalar_one_or_none()
+
+    assert score is not None
+    assert score.shop_name == "demo-shop"
