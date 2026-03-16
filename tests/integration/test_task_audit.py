@@ -64,6 +64,8 @@ async def permission_data(test_db):
         codes = {
             "task:view",
             "task:create",
+            "task:update",
+            "task:delete",
             "task:execute",
             "task:cancel",
         }
@@ -149,6 +151,19 @@ async def test_task_management_api_writes_audit_logs(
     )
     assert cancel_resp.status_code == 200
 
+    update_resp = await api_client.put(
+        f"/api/v1/tasks/{task_id}",
+        json={"name": "audit-orders-updated", "status": "PAUSED"},
+        headers=headers,
+    )
+    assert update_resp.status_code == 200
+
+    delete_resp = await api_client.delete(
+        f"/api/v1/tasks/{task_id}",
+        headers=headers,
+    )
+    assert delete_resp.status_code == 200
+
     async with test_db() as session:
         result = await session.execute(
             select(AuditLog)
@@ -159,6 +174,8 @@ async def test_task_management_api_writes_audit_logs(
                         AuditAction.TASK_CREATE,
                         AuditAction.TASK_RUN,
                         AuditAction.TASK_STOP,
+                        AuditAction.TASK_UPDATE,
+                        AuditAction.DELETE,
                     ]
                 ),
                 AuditLog.resource_type == "task",
@@ -172,6 +189,8 @@ async def test_task_management_api_writes_audit_logs(
     assert AuditAction.TASK_CREATE in actions
     assert AuditAction.TASK_RUN in actions
     assert AuditAction.TASK_STOP in actions
+    assert AuditAction.TASK_UPDATE in actions
+    assert AuditAction.DELETE in actions
 
 
 @pytest.mark.asyncio

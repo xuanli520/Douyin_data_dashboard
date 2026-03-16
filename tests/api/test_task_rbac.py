@@ -84,6 +84,16 @@ def test_create_task_requires_permission(rbac_client):
     assert response.status_code == 401
 
 
+def test_update_task_requires_permission(rbac_client):
+    response = rbac_client.put("/api/v1/tasks/1", json={"name": "x"})
+    assert response.status_code == 401
+
+
+def test_delete_task_requires_permission(rbac_client):
+    response = rbac_client.delete("/api/v1/tasks/1")
+    assert response.status_code == 401
+
+
 def test_run_task_requires_permission(rbac_client):
     response = rbac_client.post("/api/v1/tasks/1/run")
     assert response.status_code == 401

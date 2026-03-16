@@ -67,6 +67,8 @@ async def permission_data(test_db):
         codes = {
             "task:view",
             "task:create",
+            "task:update",
+            "task:delete",
             "task:execute",
             "task:cancel",
         }
@@ -202,6 +204,74 @@ async def test_create_and_get_task_detail(
     assert detail["id"] == created["id"]
     assert detail["task_type"] == "ETL_ORDERS"
     assert detail["status"] == "ACTIVE"
+
+
+@pytest.mark.asyncio
+async def test_update_task(
+    api_client,
+    permission_data,
+    test_db,
+):
+    async with test_db() as session:
+        service = TaskService(
+            session=session,
+            dispatcher_registry=build_task_dispatcher_registry(),
+        )
+        task = await service.create_task(
+            TaskDefinitionCreate(name="orders-task", task_type=TaskType.ETL_ORDERS),
+            created_by_id=permission_data.id,
+        )
+
+    headers = await get_auth_headers(
+        api_client,
+        "taskmanager@example.com",
+        "taskmanager123",
+    )
+    response = await api_client.put(
+        f"/api/v1/tasks/{task.id}",
+        json={
+            "name": "orders-task-updated",
+            "status": "PAUSED",
+            "config": {"batch_date": "2026-03-16"},
+            "schedule": {"cron": "0 2 * * *", "timezone": "Asia/Shanghai"},
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["name"] == "orders-task-updated"
+    assert payload["status"] == "PAUSED"
+    assert payload["config"]["batch_date"] == "2026-03-16"
+
+
+@pytest.mark.asyncio
+async def test_delete_task(
+    api_client,
+    permission_data,
+    test_db,
+):
+    async with test_db() as session:
+        service = TaskService(
+            session=session,
+            dispatcher_registry=build_task_dispatcher_registry(),
+        )
+        task = await service.create_task(
+            TaskDefinitionCreate(name="to-delete", task_type=TaskType.ETL_PRODUCTS),
+            created_by_id=permission_data.id,
+        )
+
+    headers = await get_auth_headers(
+        api_client,
+        "taskmanager@example.com",
+        "taskmanager123",
+    )
+    response = await api_client.delete(f"/api/v1/tasks/{task.id}", headers=headers)
+    assert response.status_code == 200
+
+    detail = await api_client.get(f"/api/v1/tasks/{task.id}", headers=headers)
+    assert detail.status_code == 404
+    assert detail.json()["code"] == int(ErrorCode.TASK_NOT_FOUND)
 
 
 @pytest.mark.asyncio

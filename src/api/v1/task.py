@@ -14,6 +14,7 @@ from src.auth.rbac import require_permissions
 from src.domains.task.enums import TaskDefinitionStatus, TaskType
 from src.domains.task.schemas import (
     TaskDefinitionCreate,
+    TaskDefinitionUpdate,
     TaskDefinitionResponse,
     TaskExecutionResponse,
     TaskRunRequest,
@@ -134,6 +135,55 @@ async def get_task(
     _ = user
     task = await _get_task_or_raise(service, task_id)
     return Response.success(data=_task_data(task))
+
+
+@router.put("/{task_id}", response_model=Response[dict[str, Any]])
+async def update_task(
+    request: Request,
+    task_id: int,
+    payload: TaskDefinitionUpdate,
+    service: TaskService = Depends(get_task_service),
+    user: User = Depends(current_user),
+    audit_service: AuditService = Depends(get_audit_service),
+    request_id: str = Depends(generate_request_id),
+    _=Depends(require_permissions(TaskPermission.UPDATE, bypass_superuser=True)),
+) -> Response[dict[str, Any]]:
+    task = await _get_task_or_raise(service, task_id)
+    task = await service.update_task(task, payload, changed_by_id=user.id)
+    await _log_task_audit(
+        request=request,
+        audit_service=audit_service,
+        request_id=request_id,
+        user=user,
+        action=AuditAction.TASK_UPDATE,
+        resource_id=str(task_id),
+        extra={"fields": list(payload.model_dump(exclude_none=True).keys())},
+    )
+    return Response.success(data=_task_data(task))
+
+
+@router.delete("/{task_id}", response_model=Response[None])
+async def delete_task(
+    request: Request,
+    task_id: int,
+    service: TaskService = Depends(get_task_service),
+    user: User = Depends(current_user),
+    audit_service: AuditService = Depends(get_audit_service),
+    request_id: str = Depends(generate_request_id),
+    _=Depends(require_permissions(TaskPermission.DELETE, bypass_superuser=True)),
+) -> Response[None]:
+    task = await _get_task_or_raise(service, task_id)
+    await service.delete_task(task)
+    await _log_task_audit(
+        request=request,
+        audit_service=audit_service,
+        request_id=request_id,
+        user=user,
+        action=AuditAction.DELETE,
+        resource_id=str(task_id),
+        extra={"task_type": task.task_type.value, "name": task.name},
+    )
+    return Response.success()
 
 
 @router.post("/{task_id}/run", response_model=Response[dict[str, Any]])

@@ -30,6 +30,8 @@ PERMISSIONS = [
     ("data_import:cancel", "取消导入", "data_import", "取消数据导入操作"),
     ("task:view", "查看任务", "task", "查看任务列表和执行记录"),
     ("task:create", "创建任务", "task", "创建新任务"),
+    ("task:update", "修改任务", "task", "修改任务配置"),
+    ("task:delete", "删除任务", "task", "删除任务定义"),
     ("task:execute", "执行任务", "task", "手动触发任务执行"),
     ("task:cancel", "取消任务", "task", "取消任务执行"),
     ("analytics:view", "查看分析", "analytics", "查看分析数据"),

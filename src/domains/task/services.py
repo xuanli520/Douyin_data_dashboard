@@ -37,6 +37,7 @@ from src.domains.task.repository import (
 )
 from src.domains.task.schemas import (
     TaskDefinitionCreate,
+    TaskDefinitionUpdate,
     TaskExecutionCreate,
 )
 from src.application.collection.runtime_loader import CollectionRuntimeLoader
@@ -143,6 +144,30 @@ class TaskService:
 
     async def get_task(self, task_id: int) -> TaskDefinition | None:
         return await self.task_repo.get_by_id(task_id)
+
+    async def update_task(
+        self,
+        task: TaskDefinition,
+        payload: TaskDefinitionUpdate,
+        *,
+        changed_by_id: int | None,
+    ) -> TaskDefinition:
+        old_status = task.status
+        data = payload.model_dump(exclude_none=True)
+        data["updated_by_id"] = changed_by_id
+        updated = await self.task_repo.update(task, data)
+        await self.session.commit()
+        if "status" in data and data["status"] != old_status:
+            self._emit_status_changed_event(
+                task=updated,
+                old_status=old_status,
+                changed_by_id=changed_by_id,
+            )
+        return updated
+
+    async def delete_task(self, task: TaskDefinition) -> None:
+        await self.task_repo.delete(task)
+        await self.session.commit()
 
     async def cancel_task(
         self,

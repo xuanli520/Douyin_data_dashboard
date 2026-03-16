@@ -71,6 +71,9 @@ class TaskDefinitionRepository(BaseRepository):
         await self._flush()
         return task
 
+    async def delete(self, task: TaskDefinition) -> None:
+        await self._delete(task)
+
 
 class TaskExecutionRepository(BaseRepository):
     def __init__(self, session: AsyncSession):

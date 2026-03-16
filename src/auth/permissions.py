@@ -17,6 +17,8 @@ class DataImportPermission:
 class TaskPermission:
     VIEW = "task:view"
     CREATE = "task:create"
+    UPDATE = "task:update"
+    DELETE = "task:delete"
     EXECUTE = "task:execute"
     CANCEL = "task:cancel"
 
