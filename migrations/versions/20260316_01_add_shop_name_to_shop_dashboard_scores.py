@@ -18,11 +18,29 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "shop_dashboard_scores",
-        sa.Column("shop_name", sa.String(length=200), nullable=True),
-    )
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if not inspector.has_table("shop_dashboard_scores"):
+        return
+
+    columns = {
+        column["name"] for column in inspector.get_columns("shop_dashboard_scores")
+    }
+    if "shop_name" not in columns:
+        op.add_column(
+            "shop_dashboard_scores",
+            sa.Column("shop_name", sa.String(length=200), nullable=True),
+        )
 
 
 def downgrade() -> None:
-    op.drop_column("shop_dashboard_scores", "shop_name")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if not inspector.has_table("shop_dashboard_scores"):
+        return
+
+    columns = {
+        column["name"] for column in inspector.get_columns("shop_dashboard_scores")
+    }
+    if "shop_name" in columns:
+        op.drop_column("shop_dashboard_scores", "shop_name")
