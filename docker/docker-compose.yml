@@ -1,51 +1,47 @@
 version: '3.9'
 
+x-app-common: &app-common
+  image: fastapi-boilerplate:latest
+  env_file:
+    - ../.env
+  logging: &default-logging
+    driver: json-file
+    options:
+      max-size: "3m"
+      max-file: "1"
+
+x-db-env: &db-env
+  DB__DRIVER: postgresql
+  DB__HOST: db
+  DB__PORT: 5432
+
+x-cache-env: &cache-env
+  CACHE__BACKEND: redis
+  CACHE__HOST: redis
+  CACHE__PORT: 6379
+
 services:
   migrate:
+    <<: *app-common
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: fastapi-boilerplate:latest
-    env_file:
-      - ../.env
     environment:
-      DB__DRIVER: postgresql
-      DB__HOST: db
-      DB__PORT: 5432
+      <<: *db-env
       RUN_DB_MIGRATIONS: "1"
       WAIT_FOR_CACHE: "0"
-    command: ["sh", "-c", "echo migrations completed"]
-    logging:
-      driver: json-file
-      options:
-        max-size: "3m"
-        max-file: "1"
+    command: ["sh", "-c", "alembic upgrade head"]
     depends_on:
       db:
         condition: service_healthy
 
   app:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    image: fastapi-boilerplate:latest
-    env_file:
-      - ../.env
+    <<: *app-common
     environment:
-      DB__DRIVER: postgresql
-      DB__HOST: db
-      DB__PORT: 5432
-      CACHE__BACKEND: redis
-      CACHE__HOST: redis
-      CACHE__PORT: 6379
+      <<: [*db-env, *cache-env]
       RUN_DB_MIGRATIONS: "0"
     ports:
       - "${APP_EXPOSE_PORT:-8000}:8000"
-    logging:
-      driver: json-file
-      options:
-        max-size: "3m"
-        max-file: "1"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -53,26 +49,11 @@ services:
         condition: service_healthy
 
   worker:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    image: fastapi-boilerplate:latest
-    env_file:
-      - ../.env
+    <<: *app-common
     environment:
-      DB__DRIVER: postgresql
-      DB__HOST: db
-      DB__PORT: 5432
-      CACHE__BACKEND: redis
-      CACHE__HOST: redis
-      CACHE__PORT: 6379
+      <<: [*db-env, *cache-env]
       RUN_DB_MIGRATIONS: "0"
     command: ["sh", "-c", "${WORKER_COMMAND:-python -m src.tasks.worker}"]
-    logging:
-      driver: json-file
-      options:
-        max-size: "3m"
-        max-file: "1"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -80,26 +61,11 @@ services:
         condition: service_healthy
 
   scheduler:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    image: fastapi-boilerplate:latest
-    env_file:
-      - ../.env
+    <<: *app-common
     environment:
-      DB__DRIVER: postgresql
-      DB__HOST: db
-      DB__PORT: 5432
-      CACHE__BACKEND: redis
-      CACHE__HOST: redis
-      CACHE__PORT: 6379
+      <<: [*db-env, *cache-env]
       RUN_DB_MIGRATIONS: "0"
     command: ["sh", "-c", "${SCHEDULER_COMMAND:-python -m src.tasks.beat}"]
-    logging:
-      driver: json-file
-      options:
-        max-size: "3m"
-        max-file: "1"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -114,11 +80,7 @@ services:
       POSTGRES_DB: ${DB__DATABASE:-appdb}
     ports:
       - "${DB_EXPOSE_PORT:-5432}:5432"
-    logging:
-      driver: json-file
-      options:
-        max-size: "3m"
-        max-file: "1"
+    logging: *default-logging
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -141,11 +103,7 @@ services:
         exec redis-server --save "" --appendonly no
     ports:
       - "${REDIS_EXPOSE_PORT:-6379}:6379"
-    logging:
-      driver: json-file
-      options:
-        max-size: "3m"
-        max-file: "1"
+    logging: *default-logging
     volumes:
       - redis_data:/data
     healthcheck:

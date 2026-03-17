@@ -205,8 +205,6 @@ def upgrade() -> None:
         """
         )
     )
-    conn.commit()
-
     permissions = [
         ("user:read", "查看用户", "user", "查看用户列表和详情"),
         ("user:create", "创建用户", "user", "创建新用户"),
@@ -233,8 +231,6 @@ def upgrade() -> None:
             ),
             {"code": code, "name": name, "description": description, "module": module},
         )
-    conn.commit()
-
     for code, name, module, description in permissions:
         conn.execute(
             sa.text(
@@ -247,7 +243,6 @@ def upgrade() -> None:
             ),
             {"code": code},
         )
-    conn.commit()
     # ### end Alembic commands ###
 
 
