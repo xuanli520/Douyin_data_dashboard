@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import DateTime, JSON
+from sqlalchemy import DateTime, Index, JSON
 from sqlmodel import Field, Relationship, SQLModel
 
 from src.shared.mixins import TimestampMixin
@@ -23,7 +23,7 @@ class DataImportRecord(SQLModel, TimestampMixin, table=True):
     file_size: int
     file_path: str = Field(max_length=500)
 
-    status: ImportStatus = Field(default=ImportStatus.PENDING)
+    status: ImportStatus = Field(default=ImportStatus.PENDING, index=True)
 
     total_rows: int = Field(default=0)
     success_rows: int = Field(default=0)
@@ -61,6 +61,9 @@ class DataImportDetail(SQLModel, TimestampMixin, table=True):
     """
 
     __tablename__ = "data_import_details"
+    __table_args__ = (
+        Index("ix_data_import_details_record_status", "import_record_id", "status"),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
 

@@ -12,12 +12,31 @@ concurrency:
 
 jobs:
   migration-check:
-    if: |
-      startsWith(github.head_ref, 'fix/') ||
-      startsWith(github.head_ref, 'feat/') ||
-      startsWith(github.head_ref, 'refactor/') ||
-      startsWith(github.head_ref, 'migrations/')
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: appdb
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d appdb"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      APP__NAME: ${{ vars.CI_APP_NAME || 'fastapi-boilerplate' }}
+      AUTH__JWT_SECRET: ${{ secrets.CI_JWT_SECRET }}
+      CACHE__BACKEND: local
+      DB__DATABASE: appdb
+      DB__DRIVER: postgresql
+      DB__HOST: 127.0.0.1
+      DB__PASSWORD: postgres
+      DB__PORT: 5432
+      DB__USER: postgres
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,19 +53,19 @@ jobs:
           cache-dependency-glob: "**/pyproject.toml"
 
       - name: Sync dependencies
-        run: uv sync
+        run: uv sync --dev
 
-      - name: Set auth settings
-        run: echo "AUTH__JWT_SECRET=${{ secrets.CI_JWT_SECRET }}" >> $GITHUB_ENV
-
-      - name: Verify migration heads
-        run: uv run alembic heads --verbose
+      - name: Verify migration chain
+        run: |
+          uv run alembic upgrade head
+          uv run alembic current --check-heads
+          uv run alembic check
+          uv run alembic downgrade base
+          uv run alembic upgrade head
+          uv run alembic current --check-heads
+          uv run alembic check
 
   test:
-    if: |
-      startsWith(github.head_ref, 'fix/') ||
-      startsWith(github.head_ref, 'feat/') ||
-      startsWith(github.head_ref, 'refactor/')
     runs-on: ubuntu-latest
 
     strategy:
@@ -79,9 +98,9 @@ jobs:
         env:
           PRE_COMMIT_HOME: ./.pre-commit-cache
           PYTHONPATH: .
-          APP__NAME: ${{ vars.CI_APP_NAME }}
+          APP__NAME: ${{ vars.CI_APP_NAME || 'fastapi-boilerplate' }}
           DB__DRIVER: ${{ vars.CI_DB_DRIVER || 'sqlite' }}
-          DB__DATABASE: ${{ vars.CI_DB_DATABASE }}
+          DB__DATABASE: ${{ vars.CI_DB_DATABASE || 'ci.sqlite3' }}
           CACHE__BACKEND: ${{ vars.CI_CACHE_BACKEND || 'local' }}
           AUTH__JWT_SECRET: ${{ secrets.CI_JWT_SECRET }}
         run: just ci-gate
