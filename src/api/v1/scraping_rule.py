@@ -1,5 +1,3 @@
-from typing import Any
-
 from fastapi import APIRouter, Depends, Query
 
 from src.auth import User, current_user
@@ -22,13 +20,16 @@ from src.shared.schemas import PaginatedData, PaginationParams
 router = APIRouter(tags=["scraping-rule"])
 
 
-@router.get("/data-sources/{ds_id}/scraping-rules", response_model=Response[list[Any]])
+@router.get(
+    "/data-sources/{ds_id}/scraping-rules",
+    response_model=Response[list[ScrapingRuleResponse]],
+)
 async def list_scraping_rules_by_datasource(
     ds_id: int,
     service: ScrapingRuleService = Depends(get_scraping_rule_service),
     user: User = Depends(current_user),
     _=Depends(require_permissions(DataSourcePermission.VIEW, bypass_superuser=True)),
-) -> Response[list[Any]]:
+) -> Response[list[ScrapingRuleResponse]]:
     rules = await service.list_rules_by_data_source(ds_id)
     return Response.success(data=rules)
 

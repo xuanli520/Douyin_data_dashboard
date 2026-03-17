@@ -129,7 +129,7 @@ def test_scraping_rule_service_should_not_expose_trigger_collection():
 
 
 @pytest.mark.asyncio
-async def test_list_rules_paginated_should_not_expose_schedule_summary(test_db):
+async def test_list_rules_paginated_should_include_schedule_summary(test_db):
     async with test_db() as session:
         data_source = DataSource(
             name="ds-schedule",
@@ -176,11 +176,14 @@ async def test_list_rules_paginated_should_not_expose_schedule_summary(test_db):
         rules, total = await service.list_rules_paginated(page=1, size=10)
 
         assert total == 1
-        assert "schedule" not in rules[0].model_dump()
+        assert rules[0].schedule == (
+            "full-sync: 0 2 * * * (Asia/Shanghai) | "
+            "incremental-sync: 0 6,10,14,18 * * * (Asia/Shanghai)"
+        )
 
 
 @pytest.mark.asyncio
-async def test_list_rules_by_data_source_should_not_expose_schedule_and_should_keep_last_run_fallback(
+async def test_list_rules_by_data_source_should_include_schedule_and_backfill_last_run_cache(
     test_db,
 ):
     async with test_db() as session:
@@ -243,7 +246,10 @@ async def test_list_rules_by_data_source_should_not_expose_schedule_and_should_k
         )
 
         assert len(rules) == 1
-        assert "schedule" not in rules[0].model_dump()
+        assert rules[0].schedule == "fallback-sync: 0 8 * * * (Asia/Shanghai)"
         assert rules[0].last_executed_at is not None
         assert rules[0].last_executed_at.isoformat().startswith("2026-03-17T08:00:00")
         assert rules[0].last_execution_id == "exec-last-run-fallback"
+        await session.refresh(rule)
+        assert rule.last_executed_at is not None
+        assert rule.last_execution_id == "exec-last-run-fallback"

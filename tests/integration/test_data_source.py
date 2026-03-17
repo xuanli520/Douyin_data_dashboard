@@ -304,7 +304,7 @@ class TestScrapingRuleAPI:
         data = response.json()["data"]
         assert data["name"] == "Test Rule"
         assert data["data_source_id"] == ds_id
-        assert "schedule" not in data
+        assert data["schedule"] is None
 
     async def test_list_scraping_rules_by_data_source(self, test_client):
         ds_response = await test_client.post(
@@ -321,7 +321,7 @@ class TestScrapingRuleAPI:
         assert response.status_code == 200
         assert isinstance(response.json()["data"], list)
 
-    async def test_list_scraping_rules_should_not_include_schedule_and_should_keep_last_run(
+    async def test_list_scraping_rules_should_include_schedule_and_should_keep_last_run(
         self,
         test_client,
         test_db,
@@ -360,10 +360,10 @@ class TestScrapingRuleAPI:
         response = await test_client.get("/api/v1/scraping-rules?page=1&size=10")
         assert response.status_code == 200
         item = response.json()["data"]["items"][0]
-        assert "schedule" not in item
+        assert item["schedule"] == "api-schedule: 0 9 * * * (Asia/Shanghai)"
         assert item["last_executed_at"] is not None
 
-    async def test_list_scraping_rules_by_data_source_should_not_include_schedule_and_should_keep_last_run(
+    async def test_list_scraping_rules_by_data_source_should_include_schedule_and_should_keep_last_run(
         self,
         test_client,
         test_db,
@@ -425,7 +425,7 @@ class TestScrapingRuleAPI:
         )
         assert response.status_code == 200
         item = response.json()["data"][0]
-        assert "schedule" not in item
+        assert item["schedule"] == "api-detail-schedule: 0 11 * * * (Asia/Shanghai)"
         assert item["last_executed_at"].startswith("2026-03-17T11:00:00")
         assert item["last_execution_id"] == "exec-api-rule-detail"
 
