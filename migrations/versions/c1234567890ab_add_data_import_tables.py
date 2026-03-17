@@ -19,6 +19,13 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _drop_type_if_exists(type_name: str) -> None:
+    bind = op.get_bind()
+    if bind.dialect.name != "postgresql":
+        return
+    op.execute(sa.text(f'DROP TYPE IF EXISTS "{type_name}"'))
+
+
 def upgrade() -> None:
     op.create_table(
         "data_import_records",
@@ -154,3 +161,5 @@ def downgrade() -> None:
         op.f("ix_data_import_records_batch_no"), table_name="data_import_records"
     )
     op.drop_table("data_import_records")
+    _drop_type_if_exists("importstatus")
+    _drop_type_if_exists("filetype")
