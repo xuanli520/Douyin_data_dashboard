@@ -119,7 +119,6 @@ class TaskService:
                 "task_type": payload.task_type,
                 "status": payload.status,
                 "config": payload.config,
-                "schedule": payload.schedule,
                 "created_by_id": created_by_id,
                 "updated_by_id": created_by_id,
             }

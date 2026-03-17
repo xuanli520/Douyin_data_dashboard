@@ -10,7 +10,9 @@ from src.domains.collection_job.models import CollectionJob
 from src.domains.data_source.enums import DataSourceStatus, DataSourceType, TargetType
 from src.domains.data_source.models import DataSource
 from src.domains.scraping_rule.models import ScrapingRule
+from src.domains.task.enums import TaskExecutionStatus
 from src.domains.task.enums import TaskType
+from src.domains.task.models import TaskDefinition, TaskExecution
 
 
 class MockCaptchaService:
@@ -296,13 +298,13 @@ class TestScrapingRuleAPI:
                 "data_source_id": ds_id,
                 "target_type": "ORDER_FULFILLMENT",
                 "config": {"batch_size": 100},
-                "schedule": "0 */6 * * *",
             },
         )
         assert response.status_code == 200
         data = response.json()["data"]
         assert data["name"] == "Test Rule"
         assert data["data_source_id"] == ds_id
+        assert "schedule" not in data
 
     async def test_list_scraping_rules_by_data_source(self, test_client):
         ds_response = await test_client.post(
@@ -319,7 +321,7 @@ class TestScrapingRuleAPI:
         assert response.status_code == 200
         assert isinstance(response.json()["data"], list)
 
-    async def test_list_scraping_rules_should_include_schedule_and_last_run(
+    async def test_list_scraping_rules_should_not_include_schedule_and_should_keep_last_run(
         self,
         test_client,
         test_db,
@@ -358,8 +360,74 @@ class TestScrapingRuleAPI:
         response = await test_client.get("/api/v1/scraping-rules?page=1&size=10")
         assert response.status_code == 200
         item = response.json()["data"]["items"][0]
-        assert item["schedule"] == "api-schedule: 0 9 * * * (Asia/Shanghai)"
+        assert "schedule" not in item
         assert item["last_executed_at"] is not None
+
+    async def test_list_scraping_rules_by_data_source_should_not_include_schedule_and_should_keep_last_run(
+        self,
+        test_client,
+        test_db,
+    ):
+        async with test_db() as session:
+            data_source = DataSource(
+                name="api-rule-ds-detail",
+                source_type=DataSourceType.DOUYIN_SHOP,
+                status=DataSourceStatus.ACTIVE,
+            )
+            session.add(data_source)
+            await session.flush()
+
+            rule = ScrapingRule(
+                name="api-rule-detail",
+                data_source_id=data_source.id if data_source.id is not None else 0,
+                target_type=TargetType.SHOP_OVERVIEW,
+            )
+            session.add(rule)
+            await session.flush()
+
+            task = TaskDefinition(
+                name="shop_dashboard_collection",
+                task_type=TaskType.SHOP_DASHBOARD_COLLECTION,
+            )
+            session.add(task)
+            await session.flush()
+
+            session.add(
+                CollectionJob(
+                    name="api-detail-schedule",
+                    task_type=TaskType.SHOP_DASHBOARD_COLLECTION,
+                    data_source_id=data_source.id if data_source.id is not None else 0,
+                    rule_id=rule.id if rule.id is not None else 0,
+                    schedule={"cron": "0 11 * * *", "timezone": "Asia/Shanghai"},
+                    status=CollectionJobStatus.ACTIVE,
+                )
+            )
+            session.add(
+                TaskExecution(
+                    task_id=task.id if task.id is not None else 0,
+                    queue_task_id="queue-api-rule-detail",
+                    status=TaskExecutionStatus.SUCCESS,
+                    payload={
+                        "data_source_id": data_source.id
+                        if data_source.id is not None
+                        else 0,
+                        "rule_id": rule.id if rule.id is not None else 0,
+                        "execution_id": "exec-api-rule-detail",
+                        "overrides": {},
+                    },
+                    completed_at=datetime(2026, 3, 17, 11, 0, tzinfo=timezone.utc),
+                )
+            )
+            await session.commit()
+
+        response = await test_client.get(
+            f"/api/v1/data-sources/{data_source.id}/scraping-rules"
+        )
+        assert response.status_code == 200
+        item = response.json()["data"][0]
+        assert "schedule" not in item
+        assert item["last_executed_at"].startswith("2026-03-17T11:00:00")
+        assert item["last_execution_id"] == "exec-api-rule-detail"
 
 
 class TestDataImportAPI:
@@ -528,13 +596,13 @@ class TestTaskAPI:
                 "name": "Test Task",
                 "task_type": "ETL_ORDERS",
                 "config": {"batch_date": "2026-03-03"},
-                "schedule": {"cron": "0 */6 * * *"},
             },
         )
         assert response.status_code == 200
         json_data = response.json()
         assert json_data is not None
         assert "data" in json_data
+        assert "schedule" not in json_data["data"]
 
     async def test_run_task(self, test_client, monkeypatch):
         from types import SimpleNamespace

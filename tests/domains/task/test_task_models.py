@@ -12,7 +12,6 @@ def test_task_definition_required_fields():
         "task_type",
         "status",
         "config",
-        "schedule",
         "created_by_id",
         "updated_by_id",
     }

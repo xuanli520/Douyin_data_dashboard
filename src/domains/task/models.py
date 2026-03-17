@@ -28,7 +28,6 @@ class TaskDefinition(SQLModel, TimestampMixin, table=True):
         index=True,
     )
     config: dict | None = Field(default=None, sa_type=JSON)
-    schedule: dict | None = Field(default=None, sa_type=JSON)
     created_by_id: int | None = Field(default=None)
     updated_by_id: int | None = Field(default=None)
 

@@ -9,9 +9,10 @@ from sqlalchemy import create_engine, inspect, text
 from src.config import get_settings
 from src.domains.collection_job.models import CollectionJob
 from src.domains.data_source.models import DataSource
+from src.domains.scraping_rule.models import ScrapingRule
 from src.domains.task.models import TaskDefinition, TaskExecution
 
-_ = (CollectionJob, DataSource, TaskDefinition, TaskExecution)
+_ = (CollectionJob, DataSource, ScrapingRule, TaskDefinition, TaskExecution)
 
 
 async def _collect_schema(session):
@@ -27,14 +28,26 @@ async def _collect_schema(session):
         data_source_columns = {
             column["name"] for column in inspector.get_columns("data_sources")
         }
-        return table_names, index_map, data_source_columns
+        scraping_rule_columns = {
+            column["name"] for column in inspector.get_columns("scraping_rules")
+        }
+        task_definition_columns = {
+            column["name"] for column in inspector.get_columns("task_definitions")
+        }
+        return (
+            table_names,
+            index_map,
+            data_source_columns,
+            scraping_rule_columns,
+            task_definition_columns,
+        )
 
     return await connection.run_sync(_inspect)
 
 
 async def test_task_tables_exist(test_db):
     async with test_db() as session:
-        table_names, _, _ = await _collect_schema(session)
+        table_names, _, _, _, _ = await _collect_schema(session)
 
     assert "task_definitions" in table_names
     assert "task_executions" in table_names
@@ -43,7 +56,7 @@ async def test_task_tables_exist(test_db):
 
 async def test_task_indexes_exist(test_db):
     async with test_db() as session:
-        _, index_map, _ = await _collect_schema(session)
+        _, index_map, _, _, _ = await _collect_schema(session)
 
     task_definition_indexes = {item["name"] for item in index_map["task_definitions"]}
     task_execution_indexes = {item["name"] for item in index_map["task_executions"]}
@@ -62,10 +75,20 @@ async def test_task_indexes_exist(test_db):
 
 async def test_data_sources_legacy_columns_removed(test_db):
     async with test_db() as session:
-        _, _, data_source_columns = await _collect_schema(session)
+        _, _, data_source_columns, _, _ = await _collect_schema(session)
 
     assert "shop_id" not in data_source_columns
     assert "account_name" not in data_source_columns
+
+
+async def test_schedule_columns_removed(test_db):
+    async with test_db() as session:
+        _, _, _, scraping_rule_columns, task_definition_columns = await _collect_schema(
+            session
+        )
+
+    assert "schedule" not in scraping_rule_columns
+    assert "schedule" not in task_definition_columns
 
 
 def test_contract_migration_executes_through_alembic(tmp_path, monkeypatch):
@@ -88,6 +111,22 @@ def test_contract_migration_executes_through_alembic(tmp_path, monkeypatch):
         )
         connection.execute(
             "CREATE INDEX ix_data_sources_shop_id ON data_sources (shop_id)"
+        )
+        connection.execute(
+            """
+            CREATE TABLE scraping_rules (
+                id INTEGER PRIMARY KEY,
+                schedule TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE task_definitions (
+                id INTEGER PRIMARY KEY,
+                schedule TEXT
+            )
+            """
         )
         connection.execute(
             "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)"
@@ -115,10 +154,18 @@ def test_contract_migration_executes_through_alembic(tmp_path, monkeypatch):
         data_source_columns = {
             column["name"] for column in inspector.get_columns("data_sources")
         }
+        scraping_rule_columns = {
+            column["name"] for column in inspector.get_columns("scraping_rules")
+        }
+        task_definition_columns = {
+            column["name"] for column in inspector.get_columns("task_definitions")
+        }
         version_num = conn.execute(
             text("SELECT version_num FROM alembic_version")
         ).scalar()
 
     assert "shop_id" not in data_source_columns
     assert "account_name" not in data_source_columns
+    assert "schedule" not in scraping_rule_columns
+    assert "schedule" not in task_definition_columns
     assert version_num == expected_head

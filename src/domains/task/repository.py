@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import Integer, and_, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domains.task.enums import TaskDefinitionStatus, TaskExecutionStatus, TaskType
@@ -100,6 +100,56 @@ class TaskExecutionRepository(BaseRepository):
             TaskExecution.idempotency_key == idempotency_key
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def get_latest_completed_by_rule_ids(
+        self,
+        rule_ids: list[int],
+    ) -> dict[int, TaskExecution]:
+        if not rule_ids:
+            return {}
+
+        rule_id_expr = cast(TaskExecution.payload["rule_id"].as_string(), Integer)
+        completed_at_expr = func.coalesce(
+            TaskExecution.completed_at,
+            TaskExecution.updated_at,
+            TaskExecution.created_at,
+        )
+        ranked = (
+            select(
+                TaskExecution.id.label("execution_id"),
+                rule_id_expr.label("rule_id"),
+                func.row_number()
+                .over(
+                    partition_by=rule_id_expr,
+                    order_by=[
+                        completed_at_expr.desc(),
+                        TaskExecution.id.desc(),
+                    ],
+                )
+                .label("row_num"),
+            )
+            .where(
+                TaskExecution.status.in_(
+                    [
+                        TaskExecutionStatus.SUCCESS,
+                        TaskExecutionStatus.FAILED,
+                    ]
+                ),
+                rule_id_expr.in_(rule_ids),
+            )
+            .subquery()
+        )
+        stmt = (
+            select(TaskExecution, ranked.c.rule_id)
+            .join(ranked, TaskExecution.id == ranked.c.execution_id)
+            .where(ranked.c.row_num == 1)
+        )
+        rows = (await self.session.execute(stmt)).all()
+        return {
+            int(rule_id): execution
+            for execution, rule_id in rows
+            if rule_id is not None
+        }
 
     async def list_by_task_id(self, task_id: int) -> list[TaskExecution]:
         stmt = (

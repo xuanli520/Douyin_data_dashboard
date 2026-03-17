@@ -233,7 +233,6 @@ async def test_update_task(
             "name": "orders-task-updated",
             "status": "PAUSED",
             "config": {"batch_date": "2026-03-16"},
-            "schedule": {"cron": "0 2 * * *", "timezone": "Asia/Shanghai"},
         },
         headers=headers,
     )
@@ -243,6 +242,7 @@ async def test_update_task(
     assert payload["name"] == "orders-task-updated"
     assert payload["status"] == "PAUSED"
     assert payload["config"]["batch_date"] == "2026-03-16"
+    assert "schedule" not in payload
 
 
 @pytest.mark.asyncio

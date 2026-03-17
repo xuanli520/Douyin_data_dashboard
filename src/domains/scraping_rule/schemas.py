@@ -29,7 +29,6 @@ class ScrapingRuleResponse(BaseModel):
     name: str
     target_type: TargetType
     config: dict[str, Any]
-    schedule: str | None = None
     is_active: bool
     status: ScrapingRuleStatus
     version: int
@@ -47,7 +46,6 @@ class ScrapingRuleListItem(BaseModel):
     name: str
     target_type: TargetType
     config: dict[str, Any]
-    schedule: str | None = None
     is_active: bool
     status: ScrapingRuleStatus
     version: int

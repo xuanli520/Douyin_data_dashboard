@@ -86,11 +86,12 @@ def _install_fake_collection_usecase(monkeypatch):
             rule_id: int,
             execution_id: str,
             queue_task_id: str,
+            started_at=None,
             triggered_by: int | None = None,
             overrides: dict | None = None,
             redis_client=None,
         ) -> dict:
-            _ = (data_source_id, rule_id, queue_task_id, triggered_by)
+            _ = (data_source_id, rule_id, queue_task_id, started_at, triggered_by)
             runtime = module._run_async(
                 module._load_runtime_config(
                     data_source_id=data_source_id,
@@ -124,6 +125,7 @@ def _install_fake_collection_usecase(monkeypatch):
                     unit_runtime,
                     plan_unit.metric_date,
                     plan_unit=plan_unit,
+                    queue_task_id=queue_task_id,
                 )
                 cached = helper.get_cached_result(business_key)
                 if cached:

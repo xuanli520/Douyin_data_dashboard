@@ -17,7 +17,6 @@ class TaskDefinitionCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     task_type: TaskType
     config: dict[str, Any] = Field(default_factory=dict)
-    schedule: dict[str, Any] | None = None
     status: TaskDefinitionStatus = TaskDefinitionStatus.ACTIVE
 
 
@@ -25,7 +24,6 @@ class TaskDefinitionUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     status: TaskDefinitionStatus | None = None
     config: dict[str, Any] | None = None
-    schedule: dict[str, Any] | None = None
 
 
 class TaskDefinitionResponse(BaseModel):
@@ -36,7 +34,6 @@ class TaskDefinitionResponse(BaseModel):
     task_type: TaskType
     status: TaskDefinitionStatus
     config: dict[str, Any] | None = None
-    schedule: dict[str, Any] | None = None
     created_by_id: int | None = None
     updated_by_id: int | None = None
     created_at: datetime

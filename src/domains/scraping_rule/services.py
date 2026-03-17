@@ -1,13 +1,10 @@
 from collections.abc import AsyncGenerator
+from datetime import datetime
 from typing import Any
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.domains.collection_job.enums import CollectionJobStatus
-from src.domains.collection_job.models import CollectionJob
-from src.domains.collection_job.repository import CollectionJobRepository
-from src.domains.collection_job.schemas import ScheduleConfig
 from src.domains.data_source.config_mapper import ScrapingRuleConfigMapper
 from src.domains.data_source.enums import (
     DataSourceStatus,
@@ -23,6 +20,8 @@ from src.domains.scraping_rule.schemas import (
     ScrapingRuleResponse,
     ScrapingRuleUpdate,
 )
+from src.domains.task.models import TaskExecution
+from src.domains.task.repository import TaskExecutionRepository
 from src.exceptions import BusinessException
 from src.scrapers.shop_dashboard.shop_selection_validator import (
     ensure_explicit_shop_selection_valid,
@@ -31,6 +30,8 @@ from src.scrapers.shop_dashboard.shop_selection_validator import (
 )
 from src.session import get_session
 from src.shared.errors import ErrorCode
+
+_UNSET = object()
 
 
 class ScrapingRuleService:
@@ -110,7 +111,21 @@ class ScrapingRuleService:
             )
 
         rules = await self.rule_repo.get_by_data_source(data_source_id)
-        return [self._build_scraping_rule_response(rule) for rule in rules]
+        last_execution_map = await self._load_last_execution_map(rules)
+        return [
+            self._build_scraping_rule_response(
+                rule,
+                last_executed_at=self._resolve_last_executed_at(
+                    rule,
+                    last_execution_map.get(rule.id if rule.id is not None else 0),
+                ),
+                last_execution_id=self._resolve_last_execution_id(
+                    rule,
+                    last_execution_map.get(rule.id if rule.id is not None else 0),
+                ),
+            )
+            for rule in rules
+        ]
 
     async def list_rules_paginated(
         self,
@@ -130,13 +145,18 @@ class ScrapingRuleService:
             status=ScrapingRuleStatus(status.value.upper()) if status else None,
             data_source_id=data_source_id,
         )
-        schedule_map = await self._load_schedule_map(
-            [rule.id for rule in rules if rule.id is not None]
-        )
+        last_execution_map = await self._load_last_execution_map(rules)
         return [
             self._build_scraping_rule_list_item(
                 rule,
-                schedule=schedule_map.get(rule.id if rule.id is not None else 0),
+                last_executed_at=self._resolve_last_executed_at(
+                    rule,
+                    last_execution_map.get(rule.id if rule.id is not None else 0),
+                ),
+                last_execution_id=self._resolve_last_execution_id(
+                    rule,
+                    last_execution_map.get(rule.id if rule.id is not None else 0),
+                ),
             )
             for rule in rules
         ], total
@@ -147,12 +167,17 @@ class ScrapingRuleService:
             raise BusinessException(
                 ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
             )
-        schedule_map = await self._load_schedule_map(
-            [rule.id] if rule.id is not None else []
-        )
+        last_execution_map = await self._load_last_execution_map([rule])
         return self._build_scraping_rule_response(
             rule,
-            schedule=schedule_map.get(rule.id if rule.id is not None else 0),
+            last_executed_at=self._resolve_last_executed_at(
+                rule,
+                last_execution_map.get(rule.id if rule.id is not None else 0),
+            ),
+            last_execution_id=self._resolve_last_execution_id(
+                rule,
+                last_execution_map.get(rule.id if rule.id is not None else 0),
+            ),
         )
 
     async def update_rule(
@@ -209,33 +234,56 @@ class ScrapingRuleService:
             await self.session.rollback()
             raise
 
-    def _format_schedule_summary(self, jobs: list[CollectionJob]) -> str | None:
-        items: list[str] = []
-        for job in jobs:
-            schedule = ScheduleConfig.model_validate(job.schedule or {})
-            items.append(f"{job.name}: {schedule.cron} ({schedule.timezone})")
-        return " | ".join(items) if items else None
+    async def _load_last_execution_map(
+        self,
+        rules: list[ScrapingRule],
+    ) -> dict[int, TaskExecution]:
+        missing_rule_ids = [
+            rule.id
+            for rule in rules
+            if rule.id is not None
+            and (rule.last_executed_at is None or rule.last_execution_id is None)
+        ]
+        if not missing_rule_ids:
+            return {}
+        execution_repo = TaskExecutionRepository(self.session)
+        return await execution_repo.get_latest_completed_by_rule_ids(missing_rule_ids)
 
-    async def _load_schedule_map(self, rule_ids: list[int]) -> dict[int, str | None]:
-        job_repo = CollectionJobRepository(self.session)
-        jobs = await job_repo.list_by_rule_ids(
-            rule_ids,
-            status=CollectionJobStatus.ACTIVE,
-        )
-        grouped: dict[int, list[CollectionJob]] = {}
-        for job in jobs:
-            grouped.setdefault(job.rule_id, []).append(job)
-        return {
-            rule_id: self._format_schedule_summary(grouped.get(rule_id, []))
-            for rule_id in rule_ids
-        }
+    def _resolve_last_executed_at(
+        self,
+        rule: ScrapingRule,
+        execution: TaskExecution | None,
+    ) -> datetime | None:
+        if rule.last_executed_at is not None:
+            return rule.last_executed_at
+        if execution is None:
+            return None
+        return execution.completed_at or execution.updated_at or execution.created_at
+
+    def _resolve_last_execution_id(
+        self,
+        rule: ScrapingRule,
+        execution: TaskExecution | None,
+    ) -> str | None:
+        if rule.last_execution_id is not None:
+            return rule.last_execution_id
+        if execution is None:
+            return None
+        payload = execution.payload if isinstance(execution.payload, dict) else {}
+        normalized_execution_id = str(payload.get("execution_id") or "").strip()
+        return normalized_execution_id[:100] if normalized_execution_id else None
 
     def _build_scraping_rule_response(
         self,
         rule: ScrapingRule,
         *,
-        schedule: str | None = None,
+        last_executed_at: datetime | None | object = _UNSET,
+        last_execution_id: str | None | object = _UNSET,
     ) -> ScrapingRuleResponse:
+        if last_executed_at is _UNSET:
+            last_executed_at = rule.last_executed_at
+        if last_execution_id is _UNSET:
+            last_execution_id = rule.last_execution_id
         return ScrapingRuleResponse(
             id=rule.id if rule.id is not None else 0,
             data_source_id=rule.data_source_id
@@ -244,13 +292,12 @@ class ScrapingRuleService:
             name=rule.name,
             target_type=rule.target_type,
             config=ScrapingRuleConfigMapper.build_config_from_model(rule),
-            schedule=schedule,
             is_active=rule.status == ScrapingRuleStatus.ACTIVE,
             status=rule.status,
             version=rule.version,
             description=rule.description,
-            last_executed_at=rule.last_executed_at,
-            last_execution_id=rule.last_execution_id,
+            last_executed_at=last_executed_at,
+            last_execution_id=last_execution_id,
             created_at=rule.created_at,
             updated_at=rule.updated_at,
         )
@@ -259,8 +306,13 @@ class ScrapingRuleService:
         self,
         rule: ScrapingRule,
         *,
-        schedule: str | None = None,
+        last_executed_at: datetime | None | object = _UNSET,
+        last_execution_id: str | None | object = _UNSET,
     ) -> ScrapingRuleListItem:
+        if last_executed_at is _UNSET:
+            last_executed_at = rule.last_executed_at
+        if last_execution_id is _UNSET:
+            last_execution_id = rule.last_execution_id
         return ScrapingRuleListItem(
             id=rule.id if rule.id is not None else 0,
             data_source_id=rule.data_source_id
@@ -269,13 +321,12 @@ class ScrapingRuleService:
             name=rule.name,
             target_type=rule.target_type,
             config=ScrapingRuleConfigMapper.build_config_from_model(rule),
-            schedule=schedule,
             is_active=rule.status == ScrapingRuleStatus.ACTIVE,
             status=rule.status,
             version=rule.version,
             description=rule.description,
-            last_executed_at=rule.last_executed_at,
-            last_execution_id=rule.last_execution_id,
+            last_executed_at=last_executed_at,
+            last_execution_id=last_execution_id,
             created_at=rule.created_at,
             updated_at=rule.updated_at,
             data_source_name=rule.data_source.name if rule.data_source else None,

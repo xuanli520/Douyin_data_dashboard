@@ -99,24 +99,49 @@ def test_register_jobs_removes_stale_collection_jobs(monkeypatch):
     assert added_ids == ["collection_job_2"]
 
 
-def test_main_initializes_db_before_register_jobs(monkeypatch):
+async def test_main_async_initializes_db_before_refresh_jobs(monkeypatch):
     from src.tasks import beat as module
 
     calls = []
-    monkeypatch.setattr(module, "_init_scheduler_db", lambda: calls.append("init_db"))
-    monkeypatch.setattr(module, "register_jobs", lambda: calls.append("register_jobs"))
 
-    def _stop_loop(_seconds):
-        raise RuntimeError("stop-loop")
+    async def _fake_init_db(*_args, **_kwargs):
+        calls.append("init_db")
 
-    monkeypatch.setattr(module.time, "sleep", _stop_loop)
+    def _fake_configure_signal_handlers(stop_event):
+        calls.append("configure_signal_handlers")
+        stop_event.set()
 
-    try:
-        module.main()
-    except RuntimeError as exc:
-        assert str(exc) == "stop-loop"
+    async def _fake_refresh_registered_jobs_async(*_args, **_kwargs):
+        calls.append("refresh_jobs")
+        return SimpleNamespace(id="scheduler")
 
-    assert calls[:2] == ["init_db", "register_jobs"]
+    async def _fake_close_db():
+        calls.append("close_db")
+
+    monkeypatch.setattr(
+        module,
+        "get_settings",
+        lambda: SimpleNamespace(
+            db=SimpleNamespace(url="sqlite+aiosqlite:///beat-test.db", echo=False)
+        ),
+    )
+    monkeypatch.setattr(module.session, "init_db", _fake_init_db)
+    monkeypatch.setattr(
+        module, "_configure_signal_handlers", _fake_configure_signal_handlers
+    )
+    monkeypatch.setattr(
+        module,
+        "_refresh_registered_jobs_async",
+        _fake_refresh_registered_jobs_async,
+    )
+    monkeypatch.setattr(
+        module, "_shutdown_scheduler", lambda _scheduler: calls.append("shutdown")
+    )
+    monkeypatch.setattr(module.session, "close_db", _fake_close_db)
+
+    await module.main_async()
+
+    assert calls[:3] == ["init_db", "configure_signal_handlers", "refresh_jobs"]
 
 
 async def test_load_enabled_collection_jobs_async_excludes_inactive_jobs(
