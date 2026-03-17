@@ -64,7 +64,6 @@ def upgrade() -> None:
             ),
             {"code": code},
         )
-    conn.commit()
 
 
 def downgrade() -> None:
@@ -102,4 +101,3 @@ def downgrade() -> None:
             sa.text("DELETE FROM permissions WHERE code = :code"),
             {"code": code},
         )
-    conn.commit()
