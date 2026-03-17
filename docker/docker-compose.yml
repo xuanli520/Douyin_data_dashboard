@@ -15,6 +15,11 @@ services:
       RUN_DB_MIGRATIONS: "1"
       WAIT_FOR_CACHE: "0"
     command: ["sh", "-c", "echo migrations completed"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "3m"
+        max-file: "1"
     depends_on:
       db:
         condition: service_healthy
@@ -36,6 +41,11 @@ services:
       RUN_DB_MIGRATIONS: "0"
     ports:
       - "${APP_EXPOSE_PORT:-8000}:8000"
+    logging:
+      driver: json-file
+      options:
+        max-size: "3m"
+        max-file: "1"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -58,6 +68,11 @@ services:
       CACHE__PORT: 6379
       RUN_DB_MIGRATIONS: "0"
     command: ["sh", "-c", "${WORKER_COMMAND:-python -m src.tasks.worker}"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "3m"
+        max-file: "1"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -80,6 +95,11 @@ services:
       CACHE__PORT: 6379
       RUN_DB_MIGRATIONS: "0"
     command: ["sh", "-c", "${SCHEDULER_COMMAND:-python -m src.tasks.beat}"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "3m"
+        max-file: "1"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -94,6 +114,11 @@ services:
       POSTGRES_DB: ${DB__DATABASE:-appdb}
     ports:
       - "${DB_EXPOSE_PORT:-5432}:5432"
+    logging:
+      driver: json-file
+      options:
+        max-size: "3m"
+        max-file: "1"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -116,6 +141,11 @@ services:
         exec redis-server --save "" --appendonly no
     ports:
       - "${REDIS_EXPOSE_PORT:-6379}:6379"
+    logging:
+      driver: json-file
+      options:
+        max-size: "3m"
+        max-file: "1"
     volumes:
       - redis_data:/data
     healthcheck:
