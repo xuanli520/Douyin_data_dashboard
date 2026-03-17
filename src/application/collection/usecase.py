@@ -222,6 +222,8 @@ class CollectionUseCase:
             mapped = self._map_scraper_exception(exc)
             await self._mark_failed(
                 execution_id=execution.id if execution.id is not None else 0,
+                rule_id=rule_id,
+                rule_execution_id=execution_id,
                 error_message=str(mapped),
             )
             raise mapped
@@ -412,6 +414,8 @@ class CollectionUseCase:
         self,
         *,
         execution_id: int,
+        rule_id: int,
+        rule_execution_id: str,
         error_message: str,
     ) -> None:
         session_factory = session.async_session_factory
@@ -429,6 +433,14 @@ class CollectionUseCase:
                     "error_message": error_message[:1000],
                 },
             )
+            rule_repo = ScrapingRuleRepository(db_session)
+            rule = await rule_repo.get_by_id(rule_id)
+            if rule is not None:
+                normalized_execution_id = str(rule_execution_id or "").strip()
+                rule.last_executed_at = execution.completed_at or datetime.now(tz=UTC)
+                rule.last_execution_id = (
+                    normalized_execution_id[:100] if normalized_execution_id else None
+                )
             await db_session.commit()
 
     async def _collect_and_persist(
