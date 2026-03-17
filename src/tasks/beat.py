@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
-import time
 from collections import defaultdict
 from datetime import date as date_type
 from typing import Any
@@ -26,6 +25,8 @@ from src.tasks.queue_mapping import assert_task_type_queue_mapping
 from src.tasks.registry import get_task_type_task_func_mapping
 
 logger = logging.getLogger(__name__)
+
+BEAT_REFRESH_INTERVAL_SECONDS = 10 * 60
 
 
 def register_jobs() -> Any | None:
@@ -183,6 +184,36 @@ def _init_scheduler_db() -> None:
     session.run_coro(session.init_db(settings.db.url, settings.db.echo))
 
 
+def _refresh_registered_jobs(
+    current_scheduler_aps_obj: Any | None = None,
+    *,
+    raise_on_error: bool = False,
+) -> Any | None:
+    try:
+        next_scheduler_aps_obj = register_jobs()
+    except Exception:
+        if raise_on_error:
+            raise
+        logger.exception("failed to refresh beat jobs from database")
+        return current_scheduler_aps_obj
+    return next_scheduler_aps_obj or current_scheduler_aps_obj
+
+
+async def _refresh_registered_jobs_async(
+    current_scheduler_aps_obj: Any | None = None,
+    *,
+    raise_on_error: bool = False,
+) -> Any | None:
+    try:
+        next_scheduler_aps_obj = await register_jobs_async()
+    except Exception:
+        if raise_on_error:
+            raise
+        logger.exception("failed to refresh beat jobs from database")
+        return current_scheduler_aps_obj
+    return next_scheduler_aps_obj or current_scheduler_aps_obj
+
+
 def _configure_signal_handlers(stop_event: asyncio.Event) -> None:
     loop = asyncio.get_running_loop()
 
@@ -223,18 +254,24 @@ async def main_async() -> None:
     await session.init_db(settings.db.url, settings.db.echo)
     _configure_signal_handlers(stop_event)
     try:
-        scheduler_aps_obj = await register_jobs_async()
-        await stop_event.wait()
+        scheduler_aps_obj = await _refresh_registered_jobs_async(raise_on_error=True)
+        while not stop_event.is_set():
+            try:
+                await asyncio.wait_for(
+                    stop_event.wait(),
+                    timeout=BEAT_REFRESH_INTERVAL_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                scheduler_aps_obj = await _refresh_registered_jobs_async(
+                    scheduler_aps_obj
+                )
     finally:
         _shutdown_scheduler(scheduler_aps_obj)
         await session.close_db()
 
 
 def main() -> None:
-    _init_scheduler_db()
-    register_jobs()
-    while True:
-        time.sleep(60)
+    asyncio.run(main_async())
 
 
 if __name__ == "__main__":

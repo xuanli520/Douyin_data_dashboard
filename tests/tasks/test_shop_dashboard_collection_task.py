@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date
+import asyncio
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from typing import Any
 
@@ -345,6 +346,70 @@ def test_sync_shop_dashboard_should_forward_queue_task_id_and_overrides(monkeypa
         "all": False,
         "extra_config": {"cursor": "c1"},
     }
+
+
+@pytest.mark.asyncio
+async def test_sync_shop_dashboard_should_persist_started_at_for_system_execution(
+    test_db,
+    monkeypatch,
+):
+    data_source_id, rule_id = await _seed_runtime_entities(test_db)
+    started_at = datetime(2026, 3, 10, 8, 30, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(
+        db_session_module,
+        "async_session_factory",
+        test_db,
+        raising=False,
+    )
+    monkeypatch.setattr(module.fct, "task_id", "task-started-at", raising=False)
+    monkeypatch.setattr(
+        module.sync_shop_dashboard,
+        "publisher",
+        SimpleNamespace(redis_db_frame=_FakeRedis()),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        module,
+        "write_started_status_safe",
+        lambda *args, **kwargs: started_at,
+    )
+    monkeypatch.setattr(module, "resolve_sync_redis_client", lambda: _FakeRedis())
+    monkeypatch.setattr(module, "_collect_one_day", _collect_success)
+    monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
+    monkeypatch.setattr(
+        module,
+        "SessionBootstrapper",
+        _FakeSessionBootstrapper,
+        raising=False,
+    )
+    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
+    monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
+    monkeypatch.setattr(
+        module,
+        "_materialize_runtime_storage_state",
+        lambda runtime, _store: runtime,
+    )
+
+    result = await asyncio.to_thread(
+        module.sync_shop_dashboard,
+        data_source_id=data_source_id,
+        rule_id=rule_id,
+        execution_id="exec-started-at",
+    )
+
+    assert result["status"] == "success"
+
+    async with test_db() as db_session:
+        execution = (
+            await db_session.execute(
+                select(TaskExecution).where(
+                    TaskExecution.queue_task_id == "task-started-at"
+                )
+            )
+        ).scalar_one()
+
+    assert execution.started_at == started_at.replace(tzinfo=None)
 
 
 def test_sync_shop_dashboard_sets_recommended_mode_for_unsupported(monkeypatch):

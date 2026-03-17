@@ -52,10 +52,11 @@ def write_started_task_status(
     task_name: str,
     triggered_by: int | None,
     execution_id: int | None = None,
-) -> None:
+) -> datetime:
     redis_client = resolve_status_redis_client(owner)
     key = f"douyin:task:status:{task_id}"
     started_at = time.time()
+    started_at_datetime = _from_timestamp(started_at) or datetime.now(tz=UTC)
     _hset_mapping_compat(
         redis_client,
         key,
@@ -71,9 +72,10 @@ def write_started_task_status(
     _sync_execution_status(
         queue_task_id=task_id,
         status=TaskExecutionStatus.RUNNING,
-        started_at=_from_timestamp(started_at),
+        started_at=started_at_datetime,
         triggered_by=triggered_by,
     )
+    return started_at_datetime
 
 
 def write_finished_task_status(

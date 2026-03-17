@@ -104,6 +104,7 @@ class CollectionUseCase:
         rule_id: int,
         execution_id: str,
         queue_task_id: str,
+        started_at: datetime | None = None,
         triggered_by: int | None = None,
         overrides: Mapping[str, Any] | None = None,
         redis_client: Any | None = None,
@@ -123,6 +124,7 @@ class CollectionUseCase:
                 rule_id=rule_id,
                 execution_id=execution_id,
                 queue_task_id=queue_task_id,
+                started_at=started_at,
                 triggered_by=triggered_by,
                 overrides=dict(overrides or {}),
                 redis_client=redis_client,
@@ -136,6 +138,7 @@ class CollectionUseCase:
         rule_id: int,
         execution_id: str,
         queue_task_id: str,
+        started_at: datetime | None = None,
         triggered_by: int | None = None,
         overrides: Mapping[str, Any] | None = None,
         redis_client: Any | None = None,
@@ -146,6 +149,7 @@ class CollectionUseCase:
             rule_id=rule_id,
             execution_id=execution_id,
             queue_task_id=queue_task_id,
+            started_at=started_at,
             triggered_by=triggered_by,
             overrides=dict(overrides or {}),
             redis_client=redis_client,
@@ -158,6 +162,7 @@ class CollectionUseCase:
         rule_id: int,
         execution_id: str,
         queue_task_id: str,
+        started_at: datetime | None = None,
         triggered_by: int | None,
         overrides: dict[str, Any],
         redis_client: Any | None,
@@ -177,6 +182,7 @@ class CollectionUseCase:
             rule_id=rule_id,
             execution_id=execution_id,
             queue_task_id=queue_task_id,
+            started_at=started_at,
             triggered_by=triggered_by,
             overrides=overrides,
             idempotency_key=idempotency_key,
@@ -235,6 +241,7 @@ class CollectionUseCase:
         rule_id: int,
         execution_id: str,
         queue_task_id: str,
+        started_at: datetime | None,
         triggered_by: int | None,
         overrides: dict[str, Any],
         idempotency_key: str,
@@ -250,18 +257,26 @@ class CollectionUseCase:
                     queue_task_id
                 )
             if existing_by_queue is not None:
+                update_data = {
+                    "idempotency_key": idempotency_key,
+                    "payload": {
+                        "data_source_id": data_source_id,
+                        "rule_id": rule_id,
+                        "execution_id": execution_id,
+                        "overrides": dict(overrides),
+                    },
+                    "queue_task_id": queue_task_id,
+                }
+                if started_at is not None and existing_by_queue.started_at is None:
+                    update_data["started_at"] = started_at
+                if (
+                    started_at is not None
+                    and existing_by_queue.status == TaskExecutionStatus.QUEUED
+                ):
+                    update_data["status"] = TaskExecutionStatus.RUNNING
                 execution = await execution_repo.update(
                     existing_by_queue,
-                    {
-                        "idempotency_key": idempotency_key,
-                        "payload": {
-                            "data_source_id": data_source_id,
-                            "rule_id": rule_id,
-                            "execution_id": execution_id,
-                            "overrides": dict(overrides),
-                        },
-                        "queue_task_id": queue_task_id,
-                    },
+                    update_data,
                 )
                 await db_session.commit()
                 return execution
@@ -291,11 +306,16 @@ class CollectionUseCase:
             execution_data = {
                 "task_id": task.id if task.id is not None else 0,
                 "queue_task_id": queue_task_id or None,
-                "status": TaskExecutionStatus.QUEUED,
+                "status": (
+                    TaskExecutionStatus.RUNNING
+                    if started_at is not None
+                    else TaskExecutionStatus.QUEUED
+                ),
                 "trigger_mode": trigger_mode,
                 "payload": payload,
                 "triggered_by": triggered_by,
                 "idempotency_key": idempotency_key,
+                "started_at": started_at,
                 "effective_config_snapshot": {
                     "data_source_id": data_source_id,
                     "rule_id": rule_id,
@@ -314,12 +334,20 @@ class CollectionUseCase:
                     raise
                 if queue_task_id and existing.queue_task_id != queue_task_id:
                     try:
+                        update_data = {
+                            "queue_task_id": queue_task_id,
+                            "payload": payload,
+                        }
+                        if started_at is not None and existing.started_at is None:
+                            update_data["started_at"] = started_at
+                        if (
+                            started_at is not None
+                            and existing.status == TaskExecutionStatus.QUEUED
+                        ):
+                            update_data["status"] = TaskExecutionStatus.RUNNING
                         existing = await execution_repo.update(
                             existing,
-                            {
-                                "queue_task_id": queue_task_id,
-                                "payload": payload,
-                            },
+                            update_data,
                         )
                         await db_session.commit()
                     except IntegrityError:

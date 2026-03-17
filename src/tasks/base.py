@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from src.tasks.funboost_compat import AbstractConsumer, FunctionResultStatus, fct
@@ -13,7 +14,7 @@ def write_started_status_safe(
     *,
     logger: Any,
     execution_id: int | None = None,
-) -> None:
+) -> datetime | None:
     try:
         raw_task_id = getattr(fct, "task_id", None)
         task_id = str(raw_task_id).strip() if raw_task_id is not None else ""
@@ -22,8 +23,8 @@ def write_started_status_safe(
                 "skip writing started task status because task_id is missing: %s",
                 task_name,
             )
-            return
-        write_started_task_status(
+            return None
+        return write_started_task_status(
             owner=task_func,
             task_id=task_id,
             task_name=task_name,
@@ -32,6 +33,7 @@ def write_started_status_safe(
         )
     except Exception:
         logger.exception("failed to write started task status: %s", task_name)
+        return None
 
 
 class TaskStatusMixin(AbstractConsumer):

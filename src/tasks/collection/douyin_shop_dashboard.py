@@ -119,7 +119,7 @@ def sync_shop_dashboard(
     session_level: bool | None = None,
     extra_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    write_started_status_safe(
+    started_at = write_started_status_safe(
         sync_shop_dashboard,
         "sync_shop_dashboard",
         triggered_by,
@@ -160,6 +160,7 @@ def sync_shop_dashboard(
         rule_id=rule_id,
         execution_id=execution_id,
         queue_task_id=str(getattr(fct, "task_id", "") or ""),
+        started_at=started_at,
         triggered_by=triggered_by,
         overrides=runtime_overrides,
         redis_client=redis_client,
