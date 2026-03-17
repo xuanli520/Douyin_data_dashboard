@@ -4,6 +4,10 @@ from typing import Any
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.domains.collection_job.enums import CollectionJobStatus
+from src.domains.collection_job.models import CollectionJob
+from src.domains.collection_job.repository import CollectionJobRepository
+from src.domains.collection_job.schemas import ScheduleConfig
 from src.domains.data_source.config_mapper import ScrapingRuleConfigMapper
 from src.domains.data_source.enums import (
     DataSourceStatus,
@@ -126,7 +130,16 @@ class ScrapingRuleService:
             status=ScrapingRuleStatus(status.value.upper()) if status else None,
             data_source_id=data_source_id,
         )
-        return [self._build_scraping_rule_list_item(rule) for rule in rules], total
+        schedule_map = await self._load_schedule_map(
+            [rule.id for rule in rules if rule.id is not None]
+        )
+        return [
+            self._build_scraping_rule_list_item(
+                rule,
+                schedule=schedule_map.get(rule.id if rule.id is not None else 0),
+            )
+            for rule in rules
+        ], total
 
     async def get_rule(self, rule_id: int) -> ScrapingRuleResponse:
         rule = await self.rule_repo.get_by_id(rule_id)
@@ -134,7 +147,13 @@ class ScrapingRuleService:
             raise BusinessException(
                 ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
             )
-        return self._build_scraping_rule_response(rule)
+        schedule_map = await self._load_schedule_map(
+            [rule.id] if rule.id is not None else []
+        )
+        return self._build_scraping_rule_response(
+            rule,
+            schedule=schedule_map.get(rule.id if rule.id is not None else 0),
+        )
 
     async def update_rule(
         self,
@@ -190,7 +209,33 @@ class ScrapingRuleService:
             await self.session.rollback()
             raise
 
-    def _build_scraping_rule_response(self, rule: ScrapingRule) -> ScrapingRuleResponse:
+    def _format_schedule_summary(self, jobs: list[CollectionJob]) -> str | None:
+        items: list[str] = []
+        for job in jobs:
+            schedule = ScheduleConfig.model_validate(job.schedule or {})
+            items.append(f"{job.name}: {schedule.cron} ({schedule.timezone})")
+        return " | ".join(items) if items else None
+
+    async def _load_schedule_map(self, rule_ids: list[int]) -> dict[int, str | None]:
+        job_repo = CollectionJobRepository(self.session)
+        jobs = await job_repo.list_by_rule_ids(
+            rule_ids,
+            status=CollectionJobStatus.ACTIVE,
+        )
+        grouped: dict[int, list[CollectionJob]] = {}
+        for job in jobs:
+            grouped.setdefault(job.rule_id, []).append(job)
+        return {
+            rule_id: self._format_schedule_summary(grouped.get(rule_id, []))
+            for rule_id in rule_ids
+        }
+
+    def _build_scraping_rule_response(
+        self,
+        rule: ScrapingRule,
+        *,
+        schedule: str | None = None,
+    ) -> ScrapingRuleResponse:
         return ScrapingRuleResponse(
             id=rule.id if rule.id is not None else 0,
             data_source_id=rule.data_source_id
@@ -199,6 +244,7 @@ class ScrapingRuleService:
             name=rule.name,
             target_type=rule.target_type,
             config=ScrapingRuleConfigMapper.build_config_from_model(rule),
+            schedule=schedule,
             is_active=rule.status == ScrapingRuleStatus.ACTIVE,
             status=rule.status,
             version=rule.version,
@@ -210,7 +256,10 @@ class ScrapingRuleService:
         )
 
     def _build_scraping_rule_list_item(
-        self, rule: ScrapingRule
+        self,
+        rule: ScrapingRule,
+        *,
+        schedule: str | None = None,
     ) -> ScrapingRuleListItem:
         return ScrapingRuleListItem(
             id=rule.id if rule.id is not None else 0,
@@ -220,6 +269,7 @@ class ScrapingRuleService:
             name=rule.name,
             target_type=rule.target_type,
             config=ScrapingRuleConfigMapper.build_config_from_model(rule),
+            schedule=schedule,
             is_active=rule.status == ScrapingRuleStatus.ACTIVE,
             status=rule.status,
             version=rule.version,

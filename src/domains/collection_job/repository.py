@@ -47,3 +47,17 @@ class CollectionJobRepository(BaseRepository):
             stmt = stmt.where(CollectionJob.task_type == task_type)
         stmt = stmt.order_by(CollectionJob.task_type.asc(), CollectionJob.id.asc())
         return list((await self.session.execute(stmt)).scalars().all())
+
+    async def list_by_rule_ids(
+        self,
+        rule_ids: list[int],
+        *,
+        status: CollectionJobStatus | None = None,
+    ) -> list[CollectionJob]:
+        if not rule_ids:
+            return []
+        stmt = select(CollectionJob).where(CollectionJob.rule_id.in_(rule_ids))
+        if status is not None:
+            stmt = stmt.where(CollectionJob.status == status)
+        stmt = stmt.order_by(CollectionJob.rule_id.asc(), CollectionJob.id.asc())
+        return list((await self.session.execute(stmt)).scalars().all())
