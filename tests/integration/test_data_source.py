@@ -1,10 +1,16 @@
-"""Integration tests for data source API endpoints."""
+from datetime import datetime, timezone
 
 import pytest
 from fastapi_pagination import add_pagination
 from httpx import AsyncClient, ASGITransport
 
 from src.auth.models import User, UserRole
+from src.domains.collection_job.enums import CollectionJobStatus
+from src.domains.collection_job.models import CollectionJob
+from src.domains.data_source.enums import DataSourceStatus, DataSourceType, TargetType
+from src.domains.data_source.models import DataSource
+from src.domains.scraping_rule.models import ScrapingRule
+from src.domains.task.enums import TaskType
 
 
 class MockCaptchaService:
@@ -312,6 +318,48 @@ class TestScrapingRuleAPI:
         response = await test_client.get(f"/api/v1/data-sources/{ds_id}/scraping-rules")
         assert response.status_code == 200
         assert isinstance(response.json()["data"], list)
+
+    async def test_list_scraping_rules_should_include_schedule_and_last_run(
+        self,
+        test_client,
+        test_db,
+    ):
+        async with test_db() as session:
+            data_source = DataSource(
+                name="api-rule-ds",
+                source_type=DataSourceType.DOUYIN_SHOP,
+                status=DataSourceStatus.ACTIVE,
+            )
+            session.add(data_source)
+            await session.flush()
+
+            rule = ScrapingRule(
+                name="api-rule",
+                data_source_id=data_source.id if data_source.id is not None else 0,
+                target_type=TargetType.SHOP_OVERVIEW,
+                last_executed_at=datetime.now(timezone.utc),
+                last_execution_id="exec-api-rule",
+            )
+            session.add(rule)
+            await session.flush()
+
+            session.add(
+                CollectionJob(
+                    name="api-schedule",
+                    task_type=TaskType.SHOP_DASHBOARD_COLLECTION,
+                    data_source_id=data_source.id if data_source.id is not None else 0,
+                    rule_id=rule.id if rule.id is not None else 0,
+                    schedule={"cron": "0 9 * * *", "timezone": "Asia/Shanghai"},
+                    status=CollectionJobStatus.ACTIVE,
+                )
+            )
+            await session.commit()
+
+        response = await test_client.get("/api/v1/scraping-rules?page=1&size=10")
+        assert response.status_code == 200
+        item = response.json()["data"]["items"][0]
+        assert item["schedule"] == "api-schedule: 0 9 * * * (Asia/Shanghai)"
+        assert item["last_executed_at"] is not None
 
 
 class TestDataImportAPI:
