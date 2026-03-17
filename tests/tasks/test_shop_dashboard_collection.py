@@ -13,6 +13,7 @@ from src.domains.data_source.enums import DataSourceStatus
 from src.domains.data_source.enums import DataSourceType
 from src.domains.data_source.models import DataSource
 from src.domains.scraping_rule.models import ScrapingRule
+from src.domains.scraping_rule.repository import ScrapingRuleRepository
 from src.domains.task.enums import TaskExecutionStatus
 from src.domains.task.models import TaskExecution
 from src.domains.task.exceptions import ShopDashboardNoTargetShopsException
@@ -524,6 +525,58 @@ async def test_collection_usecase_should_map_login_expired_to_task_exception(
         )
         execution = (await db_session.execute(stmt)).scalar_one()
         assert execution.status == TaskExecutionStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_failed_collection_should_backfill_rule_last_execution_fields(
+    test_db,
+    monkeypatch,
+):
+    data_source_id, rule_id = await _seed_entities(test_db)
+    monkeypatch.setattr(
+        db_session_module,
+        "async_session_factory",
+        test_db,
+        raising=False,
+    )
+    monkeypatch.setattr(module, "_collect_one_day", _raise_login_expired)
+    monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
+    monkeypatch.setattr(
+        module,
+        "SessionBootstrapper",
+        _FakeSessionBootstrapper,
+        raising=False,
+    )
+    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
+    monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
+    monkeypatch.setattr(
+        module,
+        "_materialize_runtime_storage_state",
+        lambda runtime, _store: runtime,
+    )
+    monkeypatch.setattr(
+        CollectionUseCase,
+        "_raise_when_all_units_failed",
+        lambda self, result: None,
+    )
+
+    usecase = CollectionUseCase()
+    with pytest.raises(ShopDashboardCookieExpiredException):
+        await usecase._execute_async(
+            data_source_id=data_source_id,
+            rule_id=rule_id,
+            execution_id="exec-failed-last-run",
+            queue_task_id="queue-failed-last-run",
+            triggered_by=1,
+            overrides={},
+            redis_client=_FakeRedis(),
+        )
+
+    async with test_db() as db_session:
+        rule = await ScrapingRuleRepository(db_session).get_by_id(rule_id)
+        assert rule is not None
+        assert rule.last_executed_at is not None
+        assert rule.last_execution_id == "exec-failed-last-run"
 
 
 def _raise_login_expired(*_args, **_kwargs):

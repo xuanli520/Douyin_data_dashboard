@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from src.domains.collection_job.enums import CollectionJobStatus
+from src.domains.collection_job.models import CollectionJob
 from src.domains.data_source.enums import (
     DataSourceStatus,
     DataSourceType,
@@ -11,8 +13,10 @@ from src.domains.data_source.enums import (
     TargetType,
 )
 from src.domains.data_source.models import DataSource
+from src.domains.scraping_rule.models import ScrapingRule
 from src.domains.scraping_rule.schemas import ScrapingRuleUpdate
 from src.domains.scraping_rule.services import ScrapingRuleService
+from src.domains.task.enums import TaskType
 from src.exceptions import BusinessException
 from src.shared.errors import ErrorCode
 
@@ -120,3 +124,57 @@ async def test_scraping_rule_service_update_rule_should_increment_version():
 
 def test_scraping_rule_service_should_not_expose_trigger_collection():
     assert not hasattr(ScrapingRuleService, "trigger_collection")
+
+
+@pytest.mark.asyncio
+async def test_list_rules_paginated_should_include_schedule_summary(test_db):
+    async with test_db() as session:
+        data_source = DataSource(
+            name="ds-schedule",
+            source_type=DataSourceType.DOUYIN_SHOP,
+            status=DataSourceStatus.ACTIVE,
+        )
+        session.add(data_source)
+        await session.flush()
+
+        rule = ScrapingRule(
+            name="rule-with-schedule",
+            data_source_id=data_source.id if data_source.id is not None else 0,
+            target_type=TargetType.SHOP_OVERVIEW,
+        )
+        session.add(rule)
+        await session.flush()
+
+        session.add_all(
+            [
+                CollectionJob(
+                    name="full-sync",
+                    task_type=TaskType.SHOP_DASHBOARD_COLLECTION,
+                    data_source_id=data_source.id if data_source.id is not None else 0,
+                    rule_id=rule.id if rule.id is not None else 0,
+                    schedule={"cron": "0 2 * * *", "timezone": "Asia/Shanghai"},
+                    status=CollectionJobStatus.ACTIVE,
+                ),
+                CollectionJob(
+                    name="incremental-sync",
+                    task_type=TaskType.SHOP_DASHBOARD_COLLECTION,
+                    data_source_id=data_source.id if data_source.id is not None else 0,
+                    rule_id=rule.id if rule.id is not None else 0,
+                    schedule={
+                        "cron": "0 6,10,14,18 * * *",
+                        "timezone": "Asia/Shanghai",
+                    },
+                    status=CollectionJobStatus.ACTIVE,
+                ),
+            ]
+        )
+        await session.commit()
+
+        service = ScrapingRuleService(session=session)
+        rules, total = await service.list_rules_paginated(page=1, size=10)
+
+        assert total == 1
+        assert rules[0].schedule == (
+            "full-sync: 0 2 * * * (Asia/Shanghai) | "
+            "incremental-sync: 0 6,10,14,18 * * * (Asia/Shanghai)"
+        )
