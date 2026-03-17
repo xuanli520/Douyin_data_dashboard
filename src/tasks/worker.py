@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
+import signal
 import time
 from threading import Event, Thread
 from typing import Callable
@@ -12,16 +14,7 @@ from src.tasks.collection import douyin_shop_agent, douyin_shop_dashboard
 from src.tasks.etl import orders as etl_orders
 from src.tasks.etl import products as etl_products
 
-_NON_BLOCKING_CONSUME_QUEUES = {
-    "collection_shop_dashboard",
-    "collection_shop_dashboard_agent",
-    "collection_shop_dashboard_dlx",
-    "collection_shop_dashboard_agent_dlx",
-    "etl_orders_dlx",
-    "etl_products_dlx",
-}
-
-_BLOCKING_CONSUME_QUEUES = {"etl_orders", "etl_products"}
+logger = logging.getLogger(__name__)
 
 
 def _queue_runners(etl_processes: int) -> dict[str, Callable[[], None]]:
@@ -51,25 +44,19 @@ def _queue_runners(etl_processes: int) -> dict[str, Callable[[], None]]:
     }
 
 
+def _wait_forever() -> None:
+    try:
+        while True:
+            time.sleep(5)
+    except KeyboardInterrupt:
+        logger.info("Shutting down workers")
+
+
 def run_all(etl_processes: int = 2) -> None:
-    runners = _queue_runners(etl_processes)
-    threads: list[tuple[str, Thread]] = []
-    blocking_threads: list[Thread] = []
-    for queue_name, runner in runners.items():
-        thread = Thread(target=runner, name=f"worker-{queue_name}")
-        threads.append((queue_name, thread))
+    for queue_name, runner in _queue_runners(etl_processes).items():
+        thread = Thread(target=runner, name=f"worker-{queue_name}", daemon=True)
         thread.start()
-        if queue_name in _BLOCKING_CONSUME_QUEUES:
-            blocking_threads.append(thread)
-    if blocking_threads:
-        for thread in blocking_threads:
-            thread.join()
-        return
-    for _, thread in threads:
-        try:
-            thread.join(timeout=1)
-        except TypeError:
-            thread.join()
+
     _wait_forever()
 
 
@@ -80,24 +67,19 @@ def run_queue(queue_name: str, etl_processes: int = 2) -> None:
     runner()
 
 
-def _wait_forever() -> None:
-    while True:
-        time.sleep(3600)
-
-
 def _start_worker_loop() -> tuple[asyncio.AbstractEventLoop, Thread]:
     loop = asyncio.new_event_loop()
     ready = Event()
 
     def _run_loop() -> None:
         asyncio.set_event_loop(loop)
-        ready.set()
-        loop.run_forever()
+        loop.call_soon(ready.set)
+        try:
+            loop.run_forever()
+        except Exception:
+            logger.exception("worker asyncio loop crashed")
 
-    try:
-        thread = Thread(target=_run_loop, name="worker-asyncio-loop", daemon=True)
-    except TypeError:
-        thread = Thread(target=_run_loop, name="worker-asyncio-loop")
+    thread = Thread(target=_run_loop, name="worker-asyncio-loop", daemon=True)
     thread.start()
     ready.wait()
     session.bind_worker_loop(loop)
@@ -106,12 +88,12 @@ def _start_worker_loop() -> tuple[asyncio.AbstractEventLoop, Thread]:
 
 def _stop_worker_loop(loop: asyncio.AbstractEventLoop, thread: Thread) -> None:
     session.bind_worker_loop(None)
-    if loop.is_running():
-        loop.call_soon_threadsafe(loop.stop)
     try:
-        thread.join(timeout=5)
-    except TypeError:
-        thread.join()
+        if loop.is_running():
+            loop.call_soon_threadsafe(loop.stop)
+    except RuntimeError:
+        pass
+    thread.join(timeout=5)
     if not loop.is_closed():
         loop.close()
 
@@ -134,20 +116,26 @@ def _init_worker_db() -> None:
 
 
 def _close_worker_db() -> None:
-    if session.engine is None:
-        return
     session.run_coro(session.close_db())
 
 
 def main() -> None:
     args = _parse_args()
     loop, loop_thread = _start_worker_loop()
+
+    def _handle_signal(signum, _frame):
+        logger.info("Received signal %s, shutting down", signum)
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
+
     try:
         _init_worker_db()
         if args.queue:
             run_queue(args.queue, etl_processes=args.etl_processes)
-            return
-        run_all(etl_processes=args.etl_processes)
+        else:
+            run_all(etl_processes=args.etl_processes)
     finally:
         try:
             _close_worker_db()

@@ -5,6 +5,7 @@ class ShopDashboardSettings(BaseSettings):
     base_url: str = "https://fxg.jinritemai.com"
     cookie_ttl_seconds: int = 21600
     lock_ttl_seconds: int = 3600
+    shop_lock_ttl_seconds: int = 600
     catalog_cache_ttl_seconds: int = 3600
     catalog_cache_ttl_cap_seconds: int = 7200
     catalog_stale_allow_seconds: int = 7200

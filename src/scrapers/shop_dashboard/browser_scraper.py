@@ -4,6 +4,7 @@ import inspect
 import threading
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse
@@ -85,19 +86,32 @@ class BrowserScraper:
         except RuntimeError:
             return asyncio.run(self.refresh_runtime_context(runtime_config))
 
+        runtime_copy = _clone_runtime_config(runtime_config)
         result: ShopDashboardRuntimeConfig | None = None
         error: BaseException | None = None
 
         def _runner() -> None:
             nonlocal result, error
             try:
-                result = asyncio.run(self.refresh_runtime_context(runtime_config))
+                result = asyncio.run(self.refresh_runtime_context(runtime_copy))
             except BaseException as exc:
                 error = exc
 
-        thread = threading.Thread(target=_runner, name="shop-dashboard-browser-refresh")
+        thread = threading.Thread(
+            target=_runner,
+            name="shop-dashboard-browser-refresh",
+            daemon=True,
+        )
         thread.start()
-        thread.join()
+        thread.join(timeout=self._resolve_sync_refresh_timeout_seconds())
+        if thread.is_alive():
+            raise ShopDashboardScraperError(
+                "Browser runtime refresh timed out",
+                error_data={
+                    "shop_id": getattr(runtime_config, "shop_id", ""),
+                    "account_id": self._resolve_account_id(runtime_config),
+                },
+            )
         if error is not None:
             raise error
         if result is None:
@@ -105,6 +119,10 @@ class BrowserScraper:
                 "Browser runtime refresh returned empty result"
             )
         return result
+
+    def _resolve_sync_refresh_timeout_seconds(self) -> float:
+        timeout_seconds = max(int(self._settings.browser_timeout_seconds), 1)
+        return float(timeout_seconds * 2 + 5)
 
     async def scrape_dashboard(
         self, runtime_config: ShopDashboardRuntimeConfig, date: str
@@ -323,3 +341,29 @@ class BrowserScraper:
         if shop_id:
             return f"shop_{shop_id}"
         return "shop_anonymous"
+
+
+def _clone_runtime_config(
+    runtime_config: ShopDashboardRuntimeConfig,
+) -> ShopDashboardRuntimeConfig:
+    extra_config = runtime_config.extra_config
+    return replace(
+        runtime_config,
+        resolved_shop_ids=list(runtime_config.resolved_shop_ids),
+        cookies=dict(runtime_config.cookies),
+        time_range=(
+            dict(runtime_config.time_range) if runtime_config.time_range else None
+        ),
+        metrics=list(runtime_config.metrics),
+        dimensions=list(runtime_config.dimensions),
+        filters=dict(runtime_config.filters),
+        common_query=dict(runtime_config.common_query),
+        token_keys=list(runtime_config.token_keys),
+        api_groups=list(runtime_config.api_groups),
+        extra_config=dict(extra_config) if isinstance(extra_config, dict) else None,
+        storage_state=(
+            dict(runtime_config.storage_state)
+            if isinstance(runtime_config.storage_state, dict)
+            else None
+        ),
+    )

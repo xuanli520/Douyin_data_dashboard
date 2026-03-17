@@ -358,7 +358,7 @@ def resolve_rule_config(
         rule_id=rule_id,
     )
 
-    fallback = pick("fallback_chain", default="http->browser->llm")
+    fallback = pick("fallback_chain", default="http->llm")
     fallback_chain = _normalize_fallback_chain(fallback)
     graphql_query = _normalize_nullable_text(pick("graphql_query", default=None))
 
@@ -635,10 +635,21 @@ def _normalize_fallback_chain(value: Any) -> tuple[str, ...]:
     elif isinstance(value, (list, tuple)):
         parts = [str(part).strip().lower() for part in value if str(part).strip()]
     else:
-        parts = ["http", "browser", "llm"]
+        parts = ["http", "llm"]
     if not parts:
-        parts = ["http", "browser", "llm"]
-    normalized = ["agent" if part in {"agent", "llm"} else part for part in parts]
+        parts = ["http", "llm"]
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        stage = "agent" if part in {"agent", "llm"} else part
+        if stage == "browser":
+            continue
+        if stage not in {"http", "agent"} or stage in seen:
+            continue
+        normalized.append(stage)
+        seen.add(stage)
+    if not normalized:
+        return ("http", "agent")
     return tuple(normalized)
 
 

@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any
 from typing import Protocol
 
-from src.scrapers.shop_dashboard.browser_scraper import BrowserScraper
 from src.scrapers.shop_dashboard.lock_manager import LockManager
 from src.scrapers.shop_dashboard.login_state_manager import LoginStateManager
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
@@ -40,8 +39,6 @@ class CollectionExecutor(Protocol):
         state_store: SessionStateStore,
     ) -> ShopDashboardRuntimeConfig: ...
 
-    def create_browser_scraper(self) -> BrowserScraper: ...
-
     def create_lock_manager(self, *, redis_client: Any) -> LockManager: ...
 
     def create_login_state_manager(
@@ -55,7 +52,6 @@ class CollectionExecutor(Protocol):
         self,
         *,
         state_store: SessionStateStore,
-        browser_scraper: BrowserScraper,
     ) -> SessionBootstrapper: ...
 
     def build_business_key(
@@ -72,7 +68,6 @@ class CollectionExecutor(Protocol):
         *,
         runtime: ShopDashboardRuntimeConfig,
         metric_date: str,
-        browser: BrowserScraper,
         lock_manager: LockManager,
         state_store: SessionStateStore,
         login_state_manager: LoginStateManager,
@@ -126,10 +121,6 @@ class TaskModuleCollectionExecutor:
             return materialize(runtime, state_store)
         return runtime
 
-    def create_browser_scraper(self) -> BrowserScraper:
-        browser_cls = getattr(self._task_module, "BrowserScraper", BrowserScraper)
-        return browser_cls()
-
     def create_lock_manager(self, *, redis_client: Any) -> LockManager:
         lock_manager_cls = getattr(self._task_module, "LockManager", LockManager)
         return lock_manager_cls(redis_client=redis_client)
@@ -154,7 +145,6 @@ class TaskModuleCollectionExecutor:
         self,
         *,
         state_store: SessionStateStore,
-        browser_scraper: BrowserScraper,
     ) -> SessionBootstrapper:
         bootstrapper_cls = getattr(
             self._task_module,
@@ -163,7 +153,6 @@ class TaskModuleCollectionExecutor:
         )
         return bootstrapper_cls(
             state_store=state_store,
-            browser_scraper=browser_scraper,
         )
 
     def build_business_key(
@@ -189,7 +178,6 @@ class TaskModuleCollectionExecutor:
         *,
         runtime: ShopDashboardRuntimeConfig,
         metric_date: str,
-        browser: BrowserScraper,
         lock_manager: LockManager,
         state_store: SessionStateStore,
         login_state_manager: LoginStateManager,
@@ -199,7 +187,6 @@ class TaskModuleCollectionExecutor:
             return collect_one_day(
                 runtime,
                 metric_date,
-                browser,
                 lock_manager=lock_manager,
                 state_store=state_store,
                 login_state_manager=login_state_manager,
@@ -207,7 +194,6 @@ class TaskModuleCollectionExecutor:
         return collect_one_day(
             runtime,
             metric_date,
-            browser,
         )
 
 

@@ -8,7 +8,6 @@ from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 from src.agents import LLMDashboardAgent
@@ -18,7 +17,6 @@ from src.domains.data_source.enums import DataSourceStatus, ScrapingRuleStatus
 from src.domains.data_source.repository import DataSourceRepository
 from src.domains.scraping_rule.repository import ScrapingRuleRepository
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
-from src.scrapers.shop_dashboard.browser_scraper import BrowserScraper
 from src.scrapers.shop_dashboard.http_scraper import HttpScraper
 from src.scrapers.shop_dashboard.lock_manager import LockManager
 from src.scrapers.shop_dashboard.login_state_manager import LoginStateManager
@@ -226,20 +224,6 @@ def _acquire_shop_lock(
             lock_manager.release_shop_lock(shop_lock_id, token)
 
 
-@contextmanager
-def _acquire_account_lock(
-    lock_manager: LockManager,
-    account_id: str,
-    ttl_seconds: int,
-) -> Generator[str | None, None, None]:
-    token = lock_manager.acquire_account_lock(account_id, ttl_seconds=ttl_seconds)
-    try:
-        yield token
-    finally:
-        if token:
-            lock_manager.release_account_lock(account_id, token)
-
-
 def _normalize_fallback_stage(stage: Any) -> str:
     stage_name = str(stage).strip().lower()
     if stage_name in {"agent", "llm"}:
@@ -263,7 +247,6 @@ def _append_fallback_trace(
 def _collect_one_day(
     runtime: ShopDashboardRuntimeConfig,
     metric_date: str,
-    browser: BrowserScraper,
     *,
     lock_manager: LockManager | None = None,
     state_store: SessionStateStore | None = None,
@@ -271,24 +254,16 @@ def _collect_one_day(
 ) -> dict[str, Any]:
     settings = get_settings().shop_dashboard
     lock_manager = lock_manager or LockManager()
-    state_store = state_store or SessionStateStore(
-        base_dir=Path(".runtime") / "shop_dashboard_state"
-    )
-    login_state_manager = login_state_manager or LoginStateManager(
-        state_store=state_store
-    )
-    explicit_account_id = str(getattr(runtime, "account_id", "") or "").strip()
     account_id = _resolve_account_id(runtime)
     shop_lock_id = _resolve_shop_lock_id(runtime.shop_id, account_id)
     last_error: Exception | None = None
     http_error: Exception | None = None
-    browser_error: Exception | None = None
     retry_count = 0
     fallback_trace: list[dict[str, Any]] = []
     with _acquire_shop_lock(
         lock_manager,
         shop_lock_id,
-        settings.lock_ttl_seconds,
+        settings.shop_lock_ttl_seconds,
     ) as shop_lock_token:
         if not shop_lock_token:
             return _build_expired_account_result(
@@ -332,76 +307,11 @@ def _collect_one_day(
                             error=exc,
                         )
                         continue
-                if stage_name == "browser":
-                    try:
-                        with _acquire_account_lock(
-                            lock_manager,
-                            account_id,
-                            settings.lock_ttl_seconds,
-                        ) as account_lock_token:
-                            if not account_lock_token:
-                                return _build_expired_account_result(
-                                    runtime,
-                                    metric_date,
-                                    reason="account_locked",
-                                )
-                            if explicit_account_id:
-                                can_refresh = _run_async(
-                                    login_state_manager.check_and_refresh(account_id)
-                                )
-                                if not can_refresh:
-                                    return _build_expired_account_result(
-                                        runtime,
-                                        metric_date,
-                                        reason="login_expired",
-                                    )
-                                state_cookies = state_store.load_cookie_mapping(
-                                    account_id
-                                )
-                                if state_cookies:
-                                    runtime.cookies = state_cookies
-                            payload = browser.retry_http(scraper, runtime, metric_date)
-                            _append_fallback_trace(
-                                fallback_trace,
-                                stage="browser",
-                                status="success",
-                            )
-                            return _normalize_task_result(
-                                runtime,
-                                metric_date,
-                                payload,
-                                retry_count=retry_count,
-                                fallback_trace=fallback_trace,
-                            )
-                    except (ScrapingFailedException, ShopDashboardScraperError) as exc:
-                        retry_count += 1
-                        last_error = exc
-                        browser_error = exc
-                        _append_fallback_trace(
-                            fallback_trace,
-                            stage="browser",
-                            status="failed",
-                            error=exc,
-                        )
-                        if _is_login_expired_exception(exc):
-                            _run_async(
-                                login_state_manager.mark_expired(
-                                    account_id,
-                                    reason="refresh_failed",
-                                )
-                            )
-                            return _build_expired_account_result(
-                                runtime,
-                                metric_date,
-                                reason="login_expired",
-                            )
-                        continue
                 if stage_name == "agent":
                     return _build_agent_fallback_result(
                         runtime,
                         metric_date,
                         http_error=http_error,
-                        browser_error=browser_error,
                         retry_count=retry_count,
                         fallback_trace=fallback_trace,
                     )
@@ -417,19 +327,6 @@ def _collect_one_day(
                     ]
                 },
             )
-
-
-def _is_login_expired_exception(exc: Exception) -> bool:
-    error_data = getattr(exc, "error_data", {})
-    if isinstance(error_data, dict):
-        reason = str(error_data.get("reason", "")).strip().lower()
-        if "expired" in reason:
-            return True
-
-    message = str(exc).strip().lower()
-    return "expired" in message and any(
-        token in message for token in ("login", "session", "cookie")
-    )
 
 
 def _build_expired_account_result(
@@ -507,16 +404,9 @@ def _normalize_task_result(
     return result
 
 
-def _resolve_agent_reason(
-    http_error: Exception | None,
-    browser_error: Exception | None,
-) -> str:
-    if http_error is not None and browser_error is not None:
-        return "http_browser_failed"
+def _resolve_agent_reason(http_error: Exception | None) -> str:
     if http_error is not None:
         return "http_failed"
-    if browser_error is not None:
-        return "browser_failed"
     return "fallback"
 
 
@@ -525,11 +415,10 @@ def _build_agent_fallback_result(
     metric_date: str,
     *,
     http_error: Exception | None = None,
-    browser_error: Exception | None = None,
     retry_count: int = 0,
     fallback_trace: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    reason = _resolve_agent_reason(http_error, browser_error)
+    reason = _resolve_agent_reason(http_error)
     payload: dict[str, Any] = {
         "status": "success",
         "source": "llm",

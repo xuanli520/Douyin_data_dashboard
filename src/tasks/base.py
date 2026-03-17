@@ -15,7 +15,14 @@ def write_started_status_safe(
     execution_id: int | None = None,
 ) -> None:
     try:
-        task_id = str(getattr(fct, "task_id", "unknown"))
+        raw_task_id = getattr(fct, "task_id", None)
+        task_id = str(raw_task_id).strip() if raw_task_id is not None else ""
+        if not task_id:
+            logger.warning(
+                "skip writing started task status because task_id is missing: %s",
+                task_name,
+            )
+            return
         write_started_task_status(
             owner=task_func,
             task_id=task_id,
@@ -29,12 +36,16 @@ def write_started_status_safe(
 
 class TaskStatusMixin(AbstractConsumer):
     @staticmethod
-    def _normalize_int(value: object) -> int | None:
+    def _should_skip_status_sync(*, queue_name: str) -> bool:
+        return queue_name.endswith("_dlx")
+
+    @staticmethod
+    def _normalize_int(value: object, *, allow_float: bool = False) -> int | None:
         if isinstance(value, bool):
             return None
         if isinstance(value, int):
             return value
-        if isinstance(value, float):
+        if allow_float and isinstance(value, float):
             return int(value) if value.is_integer() else None
         if isinstance(value, str):
             text = value.strip()
@@ -43,6 +54,8 @@ class TaskStatusMixin(AbstractConsumer):
             try:
                 return int(text)
             except ValueError:
+                if not allow_float:
+                    return None
                 try:
                     float_value = float(text)
                 except ValueError:
@@ -59,11 +72,17 @@ class TaskStatusMixin(AbstractConsumer):
     ) -> int | None:
         if isinstance(result, dict):
             if "processed_rows" in result:
-                normalized = cls._normalize_int(result.get("processed_rows"))
+                normalized = cls._normalize_int(
+                    result.get("processed_rows"),
+                    allow_float=True,
+                )
                 if normalized is not None:
                     return max(normalized, 0)
         if isinstance(body, dict) and "processed_rows" in body:
-            normalized = cls._normalize_int(body.get("processed_rows"))
+            normalized = cls._normalize_int(
+                body.get("processed_rows"),
+                allow_float=True,
+            )
             if normalized is not None:
                 return max(normalized, 0)
         return None
@@ -113,7 +132,7 @@ class TaskStatusMixin(AbstractConsumer):
         task_id = ""
         task_name = ""
         success = False
-        body: object = {}
+        body: object = None
         result: object = None
         triggered_by: int | None = None
         processed_rows: int | None = None
@@ -123,6 +142,9 @@ class TaskStatusMixin(AbstractConsumer):
             task_name = str(
                 getattr(current_function_result_status, "function", "") or ""
             )
+            queue_name = str(getattr(self, "queue_name", "") or "").strip()
+            if self._should_skip_status_sync(queue_name=queue_name):
+                return
             if not task_id:
                 self.logger.error(
                     "skip writing task status because task_id is missing function=%s",
@@ -142,7 +164,8 @@ class TaskStatusMixin(AbstractConsumer):
                 ),
                 success=success,
             )
-            status_owner = getattr(self, "publisher", None) or self
+            publisher = getattr(self, "publisher", None)
+            status_owner = publisher if publisher is not None else self
 
             write_finished_task_status(
                 owner=status_owner,
@@ -156,7 +179,10 @@ class TaskStatusMixin(AbstractConsumer):
             )
         except Exception:
             self.logger.exception(
-                "failed to write task status task_id=%s function=%s success=%s body_type=%s result_type=%s triggered_by=%s processed_rows=%s",
+                "failed to write task status: "
+                "task_id=%s function=%s success=%s "
+                "body_type=%s result_type=%s "
+                "triggered_by=%s processed_rows=%s",
                 task_id,
                 task_name,
                 success,

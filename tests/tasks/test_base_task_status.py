@@ -32,6 +32,7 @@ def test_task_status_hook_writes_fields_and_ttl():
     mixin = TaskStatusMixin()
     fake_redis = FakeRedis()
     mixin.publisher = SimpleNamespace(redis_db_frame=fake_redis)
+    mixin.queue_name = "collection_shop_dashboard"
 
     status = FunctionResultStatus(
         task_id="task-status-1",
@@ -59,6 +60,27 @@ def test_task_status_hook_writes_fields_and_ttl():
     expire_key, expire_ttl = fake_redis.expire_calls[0]
     assert expire_key == key
     assert expire_ttl == get_settings().funboost.status_ttl_seconds
+
+
+def test_task_status_hook_skips_dead_letter_queue():
+    mixin = TaskStatusMixin()
+    fake_redis = FakeRedis()
+    mixin.publisher = SimpleNamespace(redis_db_frame=fake_redis)
+    mixin.queue_name = "collection_shop_dashboard_dlx"
+
+    status = FunctionResultStatus(
+        task_id="task-status-dlx-1",
+        success=True,
+        time_end=1730000000.0,
+        function="handle_collection_shop_dashboard_dead_letter",
+    )
+
+    mixin._sync_and_aio_frame_custom_record_process_info_func(
+        status, {"body": {"triggered_by": 42}}
+    )
+
+    assert fake_redis.hset_calls == []
+    assert fake_redis.expire_calls == []
 
 
 def test_write_finished_task_status_ignores_interpreter_shutdown(monkeypatch):

@@ -268,7 +268,6 @@ class _BootstrapVerifyMismatch:
 def _collect_mismatch(
     runtime_config,
     metric_date: str,
-    _browser,
     *,
     lock_manager,
     state_store,
@@ -489,7 +488,6 @@ async def test_collection_usecase_should_map_login_expired_to_task_exception(
         "_collect_one_day",
         _raise_login_expired,
     )
-    monkeypatch.setattr(module, "BrowserScraper", lambda: object())
     monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
     monkeypatch.setattr(
         module,
@@ -548,7 +546,6 @@ async def test_bootstrap_verify_request_failed_not_counted_as_shop_mismatch(
         raising=False,
     )
     monkeypatch.setattr(module, "_collect_one_day", _raise_login_expired)
-    monkeypatch.setattr(module, "BrowserScraper", lambda: object())
     monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
     monkeypatch.setattr(
         module,
@@ -603,7 +600,6 @@ async def test_collect_mismatch_reaches_threshold_then_hits_circuit_break(
         raising=False,
     )
     monkeypatch.setattr(module, "_collect_one_day", _collect_mismatch)
-    monkeypatch.setattr(module, "BrowserScraper", lambda: object())
     monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
     monkeypatch.setattr(
         module,
@@ -656,7 +652,6 @@ async def test_account_shop_switch_unsupported_short_circuit(
         raising=False,
     )
     monkeypatch.setattr(module, "_collect_one_day", _collect_mismatch)
-    monkeypatch.setattr(module, "BrowserScraper", lambda: object())
     monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
     monkeypatch.setattr(
         module,

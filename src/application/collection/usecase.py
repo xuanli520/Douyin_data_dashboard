@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import time
@@ -53,6 +54,20 @@ from src.shared.redis_keys import redis_keys
 logger = logging.getLogger(__name__)
 
 
+def _ensure_db_initialized() -> None:
+    if session.async_session_factory is not None:
+        return
+    settings = get_settings()
+    session.run_coro(session.init_db(settings.db.url, settings.db.echo))
+
+
+async def _ensure_db_initialized_async() -> None:
+    if session.async_session_factory is not None:
+        return
+    settings = get_settings()
+    await session.init_db(settings.db.url, settings.db.echo)
+
+
 class CollectionUseCase:
     _SHOP_MISMATCH_RECORD_SCRIPT = """
     local count = redis.call('incr', KEYS[1])
@@ -93,6 +108,15 @@ class CollectionUseCase:
         overrides: Mapping[str, Any] | None = None,
         redis_client: Any | None = None,
     ) -> dict[str, Any]:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError(
+                "CollectionUseCase.execute cannot be called from an async context"
+            )
+        _ensure_db_initialized()
         return session.run_coro(
             self._execute_async(
                 data_source_id=data_source_id,
@@ -103,6 +127,28 @@ class CollectionUseCase:
                 overrides=dict(overrides or {}),
                 redis_client=redis_client,
             )
+        )
+
+    async def execute_async(
+        self,
+        *,
+        data_source_id: int,
+        rule_id: int,
+        execution_id: str,
+        queue_task_id: str,
+        triggered_by: int | None = None,
+        overrides: Mapping[str, Any] | None = None,
+        redis_client: Any | None = None,
+    ) -> dict[str, Any]:
+        await _ensure_db_initialized_async()
+        return await self._execute_async(
+            data_source_id=data_source_id,
+            rule_id=rule_id,
+            execution_id=execution_id,
+            queue_task_id=queue_task_id,
+            triggered_by=triggered_by,
+            overrides=dict(overrides or {}),
+            redis_client=redis_client,
         )
 
     async def _execute_async(
@@ -429,7 +475,6 @@ class CollectionUseCase:
                 runtime, shop_id=plan_unit.shop_id
             )
 
-        browser = self.executor.create_browser_scraper()
         lock_manager = self.executor.create_lock_manager(redis_client=redis_client)
         login_state_manager = self.executor.create_login_state_manager(
             state_store=state_store,
@@ -437,7 +482,6 @@ class CollectionUseCase:
         )
         bootstrapper = self.executor.create_bootstrapper(
             state_store=state_store,
-            browser_scraper=browser,
         )
         rate_limiter = self.executor.create_rate_limiter(runtime.rate_limit)
         items: list[dict[str, Any]] = []
@@ -713,10 +757,10 @@ class CollectionUseCase:
             source = "unknown"
             status = "failed"
             try:
-                collected = self._collect_one_unit_payload(
+                collected = await asyncio.to_thread(
+                    self._collect_one_unit_payload,
                     runtime=unit_runtime,
                     metric_date=plan_unit.metric_date,
-                    browser=browser,
                     lock_manager=lock_manager,
                     state_store=state_store,
                     login_state_manager=login_state_manager,
@@ -760,10 +804,10 @@ class CollectionUseCase:
                                     unit_runtime,
                                     common_query=merged_common_query,
                                 )
-                        collected = self._collect_one_unit_payload(
+                        collected = await asyncio.to_thread(
+                            self._collect_one_unit_payload,
                             runtime=unit_runtime,
                             metric_date=plan_unit.metric_date,
-                            browser=browser,
                             lock_manager=lock_manager,
                             state_store=state_store,
                             login_state_manager=login_state_manager,
@@ -858,7 +902,8 @@ class CollectionUseCase:
                         metric_date=plan_unit.metric_date,
                         payload=collected,
                     )
-                helper.cache_result(business_key, collected)
+                if str(collected.get("status", "success")).strip().lower() == "success":
+                    helper.cache_result(business_key, collected)
                 items.append(collected)
                 source = str(collected.get("source", "unknown"))
                 status = str(collected.get("status", "success"))
@@ -972,7 +1017,6 @@ class CollectionUseCase:
         *,
         runtime: ShopDashboardRuntimeConfig,
         metric_date: str,
-        browser: Any,
         lock_manager: Any,
         state_store: Any,
         login_state_manager: Any,
@@ -980,7 +1024,6 @@ class CollectionUseCase:
         return self.executor.collect_one_day(
             runtime=runtime,
             metric_date=metric_date,
-            browser=browser,
             lock_manager=lock_manager,
             state_store=state_store,
             login_state_manager=login_state_manager,

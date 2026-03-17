@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -11,14 +10,6 @@ from src.scrapers.shop_dashboard import session_bootstrapper as module
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.scrapers.shop_dashboard.session_bootstrapper import SessionBootstrapper
 from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
-
-
-class _FakeBrowserScraper:
-    async def refresh_runtime_context(
-        self,
-        runtime_config: ShopDashboardRuntimeConfig,
-    ) -> ShopDashboardRuntimeConfig:
-        return replace(runtime_config)
 
 
 class _FakeResponse:
@@ -146,10 +137,7 @@ async def test_bootstrap_fails_when_verify_actual_shop_id_mismatch(
     _install_httpx_async_client(monkeypatch, events)
 
     store = SessionStateStore(base_dir=tmp_path)
-    bootstrapper = SessionBootstrapper(
-        state_store=store,
-        browser_scraper=_FakeBrowserScraper(),
-    )
+    bootstrapper = SessionBootstrapper(state_store=store)
     runtime = _build_runtime()
 
     result = await bootstrapper.bootstrap_shop(
@@ -195,10 +183,7 @@ async def test_bootstrap_choose_shop_uses_fallback_when_primary_returns_10008(
     call_log = _install_httpx_async_client(monkeypatch, events)
 
     store = SessionStateStore(base_dir=tmp_path)
-    bootstrapper = SessionBootstrapper(
-        state_store=store,
-        browser_scraper=_FakeBrowserScraper(),
-    )
+    bootstrapper = SessionBootstrapper(state_store=store)
     runtime = _build_runtime()
 
     result = await bootstrapper.bootstrap_shop(
@@ -214,19 +199,10 @@ async def test_bootstrap_choose_shop_uses_fallback_when_primary_returns_10008(
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_choose_shop_propagates_set_cookie_to_runtime(
+async def test_bootstrap_choose_shop_propagates_set_cookie_to_bundle(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("SHOP_DASHBOARD__BOOTSTRAP_VERIFY_RETRY_LIMIT", "0")
-    captured_cookie: dict[str, str] = {}
-
-    class _CaptureBrowserScraper:
-        async def refresh_runtime_context(
-            self,
-            runtime_config: ShopDashboardRuntimeConfig,
-        ) -> ShopDashboardRuntimeConfig:
-            captured_cookie.update(dict(runtime_config.cookies))
-            return replace(runtime_config)
 
     events = {
         ("GET", "/byteshop/loginv2/chooseshop"): [
@@ -256,10 +232,7 @@ async def test_bootstrap_choose_shop_propagates_set_cookie_to_runtime(
     _install_httpx_async_client(monkeypatch, events)
 
     store = SessionStateStore(base_dir=tmp_path)
-    bootstrapper = SessionBootstrapper(
-        state_store=store,
-        browser_scraper=_CaptureBrowserScraper(),
-    )
+    bootstrapper = SessionBootstrapper(state_store=store)
     runtime = _build_runtime()
 
     result = await bootstrapper.bootstrap_shop(
@@ -269,7 +242,9 @@ async def test_bootstrap_choose_shop_propagates_set_cookie_to_runtime(
     )
 
     assert result["bootstrap_failed"] is False
-    assert captured_cookie.get("PHPSESSID") == "new-session-id"
+    bundle = store.load_bundle("acct-1", "shop-a")
+    assert isinstance(bundle, dict)
+    assert bundle["cookies"]["PHPSESSID"] == "new-session-id"
 
 
 @pytest.mark.asyncio
@@ -289,10 +264,7 @@ async def test_bootstrap_fails_when_verify_request_timeout(tmp_path, monkeypatch
     _install_httpx_async_client(monkeypatch, events)
 
     store = SessionStateStore(base_dir=tmp_path)
-    bootstrapper = SessionBootstrapper(
-        state_store=store,
-        browser_scraper=_FakeBrowserScraper(),
-    )
+    bootstrapper = SessionBootstrapper(state_store=store)
     runtime = _build_runtime()
 
     result = await bootstrapper.bootstrap_shop(
@@ -329,10 +301,7 @@ async def test_bootstrap_fails_when_verify_actual_shop_id_missing(
     _install_httpx_async_client(monkeypatch, events)
 
     store = SessionStateStore(base_dir=tmp_path)
-    bootstrapper = SessionBootstrapper(
-        state_store=store,
-        browser_scraper=_FakeBrowserScraper(),
-    )
+    bootstrapper = SessionBootstrapper(state_store=store)
     runtime = _build_runtime()
 
     result = await bootstrapper.bootstrap_shop(
@@ -385,10 +354,7 @@ async def test_bootstrap_invalidates_old_session_version_and_rebuilds(
         },
     )
 
-    bootstrapper = SessionBootstrapper(
-        state_store=store,
-        browser_scraper=_FakeBrowserScraper(),
-    )
+    bootstrapper = SessionBootstrapper(state_store=store)
     runtime = _build_runtime()
 
     result = await bootstrapper.bootstrap_shop(
@@ -473,10 +439,7 @@ async def test_bootstrap_verify_reuses_response_set_cookie_across_retries(
     monkeypatch.setattr(module.httpx, "AsyncClient", _FakeAsyncClient)
 
     store = SessionStateStore(base_dir=tmp_path)
-    bootstrapper = SessionBootstrapper(
-        state_store=store,
-        browser_scraper=_FakeBrowserScraper(),
-    )
+    bootstrapper = SessionBootstrapper(state_store=store)
     runtime = _build_runtime()
 
     result = await bootstrapper.bootstrap_shop(

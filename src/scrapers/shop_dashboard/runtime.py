@@ -91,7 +91,7 @@ def build_runtime_config(
         dedupe_key=None,
         rule_id=int(_read_source_value(rule, "id", 0) or 0),
         execution_id=execution_id,
-        fallback_chain=("http", "browser", "agent"),
+        fallback_chain=("http", "agent"),
         graphql_query=None,
         common_query={},
         token_keys=[],

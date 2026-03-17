@@ -9,8 +9,6 @@ from typing import Any
 import httpx
 
 from src.config import get_settings
-from src.scrapers.shop_dashboard.browser_scraper import BrowserScraper
-from src.scrapers.shop_dashboard.exceptions import LoginExpiredError
 from src.scrapers.shop_dashboard.http_scraper import ENDPOINT_SPECS
 from src.scrapers.shop_dashboard.http_scraper import SHOP_CONTEXT_VERIFY_GROUPS
 from src.scrapers.shop_dashboard.parsers import (
@@ -56,16 +54,12 @@ class SessionBootstrapper:
         self,
         *,
         state_store: SessionStateStore,
-        browser_scraper: BrowserScraper | None = None,
         base_url: str | None = None,
         timeout_seconds: float | None = None,
     ) -> None:
         settings = get_settings().shop_dashboard
         self._settings = settings
         self._state_store = state_store
-        self._browser_scraper = browser_scraper or BrowserScraper(
-            state_store=state_store
-        )
         self._base_url = str(base_url or settings.base_url).rstrip("/")
         self._timeout_seconds = float(timeout_seconds or 8.0)
 
@@ -213,44 +207,8 @@ class SessionBootstrapper:
         if isinstance(choose_result.cookies, dict) and choose_result.cookies:
             unit_runtime.cookies.update(choose_result.cookies)
 
-        try:
-            refreshed_runtime = await self._browser_scraper.refresh_runtime_context(
-                unit_runtime
-            )
-        except LoginExpiredError as exc:
-            self._state_store.invalidate_bundle(account_id, target_shop_id)
-            error_text = str(exc).strip() or "login expired"
-            return {
-                "shop_id": target_shop_id,
-                "target_shop_id": target_shop_id,
-                "bootstrap_failed": True,
-                "status": "failed",
-                "error": error_text,
-                "error_code": "verify_login_expired",
-                "bootstrap_choose_status": "passed",
-                "bootstrap_verify_status": "failed",
-                "bootstrap_verify_actual_shop_id": "",
-                "bootstrap_verify_error_code": "verify_login_expired",
-            }
-        except Exception as exc:
-            self._state_store.invalidate_bundle(account_id, target_shop_id)
-            error_text = str(exc).strip() or "refresh_runtime_context_failed"
-            return {
-                "shop_id": target_shop_id,
-                "target_shop_id": target_shop_id,
-                "bootstrap_failed": True,
-                "status": "failed",
-                "error": error_text,
-                "error_code": "verify_request_failed",
-                "bootstrap_choose_status": "passed",
-                "bootstrap_verify_status": "failed",
-                "bootstrap_verify_actual_shop_id": "",
-                "bootstrap_verify_error_code": "verify_request_failed",
-            }
-
-        refreshed_runtime = _with_target_shop_query(refreshed_runtime, target_shop_id)
         verify_result = await self._verify_shop_context(
-            runtime=refreshed_runtime,
+            runtime=unit_runtime,
             target_shop_id=target_shop_id,
             verify_metric_date=metric_date,
         )
@@ -274,8 +232,8 @@ class SessionBootstrapper:
 
         verified_at = datetime.now(UTC).isoformat()
         bundle = {
-            "cookies": dict(refreshed_runtime.cookies),
-            "common_query": dict(refreshed_runtime.common_query),
+            "cookies": dict(unit_runtime.cookies),
+            "common_query": dict(unit_runtime.common_query),
             "validated_shop_id": target_shop_id,
             "verified_actual_shop_id": verify_result.actual_shop_id,
             "verify_status": "passed",

@@ -108,7 +108,6 @@ def _install_fake_collection_usecase(monkeypatch):
                 redis_client=redis_client,
                 task_name="sync_shop_dashboard",
             )
-            browser = module.BrowserScraper()
             lock_manager = _FakeLockManager()
             login_state_manager = _FakeLoginStateManager(
                 state_store=state_store,
@@ -150,7 +149,6 @@ def _install_fake_collection_usecase(monkeypatch):
                         collected = module._collect_one_day(
                             unit_runtime,
                             plan_unit.metric_date,
-                            browser,
                             lock_manager=lock_manager,
                             state_store=state_store,
                             login_state_manager=login_state_manager,
@@ -159,7 +157,6 @@ def _install_fake_collection_usecase(monkeypatch):
                         collected = module._collect_one_day(
                             unit_runtime,
                             plan_unit.metric_date,
-                            browser,
                         )
                     module._run_async(
                         module._persist_result(
@@ -212,11 +209,6 @@ class _FakeHttpScraper:
         return None
 
 
-class _FakeBrowserScraper:
-    def retry_http(self, _scraper, _runtime, _metric_date):
-        raise ScrapingFailedException("browser failed")
-
-
 def _build_runtime() -> ShopDashboardRuntimeConfig:
     return ShopDashboardRuntimeConfig(
         shop_mode="EXACT",
@@ -243,7 +235,7 @@ def _build_runtime() -> ShopDashboardRuntimeConfig:
         dedupe_key=None,
         rule_id=2,
         execution_id="exec-pipeline",
-        fallback_chain=("http", "browser", "llm"),
+        fallback_chain=("http", "agent"),
         graphql_query=None,
         common_query={},
         token_keys=[],
@@ -259,7 +251,7 @@ async def _fake_persist(*_args, **_kwargs):
     return None
 
 
-def test_pipeline_http_fail_then_browser_then_llm(monkeypatch):
+def test_pipeline_http_fail_then_llm(monkeypatch):
     _install_fake_collection_usecase(monkeypatch)
     monkeypatch.setattr(
         module.sync_shop_dashboard,
@@ -274,7 +266,6 @@ def test_pipeline_http_fail_then_browser_then_llm(monkeypatch):
         raising=False,
     )
     monkeypatch.setattr(module, "HttpScraper", _FakeHttpScraper)
-    monkeypatch.setattr(module, "BrowserScraper", _FakeBrowserScraper)
     monkeypatch.setattr(module, "_load_runtime_config", _fake_runtime_loader)
     monkeypatch.setattr(module, "_persist_result", _fake_persist)
 
@@ -300,14 +291,12 @@ def test_pipeline_http_fail_then_browser_then_llm(monkeypatch):
     )
 
     assert result["items"][0]["source"] == "llm"
-    assert result["items"][0]["retry_count"] == 2
-    assert len(result["items"][0]["fallback_trace"]) == 3
+    assert result["items"][0]["retry_count"] == 1
+    assert len(result["items"][0]["fallback_trace"]) == 2
     assert result["items"][0]["fallback_trace"][0]["stage"] == "http"
     assert result["items"][0]["fallback_trace"][0]["status"] == "failed"
-    assert result["items"][0]["fallback_trace"][1]["stage"] == "browser"
-    assert result["items"][0]["fallback_trace"][1]["status"] == "failed"
-    assert result["items"][0]["fallback_trace"][2]["stage"] in {"llm", "agent"}
-    assert result["items"][0]["fallback_trace"][2]["status"] == "success"
+    assert result["items"][0]["fallback_trace"][1]["stage"] in {"llm", "agent"}
+    assert result["items"][0]["fallback_trace"][1]["status"] == "success"
 
 
 def test_pipeline_cookie_only_http_success(monkeypatch):
@@ -326,7 +315,6 @@ def test_pipeline_cookie_only_http_success(monkeypatch):
     )
     monkeypatch.setattr(module, "_load_runtime_config", _fake_runtime_loader)
     monkeypatch.setattr(module, "_persist_result", _fake_persist)
-    monkeypatch.setattr(module, "BrowserScraper", lambda: _FakeBrowserScraper())
 
     class _SuccessHttpScraper:
         def __init__(self, **_kwargs):
@@ -419,7 +407,6 @@ def test_pipeline_rule_config_fields_flow_into_plan_and_query_context(monkeypatc
     def _fake_collect_one_day(
         runtime_config,
         metric_date,
-        _browser,
         *,
         lock_manager,
         state_store,
@@ -465,7 +452,6 @@ def test_pipeline_rule_config_fields_flow_into_plan_and_query_context(monkeypatc
     monkeypatch.setattr(module, "_load_runtime_config", _fake_runtime_loader)
     monkeypatch.setattr(module, "_collect_one_day", _fake_collect_one_day)
     monkeypatch.setattr(module, "_persist_result", _fake_persist)
-    monkeypatch.setattr(module, "BrowserScraper", lambda: object())
 
     result = module.sync_shop_dashboard(
         data_source_id=1,
@@ -497,7 +483,6 @@ def test_pipeline_shop_id_fanout_for_rule_8_like_config(monkeypatch):
     def _fake_collect_one_day(
         runtime_config,
         metric_date,
-        _browser,
         *,
         lock_manager,
         state_store,
@@ -535,7 +520,6 @@ def test_pipeline_shop_id_fanout_for_rule_8_like_config(monkeypatch):
     monkeypatch.setattr(module, "_load_runtime_config", _fake_runtime_loader)
     monkeypatch.setattr(module, "_collect_one_day", _fake_collect_one_day)
     monkeypatch.setattr(module, "_persist_result", _fake_persist)
-    monkeypatch.setattr(module, "BrowserScraper", lambda: object())
 
     result = module.sync_shop_dashboard(
         data_source_id=1,

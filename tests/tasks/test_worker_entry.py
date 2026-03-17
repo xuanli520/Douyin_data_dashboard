@@ -62,15 +62,20 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
     )
 
     class _FakeThread:
-        def __init__(self, target, name):
+        def __init__(self, target, name, daemon=False):
             self._target = target
             self.name = name
+            self._started = False
 
         def start(self):
+            self._started = True
             self._target()
 
-        def join(self):
+        def join(self, timeout=None):
             return None
+
+        def is_alive(self):
+            return False
 
     monkeypatch.setattr(module, "Thread", _FakeThread)
 
@@ -102,15 +107,18 @@ def test_worker_run_all_waits_for_non_blocking_consumers(monkeypatch):
     )
 
     class _FakeThread:
-        def __init__(self, target, name):
+        def __init__(self, target, name, daemon=False):
             self._target = target
             self.name = name
 
         def start(self):
             self._target()
 
-        def join(self):
+        def join(self, timeout=None):
             return None
+
+        def is_alive(self):
+            return False
 
     monkeypatch.setattr(module, "Thread", _FakeThread)
     monkeypatch.setattr(module, "_wait_forever", lambda: calls.append("wait_forever"))
@@ -118,6 +126,41 @@ def test_worker_run_all_waits_for_non_blocking_consumers(monkeypatch):
     module.run_all(etl_processes=2)
 
     assert calls == ["consume_started", "wait_forever"]
+
+
+def test_worker_run_all_keeps_parent_alive_when_multiprocess_runner_returns(
+    monkeypatch,
+):
+    from src.tasks import worker as module
+
+    calls = []
+
+    monkeypatch.setattr(
+        module,
+        "_queue_runners",
+        lambda _etl_processes: {"etl_orders": lambda: calls.append("etl_orders")},
+    )
+
+    class _FakeThread:
+        def __init__(self, target, name, daemon=False):
+            self._target = target
+            self.name = name
+
+        def start(self):
+            self._target()
+
+        def join(self, timeout=None):
+            return None
+
+        def is_alive(self):
+            return False
+
+    monkeypatch.setattr(module, "Thread", _FakeThread)
+    monkeypatch.setattr(module, "_wait_forever", lambda: calls.append("wait_forever"))
+
+    module.run_all(etl_processes=2)
+
+    assert calls == ["etl_orders", "wait_forever"]
 
 
 def test_worker_run_queue_supports_dead_letter_queue(monkeypatch):
