@@ -20,6 +20,15 @@ default:
     uv run --frozen pytest -q
     just check
 
+@migration-ci:
+    uv run alembic upgrade head
+    uv run alembic current --check-heads
+    uv run alembic check
+    uv run alembic downgrade base
+    uv run alembic upgrade head
+    uv run alembic current --check-heads
+    uv run alembic check
+
 @arch-check:
     uv run --frozen pytest -q tests/architecture/test_layer_boundaries.py
 

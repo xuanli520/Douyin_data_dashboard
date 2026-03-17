@@ -43,7 +43,6 @@ class TaskExecution(SQLModel, TimestampMixin, table=True):
     id: int | None = Field(default=None, primary_key=True)
     task_id: int = Field(
         foreign_key="task_definitions.id",
-        index=True,
         ondelete="CASCADE",
     )
     queue_task_id: str | None = Field(default=None, max_length=100)
