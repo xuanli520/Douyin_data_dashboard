@@ -7,10 +7,7 @@ from sqlmodel import SQLModel
 
 from alembic import context
 from src.config import get_settings
-
-from src.auth.models import User  # noqa: F401
-from src.audit.schemas import AuditLog  # noqa: F401
-from src.domains.data_source.models import DataSource, ScrapingRule  # noqa: F401
+from src.session import _load_sqlmodel_models
 
 config = context.config
 
@@ -19,9 +16,10 @@ settings = get_settings()
 config.set_main_option("sqlalchemy.url", settings.db.url)
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = SQLModel.metadata
+_load_sqlmodel_models()
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

@@ -1,9 +1,18 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from src.auth import current_user, User
-from src.auth.rbac import require_permissions
 from src.auth.permissions import SchedulePermission
+from src.auth.rbac import require_permissions
 from src.core.endpoint_status import in_development
+from src.domains.collection_job.schemas import (
+    CollectionJobResponse,
+    CollectionJobUpdate,
+)
+from src.domains.collection_job.services import (
+    CollectionJobService,
+    get_collection_job_service,
+)
+from src.responses.base import Response
 
 router = APIRouter(prefix="/schedules", tags=["schedules"])
 
@@ -40,3 +49,30 @@ async def list_schedules(
     _=Depends(require_permissions(SchedulePermission.VIEW, bypass_superuser=True)),
 ):
     pass
+
+
+@router.put("/{schedule_id}", response_model=Response[CollectionJobResponse])
+async def update_schedule(
+    schedule_id: int,
+    payload: CollectionJobUpdate,
+    service: CollectionJobService = Depends(get_collection_job_service),
+    user: User = Depends(current_user),
+    _=Depends(require_permissions(SchedulePermission.UPDATE, bypass_superuser=True)),
+) -> Response[CollectionJobResponse]:
+    updated = await service.update_job(schedule_id, payload)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return Response.success(data=updated)
+
+
+@router.delete("/{schedule_id}", response_model=Response[None])
+async def delete_schedule(
+    schedule_id: int,
+    service: CollectionJobService = Depends(get_collection_job_service),
+    user: User = Depends(current_user),
+    _=Depends(require_permissions(SchedulePermission.DELETE, bypass_superuser=True)),
+) -> Response[None]:
+    deleted = await service.delete_job(schedule_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return Response.success()

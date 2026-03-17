@@ -13,6 +13,8 @@ from src.domains.data_import.repository import (
     DataImportRecordRepository,
     DataImportDetailRepository,
 )
+from src.exceptions import BusinessException
+from src.shared.errors import ErrorCode
 
 
 class ImportService:
@@ -81,7 +83,11 @@ class ImportService:
     async def parse_file(self, import_id: int) -> list[dict[str, Any]]:
         record = await self.repo.get_by_id(import_id)
         if not record:
-            raise ValueError("Import record not found")
+            raise BusinessException(
+                ErrorCode.DATA_IMPORT_RECORD_NOT_FOUND,
+                "Import record not found",
+                data={"import_id": import_id},
+            )
 
         if self.redis:
             try:
@@ -141,7 +147,11 @@ class ImportService:
     ) -> None:
         record = await self.repo.get_by_id(import_id)
         if not record:
-            raise ValueError("Import record not found")
+            raise BusinessException(
+                ErrorCode.DATA_IMPORT_RECORD_NOT_FOUND,
+                "Import record not found",
+                data={"import_id": import_id},
+            )
 
         mapper = FieldMapper()
         mapper.set_target_fields(target_fields)
@@ -161,7 +171,11 @@ class ImportService:
     ) -> dict[str, Any]:
         record = await self.repo.get_by_id(import_id)
         if not record:
-            raise ValueError("Import record not found")
+            raise BusinessException(
+                ErrorCode.DATA_IMPORT_RECORD_NOT_FOUND,
+                "Import record not found",
+                data={"import_id": import_id},
+            )
 
         await self.repo.update_status(import_id, ImportStatus.PROCESSING)
         await self.session.commit()
@@ -193,20 +207,40 @@ class ImportService:
     ) -> dict[str, Any]:
         record = await self.repo.get_by_id(import_id)
         if not record:
-            raise ValueError("Import record not found")
+            raise BusinessException(
+                ErrorCode.DATA_IMPORT_RECORD_NOT_FOUND,
+                "Import record not found",
+                data={"import_id": import_id},
+            )
 
         if record.status == ImportStatus.CANCELLED:
-            raise ValueError("Import was cancelled")
+            raise BusinessException(
+                ErrorCode.DATA_IMPORT_INVALID_STATUS,
+                "Import was cancelled",
+                data={"import_id": import_id, "status": record.status.value},
+            )
 
         if record.status == ImportStatus.PROCESSING:
-            raise ValueError("Import is processing")
+            raise BusinessException(
+                ErrorCode.DATA_IMPORT_INVALID_STATUS,
+                "Import is processing",
+                data={"import_id": import_id, "status": record.status.value},
+            )
 
         if record.status in [ImportStatus.SUCCESS, ImportStatus.PARTIAL]:
             if (record.success_rows or 0) > 0 or (record.failed_rows or 0) > 0:
-                raise ValueError("Import has already been completed")
+                raise BusinessException(
+                    ErrorCode.DATA_IMPORT_INVALID_STATUS,
+                    "Import has already been completed",
+                    data={"import_id": import_id, "status": record.status.value},
+                )
 
         if record.status == ImportStatus.FAILED:
-            raise ValueError("Import has failed")
+            raise BusinessException(
+                ErrorCode.DATA_IMPORT_INVALID_STATUS,
+                "Import has failed",
+                data={"import_id": import_id, "status": record.status.value},
+            )
 
         batch_size = batch_size or self.DEFAULT_BATCH_SIZE
 

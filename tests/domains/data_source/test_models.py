@@ -1,6 +1,7 @@
 from sqlalchemy import select
 
-from src.domains.data_source.models import DataSource, ScrapingRule
+from src.domains.data_source.models import DataSource
+from src.domains.scraping_rule.models import ScrapingRule
 from src.domains.data_source.enums import (
     DataSourceStatus,
     DataSourceType,
@@ -13,6 +14,18 @@ from src.domains.data_source.enums import (
 
 
 class TestDataSourceModel:
+    def test_datasource_model_fields_exclude_legacy_login_columns(self):
+        legacy_fields = {
+            "cookies",
+            "proxy",
+            "api_key",
+            "api_secret",
+            "access_token",
+            "refresh_token",
+            "token_expires_at",
+        }
+        assert legacy_fields.isdisjoint(DataSource.model_fields)
+
     async def test_create_data_source(self, test_db):
         async with test_db() as session:
             ds = DataSource(
@@ -20,14 +33,6 @@ class TestDataSourceModel:
                 description="Test data source for Douyin shop",
                 source_type=DataSourceType.DOUYIN_SHOP,
                 status=DataSourceStatus.ACTIVE,
-                shop_id="1234567890",
-                account_name="Test Account",
-                cookies="test_cookie_data",
-                proxy="http://proxy.example.com:8080",
-                api_key="test_api_key",
-                api_secret="test_api_secret",
-                access_token="test_access_token",
-                refresh_token="test_refresh_token",
                 rate_limit=100,
                 retry_count=3,
                 timeout=30,
@@ -39,7 +44,6 @@ class TestDataSourceModel:
 
             assert ds.id is not None
             assert ds.name == "Test Douyin Shop"
-            assert ds.shop_id == "1234567890"
             assert ds.source_type == DataSourceType.DOUYIN_SHOP
             assert ds.status == DataSourceStatus.ACTIVE
             assert ds.created_at is not None
@@ -63,7 +67,7 @@ class TestDataSourceModel:
 class TestScrapingRuleModel:
     async def test_create_scraping_rule_shop_overview(self, test_db):
         async with test_db() as session:
-            ds = DataSource(name="Test DS", shop_id="1234567890")
+            ds = DataSource(name="Test DS")
             session.add(ds)
             await session.commit()
             await session.refresh(ds)
@@ -77,7 +81,6 @@ class TestScrapingRuleModel:
                 granularity=Granularity.DAY,
                 timezone="Asia/Shanghai",
                 time_range={"type": "relative_days", "days": 30},
-                schedule={"freq": "daily", "run_at": "02:30"},
                 incremental_mode=IncrementalMode.BY_DATE,
                 backfill_last_n_days=3,
                 dimensions=["date"],
@@ -108,12 +111,11 @@ class TestScrapingRuleModel:
             assert rule.granularity == Granularity.DAY
             assert rule.timezone == "Asia/Shanghai"
             assert rule.time_range["type"] == "relative_days"
-            assert rule.schedule["freq"] == "daily"
             assert rule.backfill_last_n_days == 3
 
     async def test_create_scraping_rule_traffic(self, test_db):
         async with test_db() as session:
-            ds = DataSource(name="Test DS", shop_id="1234567890")
+            ds = DataSource(name="Test DS")
             session.add(ds)
             await session.commit()
             await session.refresh(ds)
@@ -136,7 +138,7 @@ class TestScrapingRuleModel:
 
     async def test_create_scraping_rule_product(self, test_db):
         async with test_db() as session:
-            ds = DataSource(name="Test DS", shop_id="1234567890")
+            ds = DataSource(name="Test DS")
             session.add(ds)
             await session.commit()
             await session.refresh(ds)
@@ -163,7 +165,7 @@ class TestScrapingRuleModel:
 
     async def test_create_scraping_rule_live(self, test_db):
         async with test_db() as session:
-            ds = DataSource(name="Test DS", shop_id="1234567890")
+            ds = DataSource(name="Test DS")
             session.add(ds)
             await session.commit()
             await session.refresh(ds)
@@ -187,7 +189,7 @@ class TestScrapingRuleModel:
 
     async def test_create_scraping_rule_aftersale_refund(self, test_db):
         async with test_db() as session:
-            ds = DataSource(name="Test DS", shop_id="1234567890")
+            ds = DataSource(name="Test DS")
             session.add(ds)
             await session.commit()
             await session.refresh(ds)
@@ -212,7 +214,7 @@ class TestScrapingRuleModel:
 
     async def test_create_scraping_rule_ads(self, test_db):
         async with test_db() as session:
-            ds = DataSource(name="Test DS", shop_id="1234567890")
+            ds = DataSource(name="Test DS")
             session.add(ds)
             await session.commit()
             await session.refresh(ds)
@@ -263,7 +265,7 @@ class TestScrapingRuleModel:
 class TestDataSourceScrapingRuleRelationship:
     async def test_one_to_many_relationship(self, test_db):
         async with test_db() as session:
-            ds = DataSource(name="Test DS with Rules", shop_id="123")
+            ds = DataSource(name="Test DS with Rules")
             session.add(ds)
             await session.commit()
             await session.refresh(ds)

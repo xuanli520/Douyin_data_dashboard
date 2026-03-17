@@ -89,6 +89,23 @@ class TestRateLimitExceeded:
             response = await client.get("/api/secure")
             assert response.status_code == 429
 
+    @pytest.mark.asyncio
+    async def test_endpoint_specific_limit_with_same_timestamp(
+        self, monkeypatch, rate_limited_app, fake_redis
+    ):
+        from src.middleware import rate_limit as rate_limit_module
+
+        monkeypatch.setattr(rate_limit_module.time, "time", lambda: 1700000000.0)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=rate_limited_app), base_url="http://test"
+        ) as client:
+            first = await client.get("/api/secure")
+            second = await client.get("/api/secure")
+
+        assert first.status_code == 200
+        assert second.status_code == 429
+
 
 class TestRateLimitPerClient:
     @pytest.mark.asyncio

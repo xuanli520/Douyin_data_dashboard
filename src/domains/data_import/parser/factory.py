@@ -1,6 +1,9 @@
 from pathlib import Path
 from typing import Generator, Callable
 
+from src.exceptions import BusinessException
+from src.shared.errors import ErrorCode
+
 
 class FileParser:
     SUPPORTED_FORMATS = {".csv", ".xlsx"}
@@ -30,7 +33,11 @@ class FileParser:
                 self.sheet_name,
                 self.progress_callback,
             )
-        raise ValueError(f"Unsupported file format: {ext}")
+        raise BusinessException(
+            ErrorCode.DATA_IMPORT_UNSUPPORTED_FILE_FORMAT,
+            f"Unsupported file format: {ext}",
+            data={"extension": ext},
+        )
 
     def parse(
         self,

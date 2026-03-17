@@ -14,7 +14,8 @@ COPY . .
 
 RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple \
     && python -m pip install --upgrade pip setuptools wheel \
-    && pip install --no-cache-dir .
+    && pip install --no-cache-dir . \
+    && python -m playwright install --with-deps chromium
 
 EXPOSE 8000
 

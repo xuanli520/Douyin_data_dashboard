@@ -281,17 +281,20 @@ class TestEventInheritance:
 
 class TestEventEquality:
     def test_events_with_same_values_are_not_equal(self):
+        same_time = datetime(2026, 3, 6, 12, 0, 0, tzinfo=timezone.utc)
         event1 = DataSourceCreatedEvent(
             data_source_id=1,
             name="Test",
             source_type=DataSourceType.DOUYIN_SHOP,
             status=DataSourceStatus.ACTIVE,
+            occurred_at=same_time,
         )
         event2 = DataSourceCreatedEvent(
             data_source_id=1,
             name="Test",
             source_type=DataSourceType.DOUYIN_SHOP,
             status=DataSourceStatus.ACTIVE,
+            occurred_at=same_time,
         )
 
         assert event1 != event2

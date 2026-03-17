@@ -35,11 +35,130 @@ http_exceptions_total = Counter(
     ["method", "endpoint", "exception_type"],
 )
 
+shop_dashboard_collection_total = Counter(
+    "shop_dashboard_collection_total",
+    "Shop dashboard collection task total",
+    [
+        "source",
+        "status",
+        "shop_mode",
+        "shop_resolve_source",
+        "bootstrap_status",
+        "circuit_break_status",
+    ],
+)
+
+shop_dashboard_collection_duration_seconds = Histogram(
+    "shop_dashboard_collection_duration_seconds",
+    "Shop dashboard collection task duration in seconds",
+    [
+        "source",
+        "status",
+        "shop_mode",
+        "shop_resolve_source",
+        "bootstrap_status",
+        "circuit_break_status",
+    ],
+)
+
+shop_dashboard_bootstrap_verify_failed_total = Counter(
+    "shop_dashboard_bootstrap_verify_failed_total",
+    "Shop dashboard bootstrap verify failed count",
+    ["error_code"],
+)
+
+shop_dashboard_account_switch_unsupported_total = Counter(
+    "shop_dashboard_account_switch_unsupported_total",
+    "Shop dashboard account switch unsupported count",
+)
+
+shop_dashboard_redis_degraded_total = Counter(
+    "shop_dashboard_redis_degraded_total",
+    "Shop dashboard redis degraded to null client count",
+    ["component"],
+)
+
+shop_dashboard_score_upsert_total = Counter(
+    "shop_dashboard_score_upsert_total",
+    "Shop dashboard score upsert total",
+    ["insert_or_update", "shop_id", "metric_date"],
+)
+
 PATH_PARAMETER_PATTERN = re.compile(r"/(?:\d+|[0-9a-fA-F-]{36})")
 
 
 def normalize_path(path: str) -> str:
     return PATH_PARAMETER_PATTERN.sub("/{}", path)
+
+
+def observe_shop_dashboard_collection(
+    *,
+    source: str,
+    status: str,
+    duration_seconds: float,
+    shop_mode: str = "unknown",
+    shop_resolve_source: str = "unknown",
+    bootstrap_status: str = "unknown",
+    circuit_break_status: str = "unknown",
+) -> None:
+    safe_source = source if source else "unknown"
+    safe_status = status if status else "unknown"
+    safe_shop_mode = shop_mode if shop_mode else "unknown"
+    safe_shop_resolve_source = shop_resolve_source if shop_resolve_source else "unknown"
+    safe_bootstrap_status = bootstrap_status if bootstrap_status else "unknown"
+    safe_circuit_break_status = (
+        circuit_break_status if circuit_break_status else "unknown"
+    )
+    shop_dashboard_collection_total.labels(
+        source=safe_source,
+        status=safe_status,
+        shop_mode=safe_shop_mode,
+        shop_resolve_source=safe_shop_resolve_source,
+        bootstrap_status=safe_bootstrap_status,
+        circuit_break_status=safe_circuit_break_status,
+    ).inc()
+    shop_dashboard_collection_duration_seconds.labels(
+        source=safe_source,
+        status=safe_status,
+        shop_mode=safe_shop_mode,
+        shop_resolve_source=safe_shop_resolve_source,
+        bootstrap_status=safe_bootstrap_status,
+        circuit_break_status=safe_circuit_break_status,
+    ).observe(max(duration_seconds, 0.0))
+
+
+def observe_shop_dashboard_bootstrap_verify_failed(*, error_code: str) -> None:
+    safe_error_code = error_code if error_code else "unknown"
+    shop_dashboard_bootstrap_verify_failed_total.labels(
+        error_code=safe_error_code
+    ).inc()
+
+
+def observe_shop_dashboard_account_switch_unsupported() -> None:
+    shop_dashboard_account_switch_unsupported_total.inc()
+
+
+def observe_shop_dashboard_redis_degraded(*, component: str) -> None:
+    safe_component = component if component else "unknown"
+    shop_dashboard_redis_degraded_total.labels(component=safe_component).inc()
+
+
+def observe_shop_dashboard_score_upsert(
+    *,
+    insert_or_update: str,
+    shop_id: str,
+    metric_date: str,
+) -> None:
+    safe_insert_or_update = (
+        insert_or_update if insert_or_update in {"insert", "update"} else "update"
+    )
+    safe_shop_id = shop_id if shop_id else "unknown"
+    safe_metric_date = metric_date if metric_date else "unknown"
+    shop_dashboard_score_upsert_total.labels(
+        insert_or_update=safe_insert_or_update,
+        shop_id=safe_shop_id,
+        metric_date=safe_metric_date,
+    ).inc()
 
 
 class MonitorMiddleware(BaseHTTPMiddleware):

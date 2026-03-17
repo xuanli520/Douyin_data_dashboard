@@ -5,10 +5,8 @@ from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 from src.domains.data_source.enums import DataSourceStatus, DataSourceType
 from src.domains.data_source.models import DataSource
-from src.domains.data_source.repository import (
-    DataSourceRepository,
-    ScrapingRuleRepository,
-)
+from src.domains.data_source.repository import DataSourceRepository
+from src.domains.scraping_rule.repository import ScrapingRuleRepository
 from src.exceptions import BusinessException
 from src.shared.errors import ErrorCode
 
@@ -63,7 +61,6 @@ class TestDataSourceRepositoryIntegration:
                 "description": "Test description",
                 "source_type": DataSourceType.DOUYIN_SHOP,
                 "status": DataSourceStatus.ACTIVE,
-                "shop_id": "123456",
             }
             ds = await repo.create(data)
 
@@ -299,27 +296,6 @@ class TestDataSourceRepositoryIntegration:
             shop_items = await repo.get_by_type(DataSourceType.DOUYIN_SHOP)
             assert len(shop_items) == 1
             assert shop_items[0].name == "Douyin Shop"
-
-    async def test_get_by_shop_id(self, test_db):
-        async with test_db() as session:
-            repo = DataSourceRepository(session)
-            await repo.create(
-                {
-                    "name": "Shop DS",
-                    "source_type": DataSourceType.DOUYIN_SHOP,
-                    "shop_id": "SHOP123",
-                }
-            )
-
-            found = await repo.get_by_shop_id("SHOP123")
-            assert found is not None
-            assert found.name == "Shop DS"
-
-    async def test_get_by_shop_id_not_found(self, test_db):
-        async with test_db() as session:
-            repo = DataSourceRepository(session)
-            found = await repo.get_by_shop_id("NONEXISTENT")
-            assert found is None
 
     async def test_update_status(self, test_db):
         async with test_db() as session:

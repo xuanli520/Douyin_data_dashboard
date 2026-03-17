@@ -15,6 +15,10 @@ class CacheSettings(BaseSettings):
     socket_connect_timeout: int = 5
     max_connections: int = 50
     retry_on_timeout: bool = True
+    experience_metrics_ttl_seconds: int = 3600
+    experience_dashboard_ttl_seconds: int = 1800
+    experience_issues_ttl_seconds: int = 300
+    experience_cache_index_ttl_seconds: int = 7200
 
     @property
     def url(self) -> str:

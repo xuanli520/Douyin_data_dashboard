@@ -1,6 +1,6 @@
 from typing import Any
 
-from src.domains.data_source.models import ScrapingRule
+from src.domains.scraping_rule.models import ScrapingRule
 
 
 class ScrapingRuleConfigMapper:
@@ -14,6 +14,7 @@ class ScrapingRuleConfigMapper:
         "status",
         "created_at",
         "updated_at",
+        "version",
         "last_executed_at",
         "last_execution_id",
         "data_source",

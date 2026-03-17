@@ -17,6 +17,8 @@ class DataImportPermission:
 class TaskPermission:
     VIEW = "task:view"
     CREATE = "task:create"
+    UPDATE = "task:update"
+    DELETE = "task:delete"
     EXECUTE = "task:execute"
     CANCEL = "task:cancel"
 
@@ -40,6 +42,12 @@ class ExperiencePermission:
 
 class DashboardPermission:
     VIEW = "dashboard:view"
+
+
+class ShopDashboardPermission:
+    TRIGGER = "shop_dashboard:trigger"
+    STATUS = "shop_dashboard:status"
+    QUERY = "shop_dashboard:query"
 
 
 class OrderPermission:
@@ -72,6 +80,8 @@ class ExportPermission:
 
 class SchedulePermission:
     VIEW = "schedule:view"
+    UPDATE = "schedule:update"
+    DELETE = "schedule:delete"
 
 
 class AnalysisPermission:

@@ -229,14 +229,13 @@ class TestAlertsRBAC:
 
 
 class TestShopsRBAC:
-    @pytest.mark.asyncio
-    async def test_shops_requires_permission(self, api_client):
-        response = await api_client.get("/api/v1/shops")
-        assert response.status_code == 401
+    SHOPS_QUERY_PATH = (
+        "/api/v1/shops?shop_id=shop-1&start_date=2026-03-01&end_date=2026-03-03"
+    )
 
     @pytest.mark.asyncio
-    async def test_shop_score_requires_permission(self, api_client):
-        response = await api_client.get("/api/v1/shops/1/score")
+    async def test_shops_requires_permission(self, api_client):
+        response = await api_client.get(self.SHOPS_QUERY_PATH)
         assert response.status_code == 401
 
     @pytest.mark.asyncio
@@ -244,17 +243,7 @@ class TestShopsRBAC:
         headers = await get_auth_headers(
             api_client, "shopuser@example.com", "shopuser123"
         )
-        response = await api_client.get("/api/v1/shops", headers=headers)
-        assert response.status_code == 200
-        data = response.json()
-        assert "data" in data
-
-    @pytest.mark.asyncio
-    async def test_shop_score_with_permission(self, api_client, permission_data):
-        headers = await get_auth_headers(
-            api_client, "shopuser@example.com", "shopuser123"
-        )
-        response = await api_client.get("/api/v1/shops/1/score", headers=headers)
+        response = await api_client.get(self.SHOPS_QUERY_PATH, headers=headers)
         assert response.status_code == 200
         data = response.json()
         assert "data" in data
@@ -264,7 +253,7 @@ class TestShopsRBAC:
         headers = await get_auth_headers(
             api_client, "superuser@example.com", "superuser123"
         )
-        response = await api_client.get("/api/v1/shops", headers=headers)
+        response = await api_client.get(self.SHOPS_QUERY_PATH, headers=headers)
         assert response.status_code == 200
 
 
@@ -387,52 +376,47 @@ class TestAnalysisRBAC:
 
 class TestTaskRBAC:
     @pytest.mark.asyncio
-    async def test_collection_orders_trigger_requires_permission(self, api_client):
+    async def test_list_tasks_requires_permission(self, api_client):
+        response = await api_client.get("/api/v1/tasks")
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_create_task_requires_permission(self, api_client):
         response = await api_client.post(
-            "/api/v1/tasks/collection/orders/trigger",
-            json={"shop_id": "shop-1", "date": "2026-03-03"},
+            "/api/v1/tasks",
+            json={
+                "name": "orders-task",
+                "task_type": "ETL_ORDERS",
+            },
         )
         assert response.status_code == 401
 
     @pytest.mark.asyncio
-    async def test_collection_products_trigger_requires_permission(self, api_client):
-        response = await api_client.post(
-            "/api/v1/tasks/collection/products/trigger",
-            json={"shop_id": "shop-1", "date": "2026-03-03"},
+    async def test_task_executions_requires_permission(self, api_client):
+        response = await api_client.get("/api/v1/tasks/1/executions")
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_list_tasks_with_permission(self, api_client, permission_data):
+        headers = await get_auth_headers(
+            api_client, "shopuser@example.com", "shopuser123"
         )
-        assert response.status_code == 401
+        response = await api_client.get("/api/v1/tasks", headers=headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert "data" in data
 
     @pytest.mark.asyncio
-    async def test_etl_orders_trigger_requires_permission(self, api_client):
-        response = await api_client.post(
-            "/api/v1/tasks/etl/orders/trigger",
-            json={"batch_date": "2026-03-03"},
-        )
-        assert response.status_code == 401
-
-    @pytest.mark.asyncio
-    async def test_etl_products_trigger_requires_permission(self, api_client):
-        response = await api_client.post(
-            "/api/v1/tasks/etl/products/trigger",
-            json={"batch_date": "2026-03-03"},
-        )
-        assert response.status_code == 401
-
-    @pytest.mark.asyncio
-    async def test_task_status_requires_permission(self, api_client):
-        response = await api_client.get("/api/v1/task-status/task-id-1")
-        assert response.status_code == 401
-
-    @pytest.mark.asyncio
-    async def test_collection_orders_trigger_with_permission(
-        self, api_client, permission_data
-    ):
+    async def test_create_task_with_permission(self, api_client, permission_data):
         headers = await get_auth_headers(
             api_client, "shopuser@example.com", "shopuser123"
         )
         response = await api_client.post(
-            "/api/v1/tasks/collection/orders/trigger",
-            json={"shop_id": "shop-1", "date": "2026-03-03"},
+            "/api/v1/tasks",
+            json={
+                "name": "products-task",
+                "task_type": "ETL_PRODUCTS",
+            },
             headers=headers,
         )
         assert response.status_code == 200
@@ -440,47 +424,9 @@ class TestTaskRBAC:
         assert "data" in data
 
     @pytest.mark.asyncio
-    async def test_collection_products_trigger_with_permission(
-        self, api_client, permission_data
-    ):
-        headers = await get_auth_headers(
-            api_client, "shopuser@example.com", "shopuser123"
-        )
-        response = await api_client.post(
-            "/api/v1/tasks/collection/products/trigger",
-            json={"shop_id": "shop-1", "date": "2026-03-03"},
-            headers=headers,
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert "data" in data
-
-    @pytest.mark.asyncio
-    async def test_etl_orders_trigger_with_permission(
-        self, api_client, permission_data
-    ):
-        headers = await get_auth_headers(
-            api_client, "shopuser@example.com", "shopuser123"
-        )
-        response = await api_client.post(
-            "/api/v1/tasks/etl/orders/trigger",
-            json={"batch_date": "2026-03-03"},
-            headers=headers,
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert "data" in data
-
-    @pytest.mark.asyncio
-    async def test_collection_orders_trigger_superuser_bypass(
-        self, api_client, superuser_data
-    ):
+    async def test_list_tasks_superuser_bypass(self, api_client, superuser_data):
         headers = await get_auth_headers(
             api_client, "superuser@example.com", "superuser123"
         )
-        response = await api_client.post(
-            "/api/v1/tasks/collection/orders/trigger",
-            json={"shop_id": "shop-1", "date": "2026-03-03"},
-            headers=headers,
-        )
+        response = await api_client.get("/api/v1/tasks", headers=headers)
         assert response.status_code == 200

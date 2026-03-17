@@ -56,7 +56,11 @@ class DataImportRecordRepository(BaseRepository):
     async def update(self, record_id: int, data: dict) -> DataImportRecord:
         record = await self.get_by_id(record_id)
         if not record:
-            raise BusinessException(ErrorCode.NOT_FOUND, "DataImportRecord not found")
+            raise BusinessException(
+                ErrorCode.DATA_IMPORT_RECORD_NOT_FOUND,
+                "DataImportRecord not found",
+                data={"import_id": record_id},
+            )
 
         for key, value in data.items():
             if value is not UNSET:
@@ -68,7 +72,11 @@ class DataImportRecordRepository(BaseRepository):
     async def delete(self, record_id: int) -> None:
         record = await self.get_by_id(record_id)
         if not record:
-            raise BusinessException(ErrorCode.NOT_FOUND, "DataImportRecord not found")
+            raise BusinessException(
+                ErrorCode.DATA_IMPORT_RECORD_NOT_FOUND,
+                "DataImportRecord not found",
+                data={"import_id": record_id},
+            )
         await self._delete(record)
         await self.session.flush()
 
@@ -215,7 +223,11 @@ class DataImportDetailRepository(BaseRepository):
     ) -> DataImportDetail:
         detail = await self.get_by_id(detail_id)
         if not detail:
-            raise BusinessException(ErrorCode.NOT_FOUND, "DataImportDetail not found")
+            raise BusinessException(
+                ErrorCode.DATA_IMPORT_DETAIL_NOT_FOUND,
+                "DataImportDetail not found",
+                data={"detail_id": detail_id},
+            )
 
         detail.status = status
         detail.error_message = error_message

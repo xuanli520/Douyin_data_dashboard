@@ -11,18 +11,13 @@ from src.api import (
     monitor_router,
     data_source_router,
     scraping_rule_router,
+    collection_job_router,
     data_import_router,
     task_router,
-    task_status_router,
     alerts_router,
     shops_router,
     metrics_router,
     experience_router,
-    dashboard_router,
-    orders_router,
-    products_router,
-    sales_router,
-    after_sales_router,
     notifications_router,
     reports_router,
     exports_router,
@@ -40,6 +35,7 @@ from src.middleware.cors import get_cors_middleware
 from src.middleware.monitor import MonitorMiddleware
 from src.middleware.rate_limit import RateLimitMiddleware
 from src.responses.middleware import ResponseWrapperMiddleware
+from src.tasks.bootstrap import build_task_dispatcher_registry
 
 from .session import close_db, init_db
 
@@ -67,6 +63,7 @@ async def lifespan(app: FastAPI):
 
     await seed_permissions()
     await seed_admin_role_permissions()
+    app.state.task_dispatcher_registry = build_task_dispatcher_registry()
 
     async def add_redis_to_request(request: Request):
         cache = get_cache()
@@ -106,20 +103,15 @@ def create_app() -> FastAPI:
     app.include_router(admin_router, prefix="/api/v1", tags=["admin"])
     app.include_router(data_source_router, prefix="/api/v1", tags=["data-source"])
     app.include_router(scraping_rule_router, prefix="/api/v1", tags=["scraping-rule"])
+    app.include_router(collection_job_router, prefix="/api/v1", tags=["collection-job"])
     app.include_router(core_router)
     app.include_router(monitor_router, prefix="/monitor")
     app.include_router(data_import_router, prefix="/api/v1", tags=["data-import"])
     app.include_router(task_router, prefix="/api/v1", tags=["task"])
-    app.include_router(task_status_router, prefix="/api/v1", tags=["task-status"])
     app.include_router(alerts_router, prefix="/api/v1", tags=["alerts"])
     app.include_router(shops_router, prefix="/api/v1", tags=["shops"])
     app.include_router(metrics_router, prefix="/api/v1", tags=["metrics"])
     app.include_router(experience_router, prefix="/api/v1", tags=["experience"])
-    app.include_router(dashboard_router, prefix="/api/v1", tags=["dashboard"])
-    app.include_router(orders_router, prefix="/api/v1", tags=["orders"])
-    app.include_router(products_router, prefix="/api/v1", tags=["products"])
-    app.include_router(sales_router, prefix="/api/v1", tags=["sales"])
-    app.include_router(after_sales_router, prefix="/api/v1", tags=["after-sales"])
     app.include_router(notifications_router, prefix="/api/v1", tags=["notifications"])
     app.include_router(reports_router, prefix="/api/v1", tags=["reports"])
     app.include_router(exports_router, prefix="/api/v1", tags=["exports"])

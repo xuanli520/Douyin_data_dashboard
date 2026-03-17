@@ -129,14 +129,6 @@ def assert_contract(payload: dict):
 @pytest.mark.parametrize(
     "path",
     [
-        "/api/v1/shops?page=1&size=5",
-        "/api/v1/metrics/risk",
-        "/api/v1/experience/overview",
-        "/api/v1/dashboard/overview",
-        "/api/v1/orders/trend",
-        "/api/v1/products/ranking",
-        "/api/v1/sales/by-channel",
-        "/api/v1/after-sales/refund-rate",
         "/api/v1/alerts?page=1&size=5",
         "/api/v1/reports?page=1&size=5",
         "/api/v1/exports?page=1&size=5",

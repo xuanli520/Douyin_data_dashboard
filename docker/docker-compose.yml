@@ -1,6 +1,29 @@
 version: '3.9'
 
 services:
+  migrate:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: fastapi-boilerplate:latest
+    env_file:
+      - ../.env
+    environment:
+      DB__DRIVER: postgresql
+      DB__HOST: db
+      DB__PORT: 5432
+      RUN_DB_MIGRATIONS: "1"
+      WAIT_FOR_CACHE: "0"
+    command: ["sh", "-c", "echo migrations completed"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "3m"
+        max-file: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+
   app:
     build:
       context: ..
@@ -8,35 +31,130 @@ services:
     image: fastapi-boilerplate:latest
     env_file:
       - ../.env
+    environment:
+      DB__DRIVER: postgresql
+      DB__HOST: db
+      DB__PORT: 5432
+      CACHE__BACKEND: redis
+      CACHE__HOST: redis
+      CACHE__PORT: 6379
+      RUN_DB_MIGRATIONS: "0"
     ports:
-      - "8000:8000"
+      - "${APP_EXPOSE_PORT:-8000}:8000"
+    logging:
+      driver: json-file
+      options:
+        max-size: "3m"
+        max-file: "1"
     depends_on:
-      - db
-      - redis
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: fastapi-boilerplate:latest
+    env_file:
+      - ../.env
+    environment:
+      DB__DRIVER: postgresql
+      DB__HOST: db
+      DB__PORT: 5432
+      CACHE__BACKEND: redis
+      CACHE__HOST: redis
+      CACHE__PORT: 6379
+      RUN_DB_MIGRATIONS: "0"
+    command: ["sh", "-c", "${WORKER_COMMAND:-python -m src.tasks.worker}"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "3m"
+        max-file: "1"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  scheduler:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: fastapi-boilerplate:latest
+    env_file:
+      - ../.env
+    environment:
+      DB__DRIVER: postgresql
+      DB__HOST: db
+      DB__PORT: 5432
+      CACHE__BACKEND: redis
+      CACHE__HOST: redis
+      CACHE__PORT: 6379
+      RUN_DB_MIGRATIONS: "0"
+    command: ["sh", "-c", "${SCHEDULER_COMMAND:-python -m src.tasks.beat}"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "3m"
+        max-file: "1"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
 
   db:
     image: postgres:15-alpine
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: appdb
+      POSTGRES_USER: ${DB__USER:-postgres}
+      POSTGRES_PASSWORD: ${DB__PASSWORD:-postgres}
+      POSTGRES_DB: ${DB__DATABASE:-appdb}
     ports:
-      - "5432:5432"
+      - "${DB_EXPOSE_PORT:-5432}:5432"
+    logging:
+      driver: json-file
+      options:
+        max-size: "3m"
+        max-file: "1"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB__USER:-postgres} -d ${DB__DATABASE:-appdb}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    environment:
+      CACHE__PASSWORD: ${CACHE__PASSWORD:-}
+    command:
+      - sh
+      - -c
+      - |
+        if [ -n "$CACHE__PASSWORD" ]; then
+          exec redis-server --save "" --appendonly no --requirepass "$CACHE__PASSWORD"
+        fi
+        exec redis-server --save "" --appendonly no
     ports:
-      - "6379:6379"
+      - "${REDIS_EXPOSE_PORT:-6379}:6379"
+    logging:
+      driver: json-file
+      options:
+        max-size: "3m"
+        max-file: "1"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - if [ -n "$CACHE__PASSWORD" ]; then redis-cli -a "$CACHE__PASSWORD" ping; else redis-cli ping; fi | grep PONG
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   postgres_data:

@@ -21,6 +21,7 @@ from src.domains.data_import.schemas import (
     ImportDetailResponse,
     ImportCancelResponse,
 )
+from src.exceptions import BusinessException
 from src.responses.base import Response
 from src.shared.schemas import PaginatedData, PaginationParams
 from src.session import get_session
@@ -247,8 +248,8 @@ async def confirm_import(
     try:
         rows = await service.parse_file(import_id)
         result = await service.confirm_import(import_id, rows)
-    except ValueError as e:
-        return Response.error(code=400, msg=str(e))
+    except BusinessException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

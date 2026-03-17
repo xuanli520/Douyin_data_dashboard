@@ -1,14 +1,16 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
-from datetime import date as date_type
 
-from src.auth.captcha import get_captcha_service
 from src.audit.schemas import AuditAction, AuditLog
+from src.auth.captcha import get_captcha_service
 from src.cache import get_cache
-from src.exceptions import BusinessException
+from src.domains.task.enums import TaskType
+from src.domains.task.schemas import TaskDefinitionCreate
+from src.domains.task.services import TaskService
 from src.main import app
 from src.shared.errors import ErrorCode
+from src.tasks.bootstrap import build_task_dispatcher_registry
 
 
 class MockCaptchaService:
@@ -147,80 +149,106 @@ async def no_execute_permission_data(test_db):
 
 
 @pytest.mark.asyncio
-async def test_collection_orders_trigger_requires_permission(api_client):
+async def test_create_task_requires_permission(api_client):
     response = await api_client.post(
-        "/api/v1/tasks/collection/orders/trigger",
-        json={"shop_id": "shop-1", "date": "2026-03-03"},
+        "/api/v1/tasks",
+        json={"name": "orders", "task_type": "ETL_ORDERS"},
     )
     assert response.status_code == 401
 
 
 @pytest.mark.asyncio
-async def test_collection_orders_trigger_forbidden_without_execute_permission(
-    api_client, no_execute_permission_data
+async def test_run_task_forbidden_without_execute_permission(
+    api_client, no_execute_permission_data, test_db
 ):
+    async with test_db() as session:
+        service = TaskService(
+            session=session,
+            dispatcher_registry=build_task_dispatcher_registry(),
+        )
+        task = await service.create_task(
+            TaskDefinitionCreate(name="orders", task_type=TaskType.ETL_ORDERS),
+            created_by_id=no_execute_permission_data.id,
+        )
+
     headers = await get_auth_headers(api_client, "readonly@example.com", "readonly123")
     response = await api_client.post(
-        "/api/v1/tasks/collection/orders/trigger",
-        json={"shop_id": "shop-1", "date": "2026-03-03"},
+        f"/api/v1/tasks/{task.id}/run",
+        json={"payload": {"batch_date": "2026-03-03"}},
         headers=headers,
     )
     assert response.status_code == 403
 
 
 @pytest.mark.asyncio
-async def test_task_status_requires_permission(api_client):
-    response = await api_client.get("/api/v1/task-status/task-id-1")
+async def test_task_executions_requires_permission(api_client):
+    response = await api_client.get("/api/v1/tasks/1/executions")
     assert response.status_code == 401
 
 
 @pytest.mark.asyncio
-async def test_collection_orders_trigger_with_permission(api_client, permission_data):
+async def test_create_task_with_permission(api_client, permission_data):
     headers = await get_auth_headers(api_client, "shopuser@example.com", "shopuser123")
     response = await api_client.post(
-        "/api/v1/tasks/collection/orders/trigger",
-        json={"shop_id": "shop-1", "date": "2026-03-03"},
+        "/api/v1/tasks",
+        json={
+            "name": "orders-task",
+            "task_type": "ETL_ORDERS",
+            "config": {"batch_date": "2026-03-03"},
+        },
         headers=headers,
     )
     assert response.status_code == 200
     payload = response.json()
     assert {"code", "msg", "data"} <= payload.keys()
-    assert "task_id" in payload["data"]
+    assert payload["data"]["task_type"] == "ETL_ORDERS"
+    assert payload["data"]["id"] > 0
 
 
 @pytest.mark.asyncio
-async def test_collection_orders_trigger_push_and_audit(
+async def test_run_task_push_and_audit(
     api_client, permission_data, test_db, monkeypatch
 ):
     from types import SimpleNamespace
 
-    from src.api.v1 import task as task_module
+    from src.tasks import bootstrap as task_service_module
+
+    async with test_db() as session:
+        service = TaskService(
+            session=session,
+            dispatcher_registry=build_task_dispatcher_registry(),
+        )
+        task = await service.create_task(
+            TaskDefinitionCreate(name="orders", task_type=TaskType.ETL_ORDERS),
+            created_by_id=permission_data.id,
+        )
 
     pushed_kwargs = {}
 
     def _fake_push(**kwargs):
         pushed_kwargs.update(kwargs)
-        return SimpleNamespace(task_id="task-trigger-1")
+        return SimpleNamespace(task_id="queue-task-1")
 
-    monkeypatch.setattr(task_module.sync_orders, "push", _fake_push, raising=False)
+    monkeypatch.setattr(
+        task_service_module.process_orders, "push", _fake_push, raising=False
+    )
 
     headers = await get_auth_headers(api_client, "shopuser@example.com", "shopuser123")
     response = await api_client.post(
-        "/api/v1/tasks/collection/orders/trigger",
-        json={"shop_id": "shop-1", "date": "2026-03-03"},
+        f"/api/v1/tasks/{task.id}/run",
+        json={"payload": {"batch_date": "2026-03-03"}},
         headers=headers,
     )
 
     assert response.status_code == 200
     payload = response.json()["data"]
-    assert payload["task_id"] == "task-trigger-1"
-    assert payload["queue_name"] == "collection_orders"
+    assert payload["task_id"] == task.id
+    assert payload["queue_task_id"] == "queue-task-1"
     assert payload["triggered_by"] == permission_data.id
-    assert pushed_kwargs == {
-        "shop_id": "shop-1",
-        "date": "2026-03-03",
-        "triggered_by": permission_data.id,
-    }
+    assert payload["status"] == "QUEUED"
+    assert pushed_kwargs["batch_date"] == "2026-03-03"
+    assert pushed_kwargs["triggered_by"] == permission_data.id
+    assert int(pushed_kwargs["execution_id"]) > 0
 
     async with test_db() as session:
         result = await session.execute(
@@ -228,7 +256,7 @@ async def test_collection_orders_trigger_push_and_audit(
             .where(
                 AuditLog.action == AuditAction.TASK_RUN,
                 AuditLog.actor_id == permission_data.id,
-                AuditLog.resource_id == "task-trigger-1",
+                AuditLog.resource_id == str(task.id),
             )
             .order_by(AuditLog.id.desc())
         )
@@ -237,86 +265,11 @@ async def test_collection_orders_trigger_push_and_audit(
     assert audit_log is not None
     assert audit_log.resource_type == "task"
     assert audit_log.extra is not None
-    assert audit_log.extra["queue_name"] == "collection_orders"
-    assert audit_log.extra["payload"]["shop_id"] == "shop-1"
+    assert audit_log.extra["queue_task_id"] == "queue-task-1"
 
 
 @pytest.mark.asyncio
-async def test_legacy_create_task_dispatches_by_task_type(
-    api_client, permission_data, monkeypatch
-):
-    from types import SimpleNamespace
-
-    from src.api.v1 import task as task_module
-
-    called = {"orders": 0, "products": 0}
-    pushed_kwargs = {}
-
-    def _fake_orders_push(**_kwargs):
-        called["orders"] += 1
-        return SimpleNamespace(task_id="legacy-orders-task")
-
-    def _fake_products_push(**kwargs):
-        called["products"] += 1
-        pushed_kwargs.update(kwargs)
-        return SimpleNamespace(task_id="legacy-products-task")
-
-    monkeypatch.setattr(
-        task_module.sync_orders, "push", _fake_orders_push, raising=False
-    )
-    monkeypatch.setattr(
-        task_module.sync_products, "push", _fake_products_push, raising=False
-    )
-
-    headers = await get_auth_headers(api_client, "shopuser@example.com", "shopuser123")
-    response = await api_client.post(
-        "/api/v1/tasks",
-        json={"name": "shop-9", "task_type": "PRODUCT_SYNC"},
-        headers=headers,
-    )
-
-    assert response.status_code == 200
-    data = response.json()["data"]
-    assert data["queue_name"] == "collection_products"
-    assert data["task_id"] == "legacy-products-task"
-    assert called["orders"] == 0
-    assert called["products"] == 1
-    assert pushed_kwargs["shop_id"] == "shop-9"
-
-
-@pytest.mark.asyncio
-async def test_legacy_run_task_accepts_task_type_override(
-    api_client, permission_data, monkeypatch
-):
-    from types import SimpleNamespace
-
-    from src.api.v1 import task as task_module
-
-    calls = []
-
-    def _fake_etl_orders_push(**kwargs):
-        calls.append(kwargs)
-        return SimpleNamespace(task_id="legacy-run-etl-orders")
-
-    monkeypatch.setattr(
-        task_module.process_orders, "push", _fake_etl_orders_push, raising=False
-    )
-
-    headers = await get_auth_headers(api_client, "shopuser@example.com", "shopuser123")
-    response = await api_client.post(
-        "/api/v1/tasks/12/run?task_type=ETL_ORDERS",
-        headers=headers,
-    )
-
-    assert response.status_code == 200
-    data = response.json()["data"]
-    assert data["queue_name"] == "etl_orders"
-    assert data["task_id"] == "legacy-run-etl-orders"
-    assert calls and calls[0]["batch_date"] == date_type.today().isoformat()
-
-
-@pytest.mark.asyncio
-async def test_legacy_create_task_invalid_task_type_returns_business_error(
+async def test_create_task_with_invalid_task_type_returns_validation_error(
     api_client, permission_data
 ):
     headers = await get_auth_headers(api_client, "shopuser@example.com", "shopuser123")
@@ -325,18 +278,85 @@ async def test_legacy_create_task_invalid_task_type_returns_business_error(
         json={"name": "shop-9", "task_type": "INVALID_TASK_TYPE"},
         headers=headers,
     )
-
-    assert response.status_code == 400
+    assert response.status_code == 422
     payload = response.json()
-    assert payload["code"] == int(ErrorCode.TASK_TYPE_UNSUPPORTED)
+    assert payload["code"] == 422
 
 
-def test_trigger_result_missing_task_id_raises_business_exception():
-    from src.api.v1.task import _trigger_result
+@pytest.mark.asyncio
+async def test_run_task_uses_task_type_dispatch(
+    api_client, permission_data, test_db, monkeypatch
+):
+    from types import SimpleNamespace
 
-    with pytest.raises(BusinessException) as exc_info:
-        _trigger_result(
-            async_result=object(), queue_name="collection_orders", user_id=1
+    from src.tasks import bootstrap as task_service_module
+
+    async with test_db() as session:
+        service = TaskService(
+            session=session,
+            dispatcher_registry=build_task_dispatcher_registry(),
+        )
+        task = await service.create_task(
+            TaskDefinitionCreate(name="products", task_type=TaskType.ETL_PRODUCTS),
+            created_by_id=permission_data.id,
         )
 
-    assert exc_info.value.code == ErrorCode.TASK_PUSH_FAILED
+    calls = []
+
+    def _fake_products_push(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(task_id="queue-products-1")
+
+    monkeypatch.setattr(
+        task_service_module.process_products, "push", _fake_products_push, raising=False
+    )
+
+    headers = await get_auth_headers(api_client, "shopuser@example.com", "shopuser123")
+    response = await api_client.post(
+        f"/api/v1/tasks/{task.id}/run",
+        json={"payload": {"batch_date": "2026-03-03"}},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["queue_task_id"] == "queue-products-1"
+    assert calls and calls[0]["batch_date"] == "2026-03-03"
+
+
+@pytest.mark.asyncio
+async def test_run_task_missing_queue_task_id_returns_business_error(
+    api_client, permission_data, test_db, monkeypatch
+):
+    from src.tasks import bootstrap as task_service_module
+
+    async with test_db() as session:
+        service = TaskService(
+            session=session,
+            dispatcher_registry=build_task_dispatcher_registry(),
+        )
+        task = await service.create_task(
+            TaskDefinitionCreate(name="orders", task_type=TaskType.ETL_ORDERS),
+            created_by_id=permission_data.id,
+        )
+
+    def _fake_push_without_task_id(**_kwargs):
+        return object()
+
+    monkeypatch.setattr(
+        task_service_module.process_orders,
+        "push",
+        _fake_push_without_task_id,
+        raising=False,
+    )
+
+    headers = await get_auth_headers(api_client, "shopuser@example.com", "shopuser123")
+    response = await api_client.post(
+        f"/api/v1/tasks/{task.id}/run",
+        json={"payload": {"batch_date": "2026-03-03"}},
+        headers=headers,
+    )
+
+    assert response.status_code == 500
+    payload = response.json()
+    assert payload["code"] == int(ErrorCode.TASK_PUSH_FAILED)

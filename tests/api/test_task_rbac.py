@@ -1,12 +1,13 @@
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
-from src.cache import LocalCache, get_cache
-from src.session import get_session
+
 from src.auth.captcha import get_captcha_service
+from src.cache import LocalCache, get_cache
 from src.main import app
+from src.session import get_session
 
 
 class MockCaptchaService:
@@ -68,29 +69,36 @@ def rbac_client(db_session):
 
 
 def test_list_tasks_requires_permission(rbac_client):
-    response = rbac_client.post(
-        "/api/v1/tasks/collection/orders/trigger",
-        json={"shop_id": "shop-1", "date": "2026-03-03"},
-    )
+    response = rbac_client.get("/api/v1/tasks")
     assert response.status_code == 401
 
 
 def test_create_task_requires_permission(rbac_client):
     response = rbac_client.post(
-        "/api/v1/tasks/collection/products/trigger",
-        json={"shop_id": "shop-1", "date": "2026-03-03"},
+        "/api/v1/tasks",
+        json={
+            "name": "orders-task",
+            "task_type": "ETL_ORDERS",
+        },
     )
+    assert response.status_code == 401
+
+
+def test_update_task_requires_permission(rbac_client):
+    response = rbac_client.put("/api/v1/tasks/1", json={"name": "x"})
+    assert response.status_code == 401
+
+
+def test_delete_task_requires_permission(rbac_client):
+    response = rbac_client.delete("/api/v1/tasks/1")
     assert response.status_code == 401
 
 
 def test_run_task_requires_permission(rbac_client):
-    response = rbac_client.post(
-        "/api/v1/tasks/etl/orders/trigger",
-        json={"batch_date": "2026-03-03"},
-    )
+    response = rbac_client.post("/api/v1/tasks/1/run")
     assert response.status_code == 401
 
 
 def test_get_task_executions_requires_permission(rbac_client):
-    response = rbac_client.get("/api/v1/task-status/task-id-1")
+    response = rbac_client.get("/api/v1/tasks/1/executions")
     assert response.status_code == 401

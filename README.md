@@ -40,6 +40,31 @@ This repo also provides a full-featured, best-practiced backend template for bui
 - **Custom Error Codes**: Flexible handling of business-specific error codes and messages.
 - **Pagination**: Built-in support for paginating query results using `fastapi-pagination`.
 
+### Phase 3 Real Data Status (2026-03-12)
+
+Phase 3 experience endpoints are now running on real query services (not mock fallback):
+
+- `GET /api/v1/experience/overview`
+- `GET /api/v1/experience/trend`
+- `GET /api/v1/experience/issues`
+- `GET /api/v1/experience/drilldown/{dimension}`
+- `GET /api/v1/metrics/{metric_type}`
+- `GET /api/v1/dashboard/overview`
+- `GET /api/v1/dashboard/kpis`
+
+Supporting materials for frontend integration:
+
+- Real response examples: `docs/phase3-experience-real-api.md`
+- Integration seed SQL: `docs/phase3-experience-seed.sql`
+
+Cache policy for these endpoints:
+
+- metrics: 1h
+- dashboard: 30m
+- issues: 5m
+
+Collection write success triggers precise cache invalidation by `shop_id + metric_date`.
+
 ### DDD guidelines
 
 This repo follows **Domain-Driven Design (DDD)** principles to structure the codebase for better maintainability and scalability:
@@ -536,6 +561,13 @@ async def old_endpoint():
 | `deprecated(soft)` | 200 | No | Graceful migration period |
 | `deprecated(strict)` | 410 | Yes | Force migration |
 
+## Douyin Shop Dashboard Login Ops
+
+- Login session persistence uses Playwright `storage_state` files only, no Redis cookie storage.
+- Bootstrap command: `python scripts/douyin_bootstrap_login.py --account-id <account_id> --state-dir .runtime/shop_dashboard_state`.
+- Collection flow lock strategy: shop-scope lock for collect, account-scope lock for browser refresh.
+- Expired account behavior: when state is missing/invalid, collection returns deterministic degraded payload and skips browser refresh.
+
 
 ## Development Setup
 
@@ -590,3 +622,11 @@ curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -
    ```
 
 For Chinese contributors, since this is a open-source project, please ensure that your commit messages or issues/PRs can be understood by the global community. It's recommended to write in English or provide English version alongside Chinese descriptions.
+
+## Douyin Shop Dashboard Login State
+
+- Upload endpoint: POST /api/v1/data-sources/{id}/shop-dashboard/login-state (multipart: account_id + file)
+- Clear endpoint: DELETE /api/v1/data-sources/{id}/shop-dashboard/login-state
+- Login state source of truth: data_sources.extra_config.shop_dashboard_login_state
+- API responses only expose shop_dashboard_login_state_meta
+- Worker materializes DB storage_state into .runtime/shop_dashboard_state/<account>.json before collection

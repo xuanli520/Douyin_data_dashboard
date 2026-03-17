@@ -10,6 +10,7 @@ from src.domains.data_import.models import DataImportRecord
 from src.domains.data_import.service import ImportService
 from src.domains.data_import.mapping import FieldMapper
 from src.domains.data_import.validator import ValidationService
+from src.exceptions import BusinessException
 
 
 class TestDataImportIntegration:
@@ -250,7 +251,7 @@ class TestErrorHandling:
         with patch.object(
             service.repo, "get_by_id", new_callable=AsyncMock, return_value=None
         ):
-            with pytest.raises(ValueError, match="Import record not found"):
+            with pytest.raises(BusinessException, match="Import record not found"):
                 await service.parse_file(999)
 
     @pytest.mark.asyncio
@@ -260,7 +261,7 @@ class TestErrorHandling:
         with patch.object(
             service.repo, "get_by_id", new_callable=AsyncMock, return_value=None
         ):
-            with pytest.raises(ValueError, match="Import record not found"):
+            with pytest.raises(BusinessException, match="Import record not found"):
                 await service.apply_mapping(
                     import_id=999, mappings={"old": "new"}, target_fields=["new"]
                 )
@@ -276,5 +277,5 @@ class TestErrorHandling:
         with patch.object(
             service.repo, "get_by_id", new_callable=AsyncMock, return_value=mock_record
         ):
-            with pytest.raises(ValueError, match="Import has failed"):
+            with pytest.raises(BusinessException, match="Import has failed"):
                 await service.confirm_import(1, [{"field": "value"}])

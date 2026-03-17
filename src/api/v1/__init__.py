@@ -1,43 +1,31 @@
 from . import (
-    after_sales,
     analysis,
-    dashboard,
     data_import,
     experience,
     exports,
     metrics,
     notifications,
-    orders,
-    products,
     reports,
-    sales,
     schedules,
     shops,
     system,
     task,
-    task_status,
 )
 from . import alerts as alert_module
 from .permissions import router as permissions_router
 
 __all__ = [
-    "after_sales",
     "alert_module",
     "analysis",
-    "dashboard",
     "data_import",
     "experience",
     "exports",
     "metrics",
     "notifications",
-    "orders",
     "permissions_router",
-    "products",
     "reports",
-    "sales",
     "schedules",
     "shops",
     "system",
     "task",
-    "task_status",
 ]

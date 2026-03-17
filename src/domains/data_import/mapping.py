@@ -8,6 +8,9 @@ from difflib import SequenceMatcher
 from enum import StrEnum
 from typing import Any, Callable
 
+from src.exceptions import BusinessException
+from src.shared.errors import ErrorCode
+
 
 class MappingType(StrEnum):
     AUTO = "AUTO"
@@ -410,7 +413,11 @@ class MappingService:
     ) -> list[dict[str, Any]]:
         template = await self._repository.get_by_id(template_id)
         if not template:
-            raise ValueError(f"Template {template_id} not found")
+            raise BusinessException(
+                ErrorCode.DATA_IMPORT_TEMPLATE_NOT_FOUND,
+                f"Template {template_id} not found",
+                data={"template_id": template_id},
+            )
 
         mapper = FieldMapper(repository=self._repository)
         await mapper.load_template(template_id)

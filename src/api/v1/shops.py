@@ -1,50 +1,41 @@
-from fastapi import APIRouter, Depends, Query
+from __future__ import annotations
 
-from src.api.v1.mock_data import build_shop_score, build_shops_data
+from datetime import date as date_type
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+
 from src.auth import User, current_user
 from src.auth.permissions import ShopPermission
 from src.auth.rbac import require_permissions
-from src.core.endpoint_status import in_development
-from src.exceptions import EndpointInDevelopmentException
+from src.domains.shop_dashboard.services import (
+    ShopDashboardQueryService,
+    get_shop_dashboard_query_service,
+)
 
 router = APIRouter(prefix="/shops", tags=["shops"])
-EXPECTED_RELEASE = "2026-04-30"
 
 
 @router.get("")
-@in_development(
-    mock_data={},
-    expected_release=EXPECTED_RELEASE,
-    prefer_real=True,
-)
-async def list_shops(
-    page: int = 1,
-    size: int = 20,
-    date_range: str | None = Query(default="30d"),
-    user: User = Depends(current_user),
+async def query_shop_dashboard(
+    shop_id: str | None = Query(default=None, min_length=1),
+    start_date: date_type | None = Query(default=None),
+    end_date: date_type | None = Query(default=None),
+    service: ShopDashboardQueryService = Depends(get_shop_dashboard_query_service),
+    _user: User = Depends(current_user),
     _=Depends(require_permissions(ShopPermission.VIEW, bypass_superuser=True)),
-):
-    raise EndpointInDevelopmentException(
-        data=build_shops_data(page=page, size=size, date_range=date_range),
-        is_mock=True,
-        expected_release=EXPECTED_RELEASE,
-    )
+) -> dict[str, Any]:
+    if shop_id is None and start_date is None and end_date is None:
+        return await service.list_shops()
 
+    if shop_id is None or start_date is None or end_date is None:
+        raise HTTPException(
+            status_code=422,
+            detail="shop_id, start_date, end_date must be provided together",
+        )
 
-@router.get("/{shop_id}/score")
-@in_development(
-    mock_data={},
-    expected_release=EXPECTED_RELEASE,
-    prefer_real=True,
-)
-async def get_shop_score(
-    shop_id: int,
-    date_range: str | None = Query(default="30d"),
-    user: User = Depends(current_user),
-    _=Depends(require_permissions(ShopPermission.SCORE, bypass_superuser=True)),
-):
-    raise EndpointInDevelopmentException(
-        data=build_shop_score(shop_id=shop_id, date_range=date_range),
-        is_mock=True,
-        expected_release=EXPECTED_RELEASE,
+    return await service.query(
+        shop_id=shop_id,
+        start_date=start_date,
+        end_date=end_date,
     )

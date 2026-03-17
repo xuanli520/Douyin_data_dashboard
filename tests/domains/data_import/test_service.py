@@ -7,6 +7,7 @@ from src.domains.data_import.enums import ImportStatus
 from src.domains.data_import.models import DataImportRecord
 from src.domains.data_import.mapping import FieldMapper
 from src.domains.data_import.validator import ValidationService
+from src.exceptions import BusinessException
 
 
 class TestImportServiceUnit:
@@ -77,7 +78,7 @@ class TestImportServiceUnit:
         with patch.object(
             import_service.repo, "get_by_id", new_callable=AsyncMock, return_value=None
         ):
-            with pytest.raises(ValueError, match="Import record not found"):
+            with pytest.raises(BusinessException, match="Import record not found"):
                 await import_service.parse_file(999)
 
     @pytest.mark.asyncio
@@ -85,7 +86,7 @@ class TestImportServiceUnit:
         with patch.object(
             import_service.repo, "get_by_id", new_callable=AsyncMock, return_value=None
         ):
-            with pytest.raises(ValueError, match="Import record not found"):
+            with pytest.raises(BusinessException, match="Import record not found"):
                 await import_service.apply_mapping(
                     import_id=999,
                     mappings={"old_field": "new_field"},
@@ -97,7 +98,7 @@ class TestImportServiceUnit:
         with patch.object(
             import_service.repo, "get_by_id", new_callable=AsyncMock, return_value=None
         ):
-            with pytest.raises(ValueError, match="Import record not found"):
+            with pytest.raises(BusinessException, match="Import record not found"):
                 await import_service.validate_data(999, [{"field": "value"}])
 
     @pytest.mark.asyncio
@@ -105,7 +106,7 @@ class TestImportServiceUnit:
         with patch.object(
             import_service.repo, "get_by_id", new_callable=AsyncMock, return_value=None
         ):
-            with pytest.raises(ValueError, match="Import record not found"):
+            with pytest.raises(BusinessException, match="Import record not found"):
                 await import_service.confirm_import(999, [{"field": "value"}])
 
     @pytest.mark.asyncio
@@ -122,7 +123,7 @@ class TestImportServiceUnit:
             new_callable=AsyncMock,
             return_value=mock_record,
         ):
-            with pytest.raises(ValueError, match="Import has failed"):
+            with pytest.raises(BusinessException, match="Import has failed"):
                 await import_service.confirm_import(1, [{"field": "value"}])
 
     @pytest.mark.asyncio

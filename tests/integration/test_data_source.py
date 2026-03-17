@@ -1,10 +1,18 @@
-"""Integration tests for data source API endpoints."""
+from datetime import datetime, timezone
 
 import pytest
 from fastapi_pagination import add_pagination
 from httpx import AsyncClient, ASGITransport
 
 from src.auth.models import User, UserRole
+from src.domains.collection_job.enums import CollectionJobStatus
+from src.domains.collection_job.models import CollectionJob
+from src.domains.data_source.enums import DataSourceStatus, DataSourceType, TargetType
+from src.domains.data_source.models import DataSource
+from src.domains.scraping_rule.models import ScrapingRule
+from src.domains.task.enums import TaskExecutionStatus
+from src.domains.task.enums import TaskType
+from src.domains.task.models import TaskDefinition, TaskExecution
 
 
 class MockCaptchaService:
@@ -188,6 +196,32 @@ class TestDataSourceAPI:
         assert data["name"] == "Test Douyin Shop"
         assert data["type"] == "DOUYIN_API"
 
+    async def test_create_data_source_masks_shop_dashboard_login_state(
+        self, test_client
+    ):
+        response = await test_client.post(
+            "/api/v1/data-sources",
+            json={
+                "name": "Masked Shop DS",
+                "type": "DOUYIN_SHOP",
+                "config": {
+                    "shop_dashboard_login_state": {
+                        "credentials": {
+                            "api_key": "test_key",
+                            "api_key_password": "test_password",
+                        },
+                        "storage_state": {
+                            "cookies": [{"name": "sid", "value": "token"}],
+                            "origins": [],
+                        },
+                    }
+                },
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert "shop_dashboard_login_state" not in data["config"]
+
     async def test_list_data_sources(self, test_client):
         response = await test_client.get("/api/v1/data-sources")
         assert response.status_code == 200
@@ -264,13 +298,13 @@ class TestScrapingRuleAPI:
                 "data_source_id": ds_id,
                 "target_type": "ORDER_FULFILLMENT",
                 "config": {"batch_size": 100},
-                "schedule": "0 */6 * * *",
             },
         )
         assert response.status_code == 200
         data = response.json()["data"]
         assert data["name"] == "Test Rule"
         assert data["data_source_id"] == ds_id
+        assert data["schedule"] is None
 
     async def test_list_scraping_rules_by_data_source(self, test_client):
         ds_response = await test_client.post(
@@ -286,6 +320,114 @@ class TestScrapingRuleAPI:
         response = await test_client.get(f"/api/v1/data-sources/{ds_id}/scraping-rules")
         assert response.status_code == 200
         assert isinstance(response.json()["data"], list)
+
+    async def test_list_scraping_rules_should_include_schedule_and_should_keep_last_run(
+        self,
+        test_client,
+        test_db,
+    ):
+        async with test_db() as session:
+            data_source = DataSource(
+                name="api-rule-ds",
+                source_type=DataSourceType.DOUYIN_SHOP,
+                status=DataSourceStatus.ACTIVE,
+            )
+            session.add(data_source)
+            await session.flush()
+
+            rule = ScrapingRule(
+                name="api-rule",
+                data_source_id=data_source.id if data_source.id is not None else 0,
+                target_type=TargetType.SHOP_OVERVIEW,
+                last_executed_at=datetime.now(timezone.utc),
+                last_execution_id="exec-api-rule",
+            )
+            session.add(rule)
+            await session.flush()
+
+            session.add(
+                CollectionJob(
+                    name="api-schedule",
+                    task_type=TaskType.SHOP_DASHBOARD_COLLECTION,
+                    data_source_id=data_source.id if data_source.id is not None else 0,
+                    rule_id=rule.id if rule.id is not None else 0,
+                    schedule={"cron": "0 9 * * *", "timezone": "Asia/Shanghai"},
+                    status=CollectionJobStatus.ACTIVE,
+                )
+            )
+            await session.commit()
+
+        response = await test_client.get("/api/v1/scraping-rules?page=1&size=10")
+        assert response.status_code == 200
+        item = response.json()["data"]["items"][0]
+        assert item["schedule"] == "api-schedule: 0 9 * * * (Asia/Shanghai)"
+        assert item["last_executed_at"] is not None
+
+    async def test_list_scraping_rules_by_data_source_should_include_schedule_and_should_keep_last_run(
+        self,
+        test_client,
+        test_db,
+    ):
+        async with test_db() as session:
+            data_source = DataSource(
+                name="api-rule-ds-detail",
+                source_type=DataSourceType.DOUYIN_SHOP,
+                status=DataSourceStatus.ACTIVE,
+            )
+            session.add(data_source)
+            await session.flush()
+
+            rule = ScrapingRule(
+                name="api-rule-detail",
+                data_source_id=data_source.id if data_source.id is not None else 0,
+                target_type=TargetType.SHOP_OVERVIEW,
+            )
+            session.add(rule)
+            await session.flush()
+
+            task = TaskDefinition(
+                name="shop_dashboard_collection",
+                task_type=TaskType.SHOP_DASHBOARD_COLLECTION,
+            )
+            session.add(task)
+            await session.flush()
+
+            session.add(
+                CollectionJob(
+                    name="api-detail-schedule",
+                    task_type=TaskType.SHOP_DASHBOARD_COLLECTION,
+                    data_source_id=data_source.id if data_source.id is not None else 0,
+                    rule_id=rule.id if rule.id is not None else 0,
+                    schedule={"cron": "0 11 * * *", "timezone": "Asia/Shanghai"},
+                    status=CollectionJobStatus.ACTIVE,
+                )
+            )
+            session.add(
+                TaskExecution(
+                    task_id=task.id if task.id is not None else 0,
+                    queue_task_id="queue-api-rule-detail",
+                    status=TaskExecutionStatus.SUCCESS,
+                    payload={
+                        "data_source_id": data_source.id
+                        if data_source.id is not None
+                        else 0,
+                        "rule_id": rule.id if rule.id is not None else 0,
+                        "execution_id": "exec-api-rule-detail",
+                        "overrides": {},
+                    },
+                    completed_at=datetime(2026, 3, 17, 11, 0, tzinfo=timezone.utc),
+                )
+            )
+            await session.commit()
+
+        response = await test_client.get(
+            f"/api/v1/data-sources/{data_source.id}/scraping-rules"
+        )
+        assert response.status_code == 200
+        item = response.json()["data"][0]
+        assert item["schedule"] == "api-detail-schedule: 0 11 * * * (Asia/Shanghai)"
+        assert item["last_executed_at"].startswith("2026-03-17T11:00:00")
+        assert item["last_execution_id"] == "exec-api-rule-detail"
 
 
 class TestDataImportAPI:
@@ -452,27 +594,64 @@ class TestTaskAPI:
             "/api/v1/tasks",
             json={
                 "name": "Test Task",
-                "task_type": "ORDER_COLLECTION",
-                "data_source_id": 1,
-                "schedule": "0 */6 * * *",
+                "task_type": "ETL_ORDERS",
+                "config": {"batch_date": "2026-03-03"},
             },
         )
         assert response.status_code == 200
         json_data = response.json()
         assert json_data is not None
         assert "data" in json_data
+        assert "schedule" not in json_data["data"]
 
-    async def test_run_task(self, test_client):
-        task_id = 1
+    async def test_run_task(self, test_client, monkeypatch):
+        from types import SimpleNamespace
 
-        response = await test_client.post(f"/api/v1/tasks/{task_id}/run")
+        from src.tasks import bootstrap as task_service_module
+
+        def _fake_push(**_kwargs):
+            return SimpleNamespace(task_id="queue-run-1")
+
+        monkeypatch.setattr(
+            task_service_module.process_orders, "push", _fake_push, raising=False
+        )
+
+        create_response = await test_client.post(
+            "/api/v1/tasks",
+            json={"name": "Task Run", "task_type": "ETL_ORDERS"},
+        )
+        task_id = create_response.json()["data"]["id"]
+
+        response = await test_client.post(
+            f"/api/v1/tasks/{task_id}/run",
+            json={"payload": {"batch_date": "2026-03-03"}},
+        )
         assert response.status_code == 200
         json_data = response.json()
         assert json_data is not None
         assert "data" in json_data
 
-    async def test_get_task_executions(self, test_client):
-        task_id = 1
+    async def test_get_task_executions(self, test_client, monkeypatch):
+        from types import SimpleNamespace
+
+        from src.tasks import bootstrap as task_service_module
+
+        def _fake_push(**_kwargs):
+            return SimpleNamespace(task_id="queue-exec-1")
+
+        monkeypatch.setattr(
+            task_service_module.process_orders, "push", _fake_push, raising=False
+        )
+
+        create_response = await test_client.post(
+            "/api/v1/tasks",
+            json={"name": "Task Executions", "task_type": "ETL_ORDERS"},
+        )
+        task_id = create_response.json()["data"]["id"]
+        await test_client.post(
+            f"/api/v1/tasks/{task_id}/run",
+            json={"payload": {"batch_date": "2026-03-03"}},
+        )
 
         response = await test_client.get(f"/api/v1/tasks/{task_id}/executions")
         assert response.status_code == 200

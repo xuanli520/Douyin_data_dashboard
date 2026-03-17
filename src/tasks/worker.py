@@ -1,29 +1,41 @@
 from __future__ import annotations
 
 import argparse
-from threading import Thread
+import asyncio
+import logging
+import signal
+import time
+from threading import Event, Thread
 from typing import Callable
 
-from src.tasks.collection import douyin_orders, douyin_products
+from src import session
+from src.config import get_settings
+from src.tasks.collection import douyin_shop_agent, douyin_shop_dashboard
 from src.tasks.etl import orders as etl_orders
 from src.tasks.etl import products as etl_products
+
+logger = logging.getLogger(__name__)
 
 
 def _queue_runners(etl_processes: int) -> dict[str, Callable[[], None]]:
     return {
-        "collection_orders": lambda: douyin_orders.sync_orders.consume(),
-        "collection_products": lambda: douyin_products.sync_products.consume(),
+        "collection_shop_dashboard": lambda: (
+            douyin_shop_dashboard.sync_shop_dashboard.consume()
+        ),
+        "collection_shop_dashboard_agent": lambda: (
+            douyin_shop_agent.sync_shop_dashboard_agent.consume()
+        ),
         "etl_orders": lambda: etl_orders.process_orders.multi_process_consume(
             etl_processes
         ),
         "etl_products": lambda: etl_products.process_products.multi_process_consume(
             etl_processes
         ),
-        "collection_orders_dlx": lambda: (
-            douyin_orders.handle_collection_orders_dead_letter.consume()
+        "collection_shop_dashboard_dlx": lambda: (
+            douyin_shop_dashboard.handle_collection_shop_dashboard_dead_letter.consume()
         ),
-        "collection_products_dlx": lambda: (
-            douyin_products.handle_collection_products_dead_letter.consume()
+        "collection_shop_dashboard_agent_dlx": lambda: (
+            douyin_shop_agent.handle_collection_shop_dashboard_agent_dead_letter.consume()
         ),
         "etl_orders_dlx": lambda: etl_orders.handle_etl_orders_dead_letter.consume(),
         "etl_products_dlx": lambda: (
@@ -32,15 +44,20 @@ def _queue_runners(etl_processes: int) -> dict[str, Callable[[], None]]:
     }
 
 
+def _wait_forever() -> None:
+    try:
+        while True:
+            time.sleep(5)
+    except KeyboardInterrupt:
+        logger.info("Shutting down workers")
+
+
 def run_all(etl_processes: int = 2) -> None:
-    threads = [
-        Thread(target=runner, name=f"worker-{queue_name}")
-        for queue_name, runner in _queue_runners(etl_processes).items()
-    ]
-    for thread in threads:
+    for queue_name, runner in _queue_runners(etl_processes).items():
+        thread = Thread(target=runner, name=f"worker-{queue_name}", daemon=True)
         thread.start()
-    for thread in threads:
-        thread.join()
+
+    _wait_forever()
 
 
 def run_queue(queue_name: str, etl_processes: int = 2) -> None:
@@ -48,6 +65,37 @@ def run_queue(queue_name: str, etl_processes: int = 2) -> None:
     if runner is None:
         raise ValueError(f"unsupported queue name: {queue_name}")
     runner()
+
+
+def _start_worker_loop() -> tuple[asyncio.AbstractEventLoop, Thread]:
+    loop = asyncio.new_event_loop()
+    ready = Event()
+
+    def _run_loop() -> None:
+        asyncio.set_event_loop(loop)
+        loop.call_soon(ready.set)
+        try:
+            loop.run_forever()
+        except Exception:
+            logger.exception("worker asyncio loop crashed")
+
+    thread = Thread(target=_run_loop, name="worker-asyncio-loop", daemon=True)
+    thread.start()
+    ready.wait()
+    session.bind_worker_loop(loop)
+    return loop, thread
+
+
+def _stop_worker_loop(loop: asyncio.AbstractEventLoop, thread: Thread) -> None:
+    session.bind_worker_loop(None)
+    try:
+        if loop.is_running():
+            loop.call_soon_threadsafe(loop.stop)
+    except RuntimeError:
+        pass
+    thread.join(timeout=5)
+    if not loop.is_closed():
+        loop.close()
 
 
 def _parse_args() -> argparse.Namespace:
@@ -62,12 +110,37 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _init_worker_db() -> None:
+    settings = get_settings()
+    session.run_coro(session.init_db(settings.db.url, settings.db.echo))
+
+
+def _close_worker_db() -> None:
+    session.run_coro(session.close_db())
+
+
 def main() -> None:
     args = _parse_args()
-    if args.queue:
-        run_queue(args.queue, etl_processes=args.etl_processes)
-        return
-    run_all(etl_processes=args.etl_processes)
+    loop, loop_thread = _start_worker_loop()
+
+    def _handle_signal(signum, _frame):
+        logger.info("Received signal %s, shutting down", signum)
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
+
+    try:
+        _init_worker_db()
+        if args.queue:
+            run_queue(args.queue, etl_processes=args.etl_processes)
+        else:
+            run_all(etl_processes=args.etl_processes)
+    finally:
+        try:
+            _close_worker_db()
+        finally:
+            _stop_worker_loop(loop, loop_thread)
 
 
 if __name__ == "__main__":

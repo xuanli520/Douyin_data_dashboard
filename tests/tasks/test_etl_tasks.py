@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 
 class _FakeRedis:
     def __init__(self):
@@ -34,6 +36,7 @@ def test_etl_products_task_params():
 
 
 def test_etl_orders_writes_started_status(monkeypatch):
+    from src.tasks import base as task_base
     from src.tasks.etl import orders as module
 
     fake_redis = _FakeRedis()
@@ -43,10 +46,10 @@ def test_etl_orders_writes_started_status(monkeypatch):
         SimpleNamespace(redis_db_frame=fake_redis),
         raising=False,
     )
-    monkeypatch.setattr(module.fct, "task_id", "task-etl-1", raising=False)
+    monkeypatch.setattr(task_base.fct, "task_id", "task-etl-1", raising=False)
 
-    result = module.process_orders(batch_date="2026-03-03", triggered_by=9)
-    assert result["status"] == "success"
+    with pytest.raises(module.ScrapingFailedException):
+        module.process_orders(batch_date="2026-03-03", triggered_by=9)
     key, mapping = fake_redis.hset_calls[0]
     assert key == "douyin:task:status:task-etl-1"
     assert mapping["status"] == "STARTED"
