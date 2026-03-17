@@ -107,9 +107,8 @@ class _FakeLoginStateManager:
 
 
 class _FakeSessionBootstrapper:
-    def __init__(self, state_store, browser_scraper=None):
+    def __init__(self, state_store):
         self.state_store = state_store
-        self.browser_scraper = browser_scraper
 
     async def bootstrap_shops(
         self,
@@ -176,9 +175,8 @@ class _FakeSessionBootstrapper:
 
 
 class _BootstrapVerifyRequestFailed:
-    def __init__(self, state_store, browser_scraper=None):
+    def __init__(self, state_store):
         self.state_store = state_store
-        self.browser_scraper = browser_scraper
 
     async def bootstrap_shops(
         self,
@@ -220,9 +218,8 @@ class _BootstrapVerifyRequestFailed:
 
 
 class _BootstrapVerifyMismatch:
-    def __init__(self, state_store, browser_scraper=None):
+    def __init__(self, state_store):
         self.state_store = state_store
-        self.browser_scraper = browser_scraper
 
     async def bootstrap_shops(
         self,

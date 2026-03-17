@@ -50,7 +50,7 @@ def _build_runtime(
         dedupe_key=None,
         rule_id=1,
         execution_id="exec-1",
-        fallback_chain=("http", "browser", "llm"),
+        fallback_chain=("http", "agent"),
         graphql_query=graphql_query,
         common_query={},
         token_keys=[],

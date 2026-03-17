@@ -119,9 +119,8 @@ class _FakeLoginStateManager:
 
 
 class _FakeSessionBootstrapper:
-    def __init__(self, state_store, browser_scraper=None):
+    def __init__(self, state_store):
         self.state_store = state_store
-        self.browser_scraper = browser_scraper
 
     async def bootstrap_shops(
         self,
@@ -190,7 +189,6 @@ class _FakeSessionBootstrapper:
 def _collect_success(
     runtime_config,
     metric_date: str,
-    _browser,
     *,
     lock_manager,
     state_store,
@@ -254,7 +252,6 @@ async def test_collection_usecase_should_be_idempotent_by_queue_task_id(
         raising=False,
     )
     monkeypatch.setattr(module, "_collect_one_day", _collect_success)
-    monkeypatch.setattr(module, "BrowserScraper", lambda: object())
     monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
     monkeypatch.setattr(
         module,
@@ -433,7 +430,6 @@ async def test_collection_usecase_should_persist_shop_name_from_http_chain(
             }
 
     monkeypatch.setattr(module, "HttpScraper", _FakeHttpScraper)
-    monkeypatch.setattr(module, "BrowserScraper", lambda: object())
     monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
     monkeypatch.setattr(
         module,
