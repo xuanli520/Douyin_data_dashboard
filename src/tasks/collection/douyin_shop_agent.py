@@ -64,7 +64,9 @@ def sync_shop_dashboard_agent(
         }
 
     try:
-        base_result = _run_async(_load_agent_context(shop_id, metric_date, reason))
+        base_result = session.run_coro(
+            _load_agent_context(shop_id, metric_date, reason)
+        )
         agent = LLMDashboardAgent()
         try:
             patch = agent.supplement_cold_data(
@@ -77,7 +79,7 @@ def sync_shop_dashboard_agent(
             close = getattr(agent, "close", None)
             if callable(close):
                 close()
-        _run_async(_persist_agent_patch(shop_id, metric_date, reason, patch))
+        session.run_coro(_persist_agent_patch(shop_id, metric_date, reason, patch))
         result: dict[str, Any] = {
             "status": "success",
             "shop_id": shop_id,
@@ -104,6 +106,10 @@ def sync_shop_dashboard_agent(
     )
 )
 def handle_collection_shop_dashboard_agent_dead_letter(**payload) -> dict[str, Any]:
+    logger.warning(
+        "dead letter received: queue=collection_shop_dashboard_agent_dlx payload=%r",
+        payload,
+    )
     return {
         "status": "recorded",
         "queue": "collection_shop_dashboard_agent_dlx",
@@ -179,7 +185,3 @@ def _ensure_list_of_dicts(value: Any) -> list[dict[str, Any]]:
         if isinstance(item, dict):
             rows.append(item)
     return rows
-
-
-def _run_async(coro):
-    return session.run_coro(coro)
