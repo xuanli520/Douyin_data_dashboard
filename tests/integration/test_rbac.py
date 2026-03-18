@@ -269,10 +269,11 @@ async def rbac_client(test_db, local_cache, admin_user, regular_user, superuser_
 
 async def get_auth_headers(client: AsyncClient, email: str, password: str) -> dict:
     response = await client.post(
-        "/api/v1/auth/jwt/login",
+        "/api/v1/auth/login",
         data={"username": email, "password": password, "captchaVerifyParam": "valid"},
     )
-    token = response.json()["data"]["access_token"]
+    token = response.cookies.get("access_token")
+    assert token is not None
     return {"Authorization": f"Bearer {token}"}
 
 

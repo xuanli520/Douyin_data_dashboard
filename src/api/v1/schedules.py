@@ -15,6 +15,7 @@ from src.domains.collection_job.services import (
 from src.responses.base import Response
 
 router = APIRouter(prefix="/schedules", tags=["schedules"])
+EXPECTED_RELEASE = "2026-04-30"
 
 
 @router.get("")
@@ -42,7 +43,7 @@ router = APIRouter(prefix="/schedules", tags=["schedules"])
         ],
         "total": 3,
     },
-    expected_release="2026-03-01",
+    expected_release=EXPECTED_RELEASE,
 )
 async def list_schedules(
     user: User = Depends(current_user),

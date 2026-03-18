@@ -5,7 +5,7 @@ from httpx_oauth.clients.google import GoogleOAuth2
 from src.config import Settings
 
 from src.auth import fastapi_users
-from src.auth.backend import auth_backend
+from src.auth.backend import cookie_auth_backend
 
 
 def create_oauth_router(settings: Settings) -> APIRouter:
@@ -24,7 +24,7 @@ def create_oauth_router(settings: Settings) -> APIRouter:
         oauth_router.include_router(
             fastapi_users.get_oauth_router(
                 google_oauth_client,
-                auth_backend,
+                cookie_auth_backend,
                 settings.auth.jwt_secret,
                 associate_by_email=True,
             ),
@@ -44,7 +44,7 @@ def create_oauth_router(settings: Settings) -> APIRouter:
         oauth_router.include_router(
             fastapi_users.get_oauth_router(
                 github_oauth_client,
-                auth_backend,
+                cookie_auth_backend,
                 settings.auth.jwt_secret,
                 associate_by_email=True,
             ),

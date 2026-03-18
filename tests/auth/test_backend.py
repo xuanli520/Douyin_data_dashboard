@@ -2,7 +2,13 @@ import asyncio
 import hashlib
 from datetime import datetime, timezone
 
-from src.auth.backend import RefreshTokenManager
+from src.auth.backend import (
+    RefreshTokenManager,
+    bearer_auth_backend,
+    bearer_transport,
+    cookie_auth_backend,
+    cookie_transport,
+)
 from src.shared.redis_keys import redis_keys
 
 
@@ -114,3 +120,18 @@ async def test_token_with_no_device_info(local_cache, settings):
 
     user_id = await manager.verify_refresh_token(token)
     assert user_id == 1
+
+
+def test_cookie_transport_settings(settings):
+    assert cookie_transport.cookie_name == settings.auth.access_cookie_name
+    assert cookie_transport.cookie_path == settings.auth.cookie_path
+    assert cookie_transport.cookie_samesite == settings.auth.cookie_samesite
+    assert cookie_transport.cookie_secure == settings.auth.cookie_secure
+    assert cookie_transport.cookie_domain is None
+    assert cookie_transport.cookie_httponly is True
+
+
+def test_auth_backends_keep_cookie_and_bearer():
+    assert cookie_auth_backend.name == "cookie"
+    assert bearer_auth_backend.name == "jwt"
+    assert bearer_transport.scheme.model.flows.password.tokenUrl == "/auth/login"

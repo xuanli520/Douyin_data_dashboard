@@ -8,6 +8,7 @@ from fastapi import Depends
 from fastapi_users.authentication import (
     AuthenticationBackend,
     BearerTransport,
+    CookieTransport,
     JWTStrategy,
 )
 from fastapi_users.password import PasswordHelper
@@ -119,10 +120,27 @@ def get_refresh_token_manager(
     return RefreshTokenManager(cache, settings)
 
 
-bearer_transport = BearerTransport(tokenUrl="/auth/jwt/login")
+_runtime_settings = get_settings()
 
-auth_backend = AuthenticationBackend(
+bearer_transport = BearerTransport(tokenUrl="/auth/login")
+cookie_transport = CookieTransport(
+    cookie_name=_runtime_settings.auth.access_cookie_name,
+    cookie_max_age=_runtime_settings.auth.jwt_lifetime_seconds,
+    cookie_path=_runtime_settings.auth.cookie_path,
+    cookie_domain=None,
+    cookie_secure=_runtime_settings.auth.cookie_secure,
+    cookie_httponly=_runtime_settings.auth.cookie_httponly,
+    cookie_samesite=_runtime_settings.auth.cookie_samesite,
+)
+
+bearer_auth_backend = AuthenticationBackend(
     name="jwt",
     transport=bearer_transport,
+    get_strategy=get_jwt_strategy,
+)
+
+cookie_auth_backend = AuthenticationBackend(
+    name="cookie",
+    transport=cookie_transport,
     get_strategy=get_jwt_strategy,
 )
