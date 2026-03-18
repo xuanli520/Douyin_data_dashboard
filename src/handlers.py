@@ -5,6 +5,8 @@ from fastapi.exceptions import HTTPException, RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
+from src.auth.cookies import clear_session_cookies
+from src.config import get_settings
 from src.exceptions import BusinessException
 from src.responses.base import Response
 from src.shared.errors import NON_ERROR_CODES, ErrorCode, error_code_to_http_status
@@ -27,7 +29,12 @@ def register_exception_handlers(app: FastAPI) -> None:
         else:
             logger.error("BusinessException: %s", exc)
 
-        return JSONResponse(content=response.model_dump(), status_code=http_status)
+        json_response = JSONResponse(
+            content=response.model_dump(), status_code=http_status
+        )
+        if getattr(exc, "clear_session_cookies", False):
+            clear_session_cookies(json_response, request, get_settings())
+        return json_response
 
     @app.exception_handler(HTTPException)
     async def handle_http_exception(

@@ -2,6 +2,7 @@ import pytest
 
 from src.shared.errors import ErrorCode, NON_ERROR_CODES, error_code_to_http_status
 from src.exceptions import (
+    AuthSessionException,
     BusinessException,
     InsufficientPermissionException,
     InsufficientRoleException,
@@ -56,6 +57,15 @@ def test_business_exception_exposes_code_message_data_and_string(
     assert exc.msg == msg
     assert exc.data == data
     assert str(exc) == expected_str
+
+
+def test_auth_session_exception_marks_cookie_cleanup():
+    exc = AuthSessionException(ErrorCode.AUTH_TOKEN_INVALID, "Invalid token")
+
+    assert exc.code == ErrorCode.AUTH_TOKEN_INVALID
+    assert exc.msg == "Invalid token"
+    assert exc.data is None
+    assert exc.clear_session_cookies is True
 
 
 def test_domain_exception_includes_remaining_attempts_in_message_and_data():

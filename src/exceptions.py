@@ -15,6 +15,10 @@ class BusinessException(Exception):
         return f"[{self.code}] {self.msg}"
 
 
+class AuthSessionException(BusinessException):
+    clear_session_cookies = True
+
+
 class InvalidPasswordException(BusinessException):
     def __init__(self, remaining_attempts: int):
         super().__init__(

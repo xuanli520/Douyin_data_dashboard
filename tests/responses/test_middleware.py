@@ -28,6 +28,28 @@ async def test_middleware_preserves_custom_headers(app_with_middleware: FastAPI)
     assert response.headers.get("X-Custom-Header") == "custom-value"
 
 
+@pytest.mark.asyncio
+async def test_middleware_preserves_multiple_set_cookie_headers(
+    app_with_middleware: FastAPI,
+):
+    @app_with_middleware.get("/api/with-cookies")
+    async def with_cookies_endpoint():
+        response = JSONResponse(content={"data": "test"})
+        response.set_cookie("cookie_a", "value_a")
+        response.set_cookie("cookie_b", "value_b")
+        return response
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app_with_middleware), base_url="http://test"
+    ) as client:
+        response = await client.get("/api/with-cookies")
+
+    set_cookies = response.headers.get_list("set-cookie")
+    assert len(set_cookies) == 2
+    assert any(header.startswith("cookie_a=value_a") for header in set_cookies)
+    assert any(header.startswith("cookie_b=value_b") for header in set_cookies)
+
+
 def test_should_skip_non_json():
     """Test middleware skips non-JSON responses."""
     middleware = ResponseWrapperMiddleware(app=MagicMock())
@@ -68,6 +90,23 @@ def test_should_not_skip_api_paths():
     response.headers.get = MagicMock(return_value="application/json")
 
     assert middleware._should_skip(request, response) is False
+
+
+def test_should_skip_auth_paths():
+    middleware = ResponseWrapperMiddleware(app=MagicMock())
+    request = MagicMock(spec=Request)
+    response = MagicMock(spec=JSONResponse)
+    response.headers.get = MagicMock(return_value="application/json")
+
+    auth_paths = [
+        "/api/v1/auth/login",
+        "/api/v1/auth/refresh",
+        "/api/v1/auth/logout",
+    ]
+
+    for path in auth_paths:
+        request.url.path = path
+        assert middleware._should_skip(request, response) is True
 
 
 def test_is_already_wrapped_with_valid_response():

@@ -9,6 +9,12 @@ from src.auth.models import User
 from src.audit.schemas import AuditAction, AuditLog, AuditResult
 
 
+def _extract_access_token_from_cookie(response) -> str:
+    token = response.cookies.get("access_token")
+    assert token is not None
+    return token
+
+
 @pytest.fixture
 def test_app_with_protected_route(test_client):
     from src.main import app
@@ -30,14 +36,14 @@ async def test_current_user_creates_audit_log(
     test_client = test_app_with_protected_route
 
     login_response = await test_client.post(
-        "/api/v1/auth/jwt/login",
+        "/api/v1/auth/login",
         data={
             "username": "test@example.com",
             "password": "testpassword123",
             "captchaVerifyParam": "valid",
         },
     )
-    access_token = login_response.json()["data"]["access_token"]
+    access_token = _extract_access_token_from_cookie(login_response)
 
     response = await test_client.get(
         "/test/protected",
@@ -70,14 +76,14 @@ async def test_protected_resource_audit_includes_request_id(
     test_client = test_app_with_protected_route
 
     login_response = await test_client.post(
-        "/api/v1/auth/jwt/login",
+        "/api/v1/auth/login",
         data={
             "username": "test@example.com",
             "password": "testpassword123",
             "captchaVerifyParam": "valid",
         },
     )
-    access_token = login_response.json()["data"]["access_token"]
+    access_token = _extract_access_token_from_cookie(login_response)
 
     response = await test_client.get(
         "/test/protected",
@@ -104,7 +110,7 @@ async def test_protected_resource_audit_includes_request_id(
 
 async def test_login_audit_without_request_id(test_client, test_user, test_db):
     response = await test_client.post(
-        "/api/v1/auth/jwt/login",
+        "/api/v1/auth/login",
         data={
             "username": "test@example.com",
             "password": "testpassword123",
@@ -163,14 +169,14 @@ async def test_rbac_audit_includes_request_id(
     test_client = test_app_with_protected_route
 
     login_response = await test_client.post(
-        "/api/v1/auth/jwt/login",
+        "/api/v1/auth/login",
         data={
             "username": "test@example.com",
             "password": "testpassword123",
             "captchaVerifyParam": "valid",
         },
     )
-    access_token = login_response.json()["data"]["access_token"]
+    access_token = _extract_access_token_from_cookie(login_response)
 
     response = await test_client.get(
         "/test/rbac",
@@ -201,14 +207,14 @@ async def test_concurrent_requests_have_unique_request_ids(
     test_client = test_app_with_protected_route
 
     login_response = await test_client.post(
-        "/api/v1/auth/jwt/login",
+        "/api/v1/auth/login",
         data={
             "username": "test@example.com",
             "password": "testpassword123",
             "captchaVerifyParam": "valid",
         },
     )
-    access_token = login_response.json()["data"]["access_token"]
+    access_token = _extract_access_token_from_cookie(login_response)
 
     async def make_request():
         return await test_client.get(
