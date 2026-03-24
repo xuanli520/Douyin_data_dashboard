@@ -89,11 +89,10 @@ class RefreshTokenManager:
                 created_at = datetime.fromisoformat(token_created_time)
                 revoked_at = datetime.fromisoformat(revoke_time)
             except ValueError:
-                if token_created_time <= revoke_time:
-                    return None
-            else:
-                if created_at <= revoked_at:
-                    return None
+                return None
+
+            if created_at <= revoked_at:
+                return None
 
         return user_id
 

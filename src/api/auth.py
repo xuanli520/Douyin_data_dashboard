@@ -109,7 +109,18 @@ async def login(
     try:
         is_human = await captcha_service.verify(captchaVerifyParam)
     except Exception:
-        is_human = False
+        extra = _build_audit_extra(username=username)
+        extra["reason"] = "captcha_unavailable"
+        await audit_service.log(
+            action=AuditAction.LOGIN,
+            result=AuditResult.FAILURE,
+            user_agent=user_agent,
+            ip=ip,
+            extra=extra,
+        )
+        raise BusinessException(
+            ErrorCode.SYS_INTERNAL_ERROR, "Captcha service unavailable"
+        )
 
     if not is_human:
         extra = _build_audit_extra(username=username)

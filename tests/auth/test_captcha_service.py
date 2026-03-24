@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
-from src.auth.captcha import AliyunCaptchaService
+from src.auth.captcha import AliyunCaptchaService, CaptchaUnavailableError
 
 
 class MockCaptchaResult:
@@ -114,9 +114,8 @@ class TestAliyunCaptchaService:
             )
             mock_create.return_value = mock_client
 
-            result = await captcha_service.verify("token")
-
-        assert result is False
+            with pytest.raises(CaptchaUnavailableError):
+                await captcha_service.verify("token")
 
     @pytest.mark.asyncio
     async def test_verify_disabled(self, mock_settings):
