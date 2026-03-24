@@ -1,9 +1,11 @@
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 
 from sqlalchemy import DateTime
 from sqlmodel import Field
 
 
+@lru_cache(maxsize=1)
 def get_timezone() -> timezone:
     """Get configured timezone, defaults to UTC+8 if not configured"""
     try:
