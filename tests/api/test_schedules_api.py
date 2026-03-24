@@ -150,7 +150,7 @@ async def test_update_schedule(
         "schedulemanager@example.com",
         "schedulemanager123",
     )
-    response = await api_client.put(
+    response = await api_client.patch(
         f"/api/v1/schedules/{job.id}",
         json={
             "name": "daily-gmv-updated",
@@ -200,7 +200,7 @@ async def test_delete_schedule(
     )
 
     assert response.status_code == 200
-    detail = await api_client.put(
+    detail = await api_client.patch(
         f"/api/v1/schedules/{job.id}",
         json={"name": "after-delete"},
         headers=headers,

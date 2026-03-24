@@ -69,7 +69,7 @@ def rbac_client(db_session):
 
 
 def test_update_schedule_requires_auth(rbac_client):
-    response = rbac_client.put("/api/v1/schedules/1", json={"name": "x"})
+    response = rbac_client.patch("/api/v1/schedules/1", json={"name": "x"})
     assert response.status_code == 401
 
 

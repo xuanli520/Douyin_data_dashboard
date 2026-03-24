@@ -62,7 +62,7 @@ async def test_refresh_token_success(test_client, test_user):
     refresh_token = login_response.json()["data"]["refresh_token"]
 
     response = await test_client.post(
-        "/api/v1/auth/jwt/refresh", params={"refresh_token": refresh_token}
+        "/api/v1/auth/jwt/refresh", data={"refresh_token": refresh_token}
     )
 
     assert response.status_code == 200
@@ -74,7 +74,7 @@ async def test_refresh_token_success(test_client, test_user):
 
 async def test_refresh_token_invalid(test_client):
     response = await test_client.post(
-        "/api/v1/auth/jwt/refresh", params={"refresh_token": "invalid_token"}
+        "/api/v1/auth/jwt/refresh", data={"refresh_token": "invalid_token"}
     )
 
     assert response.status_code == 401
@@ -95,14 +95,14 @@ async def test_logout_success(test_client, test_user):
     refresh_token = login_response.json()["data"]["refresh_token"]
 
     response = await test_client.post(
-        "/api/v1/auth/jwt/logout", params={"refresh_token": refresh_token}
+        "/api/v1/auth/jwt/logout", data={"refresh_token": refresh_token}
     )
 
     assert response.status_code == 200
     assert response.json()["msg"] == "success"
 
     refresh_response = await test_client.post(
-        "/api/v1/auth/jwt/refresh", params={"refresh_token": refresh_token}
+        "/api/v1/auth/jwt/refresh", data={"refresh_token": refresh_token}
     )
     assert refresh_response.status_code == 401
     assert refresh_response.json()["code"] == ErrorCode.AUTH_TOKEN_INVALID
@@ -128,7 +128,7 @@ async def test_refresh_token_inactive_user(test_client, test_user, test_db):
         await session.commit()
 
     response = await test_client.post(
-        "/api/v1/auth/jwt/refresh", params={"refresh_token": refresh_token}
+        "/api/v1/auth/jwt/refresh", data={"refresh_token": refresh_token}
     )
 
     assert response.status_code == 403
@@ -156,7 +156,7 @@ async def test_reset_password_revokes_tokens(test_client, test_user, local_cache
     await refresh_manager.revoke_all_user_tokens(test_user.id)
 
     response = await test_client.post(
-        "/api/v1/auth/jwt/refresh", params={"refresh_token": refresh_token}
+        "/api/v1/auth/jwt/refresh", data={"refresh_token": refresh_token}
     )
 
     assert response.status_code == 401

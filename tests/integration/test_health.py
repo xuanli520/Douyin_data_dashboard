@@ -225,14 +225,13 @@ async def test_health_check_degraded_when_redis_failed(
 
 
 @pytest.mark.asyncio
-async def test_health_check_error_details_in_response(
+async def test_health_check_does_not_expose_error_details(
     app_with_handlers: FastAPI, mock_engine, mock_cache
 ):
     engine, conn = mock_engine
     cache = mock_cache
 
-    db_error = "Database connection failed"
-    conn.execute = AsyncMock(side_effect=Exception(db_error))
+    conn.execute = AsyncMock(side_effect=Exception("Database connection failed"))
 
     async def override_get_cache():
         yield cache
@@ -245,5 +244,4 @@ async def test_health_check_error_details_in_response(
     ) as client:
         response = await client.get("/health")
         data = response.json()
-        assert "error" in data["components"]["database"]
-        assert db_error in data["components"]["database"]["error"]
+        assert "error" not in data["components"]["database"]

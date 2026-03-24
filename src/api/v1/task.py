@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel
 
 from src.audit import AuditService, get_audit_service
 from src.audit.dependencies import generate_request_id
@@ -22,28 +23,22 @@ from src.domains.task.schemas import (
 from src.domains.task.services import TaskService, get_task_service
 from src.exceptions import TaskNotFoundException
 from src.responses.base import Response
+from src.shared.schemas import PaginatedData
 
 router = APIRouter(prefix="/tasks", tags=["task"])
 
 
-def _pagination_meta(page: int, size: int, total: int) -> dict[str, int | bool]:
-    pages = (total + size - 1) // size if size > 0 else 0
-    return {
-        "page": page,
-        "size": size,
-        "total": total,
-        "pages": pages,
-        "has_next": page < pages,
-        "has_prev": page > 1,
-    }
+class TaskExecutionListData(BaseModel):
+    task_id: int
+    items: list[TaskExecutionResponse]
 
 
-def _task_data(task: Any) -> dict[str, Any]:
-    return TaskDefinitionResponse.model_validate(task).model_dump(mode="json")
+def _task_data(task: Any) -> TaskDefinitionResponse:
+    return TaskDefinitionResponse.model_validate(task)
 
 
-def _execution_data(execution: Any) -> dict[str, Any]:
-    return TaskExecutionResponse.model_validate(execution).model_dump(mode="json")
+def _execution_data(execution: Any) -> TaskExecutionResponse:
+    return TaskExecutionResponse.model_validate(execution)
 
 
 async def _log_task_audit(
@@ -77,32 +72,35 @@ async def _get_task_or_raise(service: TaskService, task_id: int) -> Any:
     return task
 
 
-@router.get("", response_model=Response[dict[str, Any]])
+@router.get(
+    "",
+    response_model=Response[PaginatedData[TaskDefinitionResponse]],
+    dependencies=[Depends(current_user)],
+)
 async def list_tasks(
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=200),
     status: TaskDefinitionStatus | None = Query(default=None),
     task_type: TaskType | None = Query(default=None),
     service: TaskService = Depends(get_task_service),
-    user: User = Depends(current_user),
     _=Depends(require_permissions(TaskPermission.VIEW, bypass_superuser=True)),
-) -> Response[dict[str, Any]]:
-    _ = user
+) -> Response[PaginatedData[TaskDefinitionResponse]]:
     tasks, total = await service.list_tasks(
         page=page,
         size=size,
         status=status,
         task_type=task_type,
     )
-    return Response.success(
-        data={
-            "items": [_task_data(task) for task in tasks],
-            "meta": _pagination_meta(page=page, size=size, total=total),
-        }
+    payload = PaginatedData.create(
+        items=[_task_data(task) for task in tasks],
+        total=total,
+        page=page,
+        size=size,
     )
+    return Response.success(data=payload)
 
 
-@router.post("", response_model=Response[dict[str, Any]])
+@router.post("", response_model=Response[TaskDefinitionResponse])
 async def create_task(
     request: Request,
     payload: TaskDefinitionCreate,
@@ -111,7 +109,7 @@ async def create_task(
     audit_service: AuditService = Depends(get_audit_service),
     request_id: str = Depends(generate_request_id),
     _=Depends(require_permissions(TaskPermission.CREATE, bypass_superuser=True)),
-) -> Response[dict[str, Any]]:
+) -> Response[TaskDefinitionResponse]:
     task = await service.create_task(payload, created_by_id=user.id)
     await _log_task_audit(
         request=request,
@@ -125,19 +123,21 @@ async def create_task(
     return Response.success(data=_task_data(task))
 
 
-@router.get("/{task_id}", response_model=Response[dict[str, Any]])
+@router.get(
+    "/{task_id}",
+    response_model=Response[TaskDefinitionResponse],
+    dependencies=[Depends(current_user)],
+)
 async def get_task(
     task_id: int,
     service: TaskService = Depends(get_task_service),
-    user: User = Depends(current_user),
     _=Depends(require_permissions(TaskPermission.VIEW, bypass_superuser=True)),
-) -> Response[dict[str, Any]]:
-    _ = user
+) -> Response[TaskDefinitionResponse]:
     task = await _get_task_or_raise(service, task_id)
     return Response.success(data=_task_data(task))
 
 
-@router.put("/{task_id}", response_model=Response[dict[str, Any]])
+@router.put("/{task_id}", response_model=Response[TaskDefinitionResponse])
 async def update_task(
     request: Request,
     task_id: int,
@@ -147,7 +147,7 @@ async def update_task(
     audit_service: AuditService = Depends(get_audit_service),
     request_id: str = Depends(generate_request_id),
     _=Depends(require_permissions(TaskPermission.UPDATE, bypass_superuser=True)),
-) -> Response[dict[str, Any]]:
+) -> Response[TaskDefinitionResponse]:
     task = await _get_task_or_raise(service, task_id)
     task = await service.update_task(task, payload, changed_by_id=user.id)
     await _log_task_audit(
@@ -186,7 +186,7 @@ async def delete_task(
     return Response.success()
 
 
-@router.post("/{task_id}/run", response_model=Response[dict[str, Any]])
+@router.post("/{task_id}/run", response_model=Response[TaskExecutionResponse])
 async def run_task(
     request: Request,
     task_id: int,
@@ -196,7 +196,7 @@ async def run_task(
     audit_service: AuditService = Depends(get_audit_service),
     request_id: str = Depends(generate_request_id),
     _=Depends(require_permissions(TaskPermission.EXECUTE, bypass_superuser=True)),
-) -> Response[dict[str, Any]]:
+) -> Response[TaskExecutionResponse]:
     await _get_task_or_raise(service, task_id)
     execution = await service.run_task(
         task_id=task_id,
@@ -219,7 +219,7 @@ async def run_task(
     return Response.success(data=_execution_data(execution))
 
 
-@router.post("/{task_id}/cancel", response_model=Response[dict[str, Any]])
+@router.post("/{task_id}/cancel", response_model=Response[TaskDefinitionResponse])
 async def cancel_task(
     request: Request,
     task_id: int,
@@ -228,7 +228,7 @@ async def cancel_task(
     audit_service: AuditService = Depends(get_audit_service),
     request_id: str = Depends(generate_request_id),
     _=Depends(require_permissions(TaskPermission.CANCEL, bypass_superuser=True)),
-) -> Response[dict[str, Any]]:
+) -> Response[TaskDefinitionResponse]:
     task = await _get_task_or_raise(service, task_id)
     task = await service.cancel_task(task, changed_by_id=user.id)
     await _log_task_audit(
@@ -243,19 +243,21 @@ async def cancel_task(
     return Response.success(data=_task_data(task))
 
 
-@router.get("/{task_id}/executions", response_model=Response[dict[str, Any]])
+@router.get(
+    "/{task_id}/executions",
+    response_model=Response[TaskExecutionListData],
+    dependencies=[Depends(current_user)],
+)
 async def list_task_executions(
     task_id: int,
     service: TaskService = Depends(get_task_service),
-    user: User = Depends(current_user),
     _=Depends(require_permissions(TaskPermission.VIEW, bypass_superuser=True)),
-) -> Response[dict[str, Any]]:
-    _ = user
+) -> Response[TaskExecutionListData]:
     await _get_task_or_raise(service, task_id)
     executions = await service.list_executions(task_id)
     return Response.success(
-        data={
-            "task_id": task_id,
-            "items": [_execution_data(execution) for execution in executions],
-        }
+        data=TaskExecutionListData(
+            task_id=task_id,
+            items=[_execution_data(execution) for execution in executions],
+        )
     )

@@ -229,9 +229,7 @@ class TestAlertsRBAC:
 
 
 class TestShopsRBAC:
-    SHOPS_QUERY_PATH = (
-        "/api/v1/shops?shop_id=shop-1&start_date=2026-03-01&end_date=2026-03-03"
-    )
+    SHOPS_QUERY_PATH = "/api/v1/shops/dashboard?shop_id=shop-1&start_date=2026-03-01&end_date=2026-03-03"
 
     @pytest.mark.asyncio
     async def test_shops_requires_permission(self, api_client):
@@ -268,7 +266,9 @@ class TestMetricsRBAC:
         headers = await get_auth_headers(
             api_client, "shopuser@example.com", "shopuser123"
         )
-        response = await api_client.get("/api/v1/metrics/product", headers=headers)
+        response = await api_client.get(
+            "/api/v1/metrics/product?shop_id=1001", headers=headers
+        )
         assert response.status_code == 200
         data = response.json()
         assert "data" in data
@@ -278,7 +278,9 @@ class TestMetricsRBAC:
         headers = await get_auth_headers(
             api_client, "superuser@example.com", "superuser123"
         )
-        response = await api_client.get("/api/v1/metrics/product", headers=headers)
+        response = await api_client.get(
+            "/api/v1/metrics/product?shop_id=1001", headers=headers
+        )
         assert response.status_code == 200
 
 

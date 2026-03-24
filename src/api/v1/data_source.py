@@ -223,7 +223,6 @@ async def delete_data_source(
     request_id: str = Depends(generate_request_id),
     _=Depends(require_permissions(DataSourcePermission.DELETE, bypass_superuser=True)),
 ) -> Response[None]:
-    ds = await service.get_by_id(ds_id)
     await service.delete(ds_id)
     user_agent, ip = extract_client_info(request)
     await audit_service.log(
@@ -235,7 +234,7 @@ async def delete_data_source(
         request_id=request_id,
         user_agent=user_agent,
         ip=ip,
-        extra={"name": ds.name, "source_type": ds.type} if ds else {},
+        extra=None,
     )
     return Response.success()
 

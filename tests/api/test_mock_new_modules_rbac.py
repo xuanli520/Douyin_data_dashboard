@@ -131,14 +131,14 @@ async def superuser_data(test_db):
 CASES = [
     (
         "GET",
-        "/api/v1/shops?shop_id=shop-1&start_date=2026-03-01&end_date=2026-03-03",
+        "/api/v1/shops/dashboard?shop_id=shop-1&start_date=2026-03-01&end_date=2026-03-03",
         None,
     ),
-    ("GET", "/api/v1/experience/overview", None),
-    ("GET", "/api/v1/experience/trend", None),
-    ("GET", "/api/v1/experience/issues", None),
-    ("GET", "/api/v1/experience/drilldown/product", None),
-    ("GET", "/api/v1/metrics/product", None),
+    ("GET", "/api/v1/experience/overview?shop_id=1001", None),
+    ("GET", "/api/v1/experience/trend?shop_id=1001", None),
+    ("GET", "/api/v1/experience/issues?shop_id=1001", None),
+    ("GET", "/api/v1/experience/drilldown/product?shop_id=1001", None),
+    ("GET", "/api/v1/metrics/product?shop_id=1001", None),
     ("GET", "/api/v1/notifications/channels", None),
     ("POST", "/api/v1/notifications/channels/channel_wecom/test", {}),
     ("GET", "/api/v1/exports", None),
@@ -202,10 +202,10 @@ async def test_new_module_endpoints_with_permission(
     [
         (
             "GET",
-            "/api/v1/shops?shop_id=shop-1&start_date=2026-03-01&end_date=2026-03-03",
+            "/api/v1/shops/dashboard?shop_id=shop-1&start_date=2026-03-01&end_date=2026-03-03",
             None,
         ),
-        ("GET", "/api/v1/experience/overview", None),
+        ("GET", "/api/v1/experience/overview?shop_id=1001", None),
         ("GET", "/api/v1/system/config", None),
     ],
 )

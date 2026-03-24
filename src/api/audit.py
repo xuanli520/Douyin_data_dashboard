@@ -1,16 +1,17 @@
 from fastapi import APIRouter, Depends, Query, Request
-from src.auth.rbac import require_permissions
+from src.auth import User, current_user
 from src.auth.permissions import AuditPermission
+from src.auth.rbac import require_permissions
 from src.audit.service import AuditService, get_audit_service, extract_client_info
 from src.audit.filters import AuditLogFilters
 from src.shared.schemas import PaginatedData
-from src.audit.schemas import AuditAction, AuditResult
+from src.audit.schemas import AuditAction, AuditLog, AuditResult
 from src.audit.dependencies import generate_request_id
 
 router = APIRouter(prefix="/audit", tags=["audit"])
 
 
-@router.get("/logs", response_model=PaginatedData[dict])
+@router.get("/logs", response_model=PaginatedData[AuditLog])
 async def list_audit_logs(
     request: Request,
     audit_service: AuditService = Depends(get_audit_service),
@@ -27,6 +28,7 @@ async def list_audit_logs(
     occurred_to: str | None = Query(None),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
+    user: User = Depends(current_user),
     _=Depends(require_permissions(AuditPermission.READ, bypass_superuser=True)),
     request_id: str = Depends(generate_request_id),
 ):
@@ -50,7 +52,7 @@ async def list_audit_logs(
     await audit_service.log(
         action=AuditAction.PROTECTED_RESOURCE_ACCESS,
         result=AuditResult.SUCCESS,
-        actor_id=None,
+        actor_id=user.id,
         request_id=request_id,
         user_agent=user_agent,
         ip=ip,
@@ -60,6 +62,4 @@ async def list_audit_logs(
             "total": total,
         },
     )
-    return PaginatedData.create(
-        items=[i.model_dump() for i in items], total=total, page=page, size=size
-    )
+    return PaginatedData.create(items=items, total=total, page=page, size=size)

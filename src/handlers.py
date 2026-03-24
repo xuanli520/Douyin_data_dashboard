@@ -78,9 +78,12 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def handle_fallback_exception(
         request: Request, exc: Exception
     ) -> JSONResponse:
+        logger.exception(
+            "Unhandled exception on %s %s", request.method, request.url.path
+        )
         response = Response.error(
             code=500,
             msg="Internal server error",
-            data={"error_type": exc.__class__.__name__},
+            data=None,
         )
         return JSONResponse(content=response.model_dump(), status_code=500)

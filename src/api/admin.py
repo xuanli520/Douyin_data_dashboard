@@ -7,6 +7,7 @@ from src.auth.schemas import (
     UserCreateByAdmin,
     UserUpdateByAdmin,
     AssignRolesRequest,
+    MessageResponse,
     RoleRead,
     RoleCreate,
     RoleUpdate,
@@ -16,6 +17,7 @@ from src.auth.schemas import (
     UserStatsResponse,
 )
 from src.exceptions import BusinessException
+from src.responses.base import Response
 from src.shared.errors import ErrorCode
 from src.shared.schemas import PaginatedData, PaginationParams
 from src.audit import AuditService, get_audit_service
@@ -143,7 +145,11 @@ async def update_user(
     return user
 
 
-@router.delete("/users/{user_id}", dependencies=[Depends(can_user_delete)])
+@router.delete(
+    "/users/{user_id}",
+    response_model=Response[None],
+    dependencies=[Depends(can_user_delete)],
+)
 async def delete_user(
     user_id: int,
     admin_service: AdminService = Depends(get_admin_service),
@@ -164,10 +170,14 @@ async def delete_user(
         resource_type="user",
         resource_id=str(user_id),
     )
-    return {"detail": "User deleted successfully"}
+    return Response.success()
 
 
-@router.post("/users/{user_id}/roles", dependencies=[Depends(can_user_manage_roles)])
+@router.post(
+    "/users/{user_id}/roles",
+    response_model=Response[MessageResponse],
+    dependencies=[Depends(can_user_manage_roles)],
+)
 async def assign_user_roles(
     user_id: int,
     data: AssignRolesRequest,
@@ -185,7 +195,7 @@ async def assign_user_roles(
         resource_id=str(user_id),
         extra={"role_ids": data.role_ids},
     )
-    return {"detail": "Roles assigned successfully"}
+    return Response.success(data=MessageResponse(detail="Roles assigned successfully"))
 
 
 @router.get(
@@ -263,7 +273,11 @@ async def update_role(
     return role
 
 
-@router.delete("/roles/{role_id}", dependencies=[Depends(can_role_delete)])
+@router.delete(
+    "/roles/{role_id}",
+    response_model=Response[MessageResponse],
+    dependencies=[Depends(can_role_delete)],
+)
 async def delete_role(
     role_id: int,
     admin_service: AdminService = Depends(get_admin_service),
@@ -278,11 +292,13 @@ async def delete_role(
         resource_type="role",
         resource_id=str(role_id),
     )
-    return {"detail": "Role deleted successfully"}
+    return Response.success(data=MessageResponse(detail="Role deleted successfully"))
 
 
 @router.post(
-    "/roles/{role_id}/permissions", dependencies=[Depends(can_role_manage_permissions)]
+    "/roles/{role_id}/permissions",
+    response_model=Response[MessageResponse],
+    dependencies=[Depends(can_role_manage_permissions)],
 )
 async def assign_role_permissions(
     role_id: int,
@@ -301,7 +317,9 @@ async def assign_role_permissions(
         resource_id=str(role_id),
         extra={"permission_ids": data.permission_ids},
     )
-    return {"detail": "Permissions assigned successfully"}
+    return Response.success(
+        data=MessageResponse(detail="Permissions assigned successfully")
+    )
 
 
 @router.get(

@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.cache import CacheProtocol, get_cache
+from src.config import get_settings
 
 router = APIRouter()
 
@@ -18,24 +19,25 @@ async def get_engine() -> AsyncEngine:
     return engine
 
 
-@router.get("/test-logging")
-async def test_logging():
-    """Test logging endpoint - for development only, should be disabled in production."""
-    logger.info("Application logger test")
-    logger.bind(action="test", resource_type="logging", result="success").info(
-        "Audit logger test"
-    )
+if get_settings().app.debug:
 
-    return {"message": "Check logs for output"}
+    @router.get("/test-logging")
+    async def test_logging():
+        """Test logging endpoint - for development only, should be disabled in production."""
+        logger.info("Application logger test")
+        logger.bind(action="test", resource_type="logging", result="success").info(
+            "Audit logger test"
+        )
 
+        return {"message": "Check logs for output"}
 
-@router.get("/test-logging-error")
-async def test_logging_error():
-    try:
-        raise ValueError("Intentional test error")
-    except ValueError:
-        logger.exception("Exception logged with traceback")
-        return {"message": "Exception logged, check logs"}
+    @router.get("/test-logging-error")
+    async def test_logging_error():
+        try:
+            raise ValueError("Intentional test error")
+        except ValueError:
+            logger.exception("Exception logged with traceback")
+            return {"message": "Exception logged, check logs"}
 
 
 async def check_database(
@@ -49,7 +51,7 @@ async def check_database(
         return {"status": "healthy", "latency_ms": round(latency, 2)}
     except Exception as e:
         logger.error(f"Database health check failed: {e}")
-        return {"status": "unhealthy", "latency_ms": None, "error": str(e)}
+        return {"status": "unhealthy", "latency_ms": None}
 
 
 async def check_redis(
@@ -66,7 +68,7 @@ async def check_redis(
         return {"status": "healthy", "latency_ms": round(latency, 2)}
     except Exception as e:
         logger.error(f"Redis health check failed: {e}")
-        return {"status": "unhealthy", "latency_ms": None, "error": str(e)}
+        return {"status": "unhealthy", "latency_ms": None}
 
 
 @router.get("/health")

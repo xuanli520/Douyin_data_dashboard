@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from src.auth import current_user, User
 from src.auth.permissions import SchedulePermission
@@ -12,7 +12,9 @@ from src.domains.collection_job.services import (
     CollectionJobService,
     get_collection_job_service,
 )
+from src.exceptions import BusinessException
 from src.responses.base import Response
+from src.shared.errors import ErrorCode
 
 router = APIRouter(prefix="/schedules", tags=["schedules"])
 
@@ -51,7 +53,7 @@ async def list_schedules(
     pass
 
 
-@router.put("/{schedule_id}", response_model=Response[CollectionJobResponse])
+@router.patch("/{schedule_id}", response_model=Response[CollectionJobResponse])
 async def update_schedule(
     schedule_id: int,
     payload: CollectionJobUpdate,
@@ -61,7 +63,9 @@ async def update_schedule(
 ) -> Response[CollectionJobResponse]:
     updated = await service.update_job(schedule_id, payload)
     if updated is None:
-        raise HTTPException(status_code=404, detail="Schedule not found")
+        raise BusinessException(
+            ErrorCode.COLLECTION_JOB_NOT_FOUND, "Schedule not found"
+        )
     return Response.success(data=updated)
 
 
@@ -74,5 +78,7 @@ async def delete_schedule(
 ) -> Response[None]:
     deleted = await service.delete_job(schedule_id)
     if not deleted:
-        raise HTTPException(status_code=404, detail="Schedule not found")
+        raise BusinessException(
+            ErrorCode.COLLECTION_JOB_NOT_FOUND, "Schedule not found"
+        )
     return Response.success()

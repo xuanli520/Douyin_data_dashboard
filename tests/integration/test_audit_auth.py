@@ -67,7 +67,7 @@ async def test_refresh_token_success_creates_audit_log(test_client, test_user, t
     refresh_token = login_response.json()["data"]["refresh_token"]
 
     response = await test_client.post(
-        "/api/v1/auth/jwt/refresh", params={"refresh_token": refresh_token}
+        "/api/v1/auth/jwt/refresh", data={"refresh_token": refresh_token}
     )
 
     assert response.status_code == 200
@@ -88,7 +88,7 @@ async def test_refresh_token_success_creates_audit_log(test_client, test_user, t
 
 async def test_refresh_token_failure_creates_audit_log(test_client, test_db):
     response = await test_client.post(
-        "/api/v1/auth/jwt/refresh", params={"refresh_token": "invalid_token"}
+        "/api/v1/auth/jwt/refresh", data={"refresh_token": "invalid_token"}
     )
 
     assert response.status_code == 401
@@ -129,7 +129,7 @@ async def test_refresh_token_inactive_user_creates_audit_log(
         await session.commit()
 
     response = await test_client.post(
-        "/api/v1/auth/jwt/refresh", params={"refresh_token": refresh_token}
+        "/api/v1/auth/jwt/refresh", data={"refresh_token": refresh_token}
     )
 
     assert response.status_code == 403
@@ -161,7 +161,7 @@ async def test_logout_creates_audit_log(test_client, test_user, test_db):
     refresh_token = login_response.json()["data"]["refresh_token"]
 
     response = await test_client.post(
-        "/api/v1/auth/jwt/logout", params={"refresh_token": refresh_token}
+        "/api/v1/auth/jwt/logout", data={"refresh_token": refresh_token}
     )
 
     assert response.status_code == 200

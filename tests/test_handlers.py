@@ -186,4 +186,4 @@ async def test_handler_returns_unified_response_for_unhandled_exception(
     body = response.json()
     assert body["code"] == 500
     assert body["msg"] == "Internal server error"
-    assert body["data"]["error_type"] == "RuntimeError"
+    assert body["data"] is None

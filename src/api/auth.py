@@ -169,7 +169,7 @@ async def login(
 @router.post("/jwt/refresh")
 async def refresh_jwt(
     request: Request,
-    refresh_token: str,
+    refresh_token: str = Form(...),
     user_manager: UserManager = Depends(get_user_manager),
     strategy=Depends(get_jwt_strategy),
     refresh_manager: RefreshTokenManager = Depends(get_refresh_token_manager),
@@ -224,7 +224,7 @@ async def refresh_jwt(
 @router.post("/jwt/logout")
 async def logout(
     request: Request,
-    refresh_token: str,
+    refresh_token: str = Form(...),
     refresh_manager: RefreshTokenManager = Depends(get_refresh_token_manager),
     audit_service: AuditService = Depends(get_audit_service),
     session: AsyncSession = Depends(get_session),

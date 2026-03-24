@@ -140,7 +140,7 @@ async def test_shops_query_only(api_client, permission_data, test_db):
     )
 
     query_resp = await api_client.get(
-        "/api/v1/shops?shop_id=shop-1&start_date=2026-03-01&end_date=2026-03-03",
+        "/api/v1/shops/dashboard?shop_id=shop-1&start_date=2026-03-01&end_date=2026-03-03",
         headers=auth_headers,
     )
     assert query_resp.status_code == 200
