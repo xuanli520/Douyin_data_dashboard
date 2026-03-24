@@ -89,11 +89,9 @@ class BaseRepository:
         from src.exceptions import BusinessException
         from src.shared.errors import ErrorCode
 
-        constraint_name = (
-            str(error.orig.diag.constraint_name)
-            if error.orig and error.orig.diag
-            else ""
-        )
+        constraint_name = str(getattr(error.orig, "constraint_name", "") or "")
+        if not constraint_name and error.orig is not None:
+            constraint_name = str(error.orig)
         for key, message in constraint_mapping.items():
             if key in constraint_name:
                 raise BusinessException(ErrorCode(message), message) from error
