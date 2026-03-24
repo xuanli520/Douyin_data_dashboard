@@ -2,6 +2,10 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
+from src import session
+from src.application.collection import usecase as collection_usecase_module
+from src.application.collection.executor import _supports_shared_helpers
+from src.application.collection.runtime_loader import LoadedCollectionRuntime
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.tasks.collection import douyin_shop_dashboard as module
 from src.tasks.collection.shop_dashboard_plan_builder import build_collection_plan
@@ -75,9 +79,34 @@ class _FakeIdempotencyHelper:
         return None
 
 
-def _install_fake_collection_usecase(monkeypatch):
-    from src.application.collection import usecase as usecase_module
+def _build_loaded_runtime(
+    runtime: ShopDashboardRuntimeConfig,
+) -> LoadedCollectionRuntime:
+    return LoadedCollectionRuntime(
+        runtime=runtime,
+        rule_version=1,
+        effective_config_snapshot={},
+    )
 
+
+def _install_fake_runtime_loader(
+    monkeypatch,
+    runtime: ShopDashboardRuntimeConfig | None = None,
+):
+    loaded_runtime = _build_loaded_runtime(runtime or _build_runtime())
+
+    class _FakeRuntimeLoader:
+        async def load(self, **_kwargs):
+            return loaded_runtime
+
+    monkeypatch.setattr(
+        collection_usecase_module,
+        "CollectionRuntimeLoader",
+        _FakeRuntimeLoader,
+    )
+
+
+def _install_fake_collection_usecase(monkeypatch):
     class _FakeCollectionUseCase:
         def execute(
             self,
@@ -92,20 +121,22 @@ def _install_fake_collection_usecase(monkeypatch):
             redis_client=None,
         ) -> dict:
             _ = (data_source_id, rule_id, queue_task_id, started_at, triggered_by)
-            runtime = module._run_async(
-                module._load_runtime_config(
+            loaded_runtime = session.run_coro(
+                collection_usecase_module.CollectionRuntimeLoader().load(
+                    session=None,
                     data_source_id=data_source_id,
                     rule_id=rule_id,
                     execution_id=execution_id,
                     overrides=overrides or {},
                 )
             )
+            runtime = loaded_runtime.runtime
             state_store = _FakeStateStore(
                 base_dir=Path(".runtime") / "shop_dashboard_state"
             )
             runtime = module._materialize_runtime_storage_state(runtime, state_store)
             plan_units = build_collection_plan(runtime)
-            helper = module.FunboostIdempotencyHelper(
+            helper = _FakeIdempotencyHelper(
                 redis_client=redis_client,
                 task_name="sync_shop_dashboard",
             )
@@ -147,7 +178,7 @@ def _install_fake_collection_usecase(monkeypatch):
                     )
                     continue
                 try:
-                    if module._supports_shared_helpers(module._collect_one_day):
+                    if _supports_shared_helpers(module._collect_one_day):
                         collected = module._collect_one_day(
                             unit_runtime,
                             plan_unit.metric_date,
@@ -160,7 +191,7 @@ def _install_fake_collection_usecase(monkeypatch):
                             unit_runtime,
                             plan_unit.metric_date,
                         )
-                    module._run_async(
+                    session.run_coro(
                         module._persist_result(
                             unit_runtime,
                             plan_unit.metric_date,
@@ -191,7 +222,11 @@ def _install_fake_collection_usecase(monkeypatch):
                 "items": items,
             }
 
-    monkeypatch.setattr(usecase_module, "CollectionUseCase", _FakeCollectionUseCase)
+    monkeypatch.setattr(
+        collection_usecase_module,
+        "CollectionUseCase",
+        _FakeCollectionUseCase,
+    )
 
 
 class _FakeHttpScraper:
@@ -245,30 +280,20 @@ def _build_runtime() -> ShopDashboardRuntimeConfig:
     )
 
 
-async def _fake_runtime_loader(**_kwargs):
-    return _build_runtime()
-
-
 async def _fake_persist(*_args, **_kwargs):
     return None
 
 
 def test_pipeline_http_fail_then_llm(monkeypatch):
     _install_fake_collection_usecase(monkeypatch)
+    _install_fake_runtime_loader(monkeypatch)
     monkeypatch.setattr(
         module.sync_shop_dashboard,
         "publisher",
         SimpleNamespace(redis_db_frame=_FakeRedis()),
         raising=False,
     )
-    monkeypatch.setattr(
-        module,
-        "FunboostIdempotencyHelper",
-        _FakeIdempotencyHelper,
-        raising=False,
-    )
     monkeypatch.setattr(module, "HttpScraper", _FakeHttpScraper)
-    monkeypatch.setattr(module, "_load_runtime_config", _fake_runtime_loader)
     monkeypatch.setattr(module, "_persist_result", _fake_persist)
 
     class _FakeAgent:
@@ -303,19 +328,13 @@ def test_pipeline_http_fail_then_llm(monkeypatch):
 
 def test_pipeline_cookie_only_http_success(monkeypatch):
     _install_fake_collection_usecase(monkeypatch)
+    _install_fake_runtime_loader(monkeypatch)
     monkeypatch.setattr(
         module.sync_shop_dashboard,
         "publisher",
         SimpleNamespace(redis_db_frame=_FakeRedis()),
         raising=False,
     )
-    monkeypatch.setattr(
-        module,
-        "FunboostIdempotencyHelper",
-        _FakeIdempotencyHelper,
-        raising=False,
-    )
-    monkeypatch.setattr(module, "_load_runtime_config", _fake_runtime_loader)
     monkeypatch.setattr(module, "_persist_result", _fake_persist)
 
     class _SuccessHttpScraper:
@@ -399,9 +418,7 @@ def test_pipeline_rule_config_fields_flow_into_plan_and_query_context(monkeypatc
         api_groups=["overview"],
         extra_config={"cursor": "cursor-1"},
     )
-
-    async def _fake_runtime_loader(**_kwargs):
-        return runtime
+    _install_fake_runtime_loader(monkeypatch, runtime)
 
     async def _fake_persist(*_args, **_kwargs):
         return None
@@ -445,13 +462,6 @@ def test_pipeline_rule_config_fields_flow_into_plan_and_query_context(monkeypatc
         SimpleNamespace(redis_db_frame=_FakeRedis()),
         raising=False,
     )
-    monkeypatch.setattr(
-        module,
-        "FunboostIdempotencyHelper",
-        _FakeIdempotencyHelper,
-        raising=False,
-    )
-    monkeypatch.setattr(module, "_load_runtime_config", _fake_runtime_loader)
     monkeypatch.setattr(module, "_collect_one_day", _fake_collect_one_day)
     monkeypatch.setattr(module, "_persist_result", _fake_persist)
 
@@ -475,9 +485,7 @@ def test_pipeline_shop_id_fanout_for_rule_8_like_config(monkeypatch):
     runtime.resolved_shop_ids = [f"shop-{idx}" for idx in range(13)]
     runtime.time_range = {"start": "2026-03-01", "end": "2026-03-01"}
     runtime.backfill_last_n_days = 1
-
-    async def _fake_runtime_loader(**_kwargs):
-        return runtime
+    _install_fake_runtime_loader(monkeypatch, runtime)
 
     async def _fake_persist(*_args, **_kwargs):
         return None
@@ -513,13 +521,6 @@ def test_pipeline_shop_id_fanout_for_rule_8_like_config(monkeypatch):
         SimpleNamespace(redis_db_frame=_FakeRedis()),
         raising=False,
     )
-    monkeypatch.setattr(
-        module,
-        "FunboostIdempotencyHelper",
-        _FakeIdempotencyHelper,
-        raising=False,
-    )
-    monkeypatch.setattr(module, "_load_runtime_config", _fake_runtime_loader)
     monkeypatch.setattr(module, "_collect_one_day", _fake_collect_one_day)
     monkeypatch.setattr(module, "_persist_result", _fake_persist)
 
