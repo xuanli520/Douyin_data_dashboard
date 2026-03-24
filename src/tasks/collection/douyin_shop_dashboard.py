@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 import logging
 import threading
 import time
@@ -13,18 +12,12 @@ from typing import Any
 from src.agents import LLMDashboardAgent
 from src.cache import resolve_sync_redis_client
 from src.config import get_settings
-from src.domains.data_source.enums import DataSourceStatus, ScrapingRuleStatus
-from src.domains.data_source.repository import DataSourceRepository
-from src.domains.scraping_rule.repository import ScrapingRuleRepository
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
 from src.scrapers.shop_dashboard.http_scraper import HttpScraper
 from src.scrapers.shop_dashboard.lock_manager import LockManager
 from src.scrapers.shop_dashboard.login_state_manager import LoginStateManager
 from src.scrapers.shop_dashboard.exceptions import ShopDashboardScraperError
-from src.scrapers.shop_dashboard.runtime import (
-    ShopDashboardRuntimeConfig,
-    build_runtime_config,
-)
+from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
 from src.scrapers.shop_dashboard.shop_selection_validator import (
     normalize_shop_selection_payload,
@@ -187,6 +180,10 @@ def sync_shop_dashboard(
     )
 )
 def handle_collection_shop_dashboard_dead_letter(**payload) -> dict[str, Any]:
+    logger.warning(
+        "dead letter received: queue=collection_shop_dashboard_dlx payload=%r",
+        payload,
+    )
     return {
         "status": "recorded",
         "queue": "collection_shop_dashboard_dlx",
@@ -526,7 +523,10 @@ def _parse_data_latency(data_latency: str) -> int:
         try:
             return max(int(value[2:]), 0)
         except ValueError:
+            logger.warning("unrecognized data_latency format: %r", data_latency)
             return 0
+    if value:
+        logger.warning("unrecognized data_latency format: %r", data_latency)
     return 0
 
 
@@ -585,54 +585,6 @@ def _build_business_key(
     if normalized_queue_task_id:
         return f"{base_key}:{normalized_queue_task_id}"
     return base_key
-
-
-async def _load_runtime_config(
-    *,
-    data_source_id: int,
-    rule_id: int,
-    execution_id: str,
-    overrides: Mapping[str, Any] | None = None,
-) -> ShopDashboardRuntimeConfig:
-    session_factory = session.async_session_factory
-    if session_factory is None:
-        raise ScrapingFailedException("Database is not initialized")
-    async with session_factory() as db_session:
-        ds_repo = DataSourceRepository(db_session)
-        rule_repo = ScrapingRuleRepository(db_session)
-        data_source = await ds_repo.get_by_id(data_source_id)
-        rule = await rule_repo.get_by_id(rule_id)
-        if data_source is None or rule is None:
-            raise ScrapingFailedException(
-                "Data source or scraping rule not found",
-                error_data={"data_source_id": data_source_id, "rule_id": rule_id},
-            )
-        if data_source.status != DataSourceStatus.ACTIVE:
-            raise ScrapingFailedException(
-                "Data source is inactive",
-                error_data={"data_source_id": data_source_id},
-            )
-        if rule.status != ScrapingRuleStatus.ACTIVE:
-            raise ScrapingFailedException(
-                "Scraping rule is inactive",
-                error_data={"rule_id": rule_id},
-            )
-        runtime = build_runtime_config(
-            data_source=data_source,
-            rule=rule,
-            execution_id=execution_id,
-            overrides=dict(overrides or {}),
-        )
-        if not runtime.api_groups:
-            raise ScrapingFailedException(
-                "No API groups resolved for runtime",
-                error_data={
-                    "rule_id": rule_id,
-                    "target_type": runtime.target_type,
-                    "metrics": runtime.metrics,
-                },
-            )
-        return runtime
 
 
 async def _persist_result(
@@ -742,10 +694,6 @@ async def _persist_result(
         await db_session.commit()
 
 
-def _run_async(coro):
-    return session.run_coro(coro)
-
-
 def _extract_violation_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
     violations = payload.get("violations")
     if isinstance(violations, dict):
@@ -789,19 +737,3 @@ def _normalize_shop_id(value: Any) -> str:
     if normalized.isdigit():
         return str(int(normalized))
     return normalized
-
-
-def _supports_shared_helpers(collector: Any) -> bool:
-    try:
-        signature = inspect.signature(collector)
-    except (TypeError, ValueError):
-        return True
-
-    parameters = signature.parameters
-    if any(
-        parameter.kind == inspect.Parameter.VAR_KEYWORD
-        for parameter in parameters.values()
-    ):
-        return True
-    required = {"lock_manager", "state_store", "login_state_manager"}
-    return required.issubset(parameters.keys())
