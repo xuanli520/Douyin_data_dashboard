@@ -115,8 +115,9 @@ async def test_login_captcha_exception_failsafe(test_client, test_user):
             },
         )
 
-        assert response.status_code == 401
+        assert response.status_code == 500
         data = response.json()
-        assert data["msg"] == "Captcha verification failed"
+        assert data["code"] == ErrorCode.SYS_INTERNAL_ERROR
+        assert data["msg"] == "Captcha service unavailable"
     finally:
         app.dependency_overrides.pop(get_captcha_service, None)

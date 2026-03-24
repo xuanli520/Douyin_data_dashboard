@@ -23,17 +23,22 @@ class CSVParser:
             result = chardet.detect(raw_data)
             detected = result.get("encoding")
             detected_lower = detected.lower() if detected else ""
+            normalized_detected = {
+                "gb18030": "gbk",
+                "gb2312": "gbk",
+                "utf-8-sig": "utf-8",
+            }.get(detected_lower, detected_lower)
             candidates: list[str] = []
-            if detected and detected_lower not in {
+            candidates.append("utf-8")
+            if normalized_detected and normalized_detected not in {
+                "utf-8",
                 "ascii",
                 "macroman",
                 "windows-1250",
                 "windows-1252",
             }:
-                candidates.append(detected)
-            candidates.extend(["utf-8", "gbk"])
-            if detected and detected not in candidates:
-                candidates.append(detected)
+                candidates.append(normalized_detected)
+            candidates.extend(["gbk", "ascii"])
             for encoding in candidates:
                 try:
                     raw_data.decode(encoding)

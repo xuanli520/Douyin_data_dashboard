@@ -8,6 +8,14 @@ from alibabacloud_tea_util import models as util_models
 from src.config import Settings, get_settings
 
 
+class CaptchaConfigurationError(RuntimeError):
+    pass
+
+
+class CaptchaUnavailableError(RuntimeError):
+    pass
+
+
 class AliyunCaptchaService:
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
@@ -21,7 +29,7 @@ class AliyunCaptchaService:
         config.endpoint = self.captcha_settings.endpoint
         return CaptchaClient(config)
 
-    async def verify(self, captcha_verify_param: str) -> bool:
+    async def verify(self, captcha_verify_param: str | None) -> bool:
         if not self.captcha_settings.enabled:
             return True
 
@@ -29,7 +37,7 @@ class AliyunCaptchaService:
             not self.captcha_settings.access_key_id
             or not self.captcha_settings.access_key_secret
         ):
-            return True
+            raise CaptchaConfigurationError("Captcha credentials not configured")
 
         if not captcha_verify_param:
             return False
@@ -47,11 +55,13 @@ class AliyunCaptchaService:
                 request,
                 util_models.RuntimeOptions(),
             )
-            if response.body and response.body.result:
-                return response.body.result.verify_result
+            body = getattr(response, "body", response)
+            result = getattr(body, "result", None)
+            if result:
+                return result.verify_result
             return False
-        except Exception:
-            return False
+        except Exception as exc:
+            raise CaptchaUnavailableError("Captcha verification unavailable") from exc
 
 
 def get_captcha_service() -> AliyunCaptchaService:
