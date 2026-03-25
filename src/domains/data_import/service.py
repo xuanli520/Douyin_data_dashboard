@@ -267,7 +267,7 @@ class ImportService:
         batch_details: list[dict[str, Any]] = []
 
         for i, row in enumerate(rows):
-            if await self._is_cancelled(import_id):
+            if i > 0 and i % batch_size == 0 and await self._is_cancelled(import_id):
                 await self.repo.update_status(import_id, ImportStatus.CANCELLED)
                 await self.session.commit()
                 return {"cancelled": True}
