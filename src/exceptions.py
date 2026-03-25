@@ -179,3 +179,12 @@ class TaskInvalidPayloadException(BusinessException):
             msg=message,
             data={"field": field},
         )
+
+
+class TaskAlreadyExistsException(BusinessException):
+    def __init__(self, task_type: str):
+        super().__init__(
+            code=ErrorCode.TASK_ALREADY_EXISTS,
+            msg="Task already exists",
+            data={"task_type": task_type},
+        )

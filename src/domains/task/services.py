@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
 from fastapi import Depends, Request
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.exceptions import (
     BusinessException,
+    TaskAlreadyExistsException,
     TaskInvalidPayloadException,
     TaskInvalidStatusException,
     TaskNotFoundException,
@@ -40,7 +42,6 @@ from src.domains.task.schemas import (
     TaskDefinitionUpdate,
     TaskExecutionCreate,
 )
-from src.application.collection.runtime_loader import CollectionRuntimeLoader
 from src.scrapers.shop_dashboard.shop_selection_validator import (
     ensure_explicit_shop_selection_valid,
     has_explicit_shop_selection,
@@ -48,6 +49,11 @@ from src.scrapers.shop_dashboard.shop_selection_validator import (
 )
 from src.session import get_session
 from src.shared.errors import ErrorCode
+
+ShopDashboardPayloadValidator = Callable[
+    [AsyncSession, dict[str, Any]],
+    Awaitable[None],
+]
 
 
 class TaskService:
@@ -57,6 +63,7 @@ class TaskService:
         task_repo: TaskDefinitionRepository | None = None,
         execution_repo: TaskExecutionRepository | None = None,
         dispatcher_registry: TaskDispatcherRegistry | None = None,
+        shop_dashboard_payload_validator: ShopDashboardPayloadValidator | None = None,
     ):
         self.session = session
         self.task_repo = task_repo or TaskDefinitionRepository(session)
@@ -67,6 +74,10 @@ class TaskService:
                 "dispatcher_registry is required",
             )
         self.dispatcher_registry = dispatcher_registry
+        self.shop_dashboard_payload_validator = (
+            shop_dashboard_payload_validator
+            or _build_shop_dashboard_payload_validator()
+        )
         self._events: list[TaskDomainEvent] = []
 
     @property
@@ -113,18 +124,22 @@ class TaskService:
         *,
         created_by_id: int | None,
     ) -> TaskDefinition:
-        task = await self.task_repo.create(
-            {
-                "name": payload.name,
-                "task_type": payload.task_type,
-                "status": payload.status,
-                "config": payload.config,
-                "created_by_id": created_by_id,
-                "updated_by_id": created_by_id,
-            }
-        )
-        await self.session.commit()
-        return task
+        try:
+            task = await self.task_repo.create(
+                {
+                    "name": payload.name,
+                    "task_type": payload.task_type,
+                    "status": payload.status,
+                    "config": payload.config,
+                    "created_by_id": created_by_id,
+                    "updated_by_id": created_by_id,
+                }
+            )
+            await self.session.commit()
+            return task
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise TaskAlreadyExistsException(payload.task_type.value) from exc
 
     async def list_tasks(
         self,
@@ -281,15 +296,11 @@ class TaskService:
         trigger_mode: TaskTriggerMode = TaskTriggerMode.MANUAL,
         task_name: str | None = None,
     ) -> TaskExecution:
-        task = await self.task_repo.get_by_task_type(task_type)
-        if task is None:
-            task = await self.create_task(
-                TaskDefinitionCreate(
-                    name=task_name or task_type.value.lower(),
-                    task_type=task_type,
-                ),
-                created_by_id=triggered_by,
-            )
+        task = await self._get_or_create_task_by_type(
+            task_type=task_type,
+            task_name=task_name,
+            created_by_id=triggered_by,
+        )
         return await self.run_task(
             task_id=task.id if task.id is not None else 0,
             payload=payload,
@@ -369,18 +380,8 @@ class TaskService:
         self,
         payload: dict[str, Any],
     ) -> None:
-        execution_id = str(payload.get("execution_id") or "").strip()
-        if not execution_id:
-            execution_id = "api-run-task-validation"
-        loader = CollectionRuntimeLoader()
         try:
-            await loader.load(
-                session=self.session,
-                data_source_id=int(payload["data_source_id"]),
-                rule_id=int(payload["rule_id"]),
-                execution_id=execution_id,
-                overrides=payload,
-            )
+            await self.shop_dashboard_payload_validator(self.session, payload)
         except (ScrapingFailedException, ShopDashboardNoTargetShopsException) as exc:
             error_data = getattr(exc, "error_data", None)
             field = "rule_id"
@@ -414,6 +415,50 @@ class TaskService:
             )
         return value
 
+    async def _get_or_create_task_by_type(
+        self,
+        *,
+        task_type: TaskType,
+        task_name: str | None,
+        created_by_id: int | None,
+    ) -> TaskDefinition:
+        task = await self.task_repo.get_by_task_type(task_type)
+        if task is not None:
+            return task
+        try:
+            return await self.create_task(
+                TaskDefinitionCreate(
+                    name=task_name or task_type.value.lower(),
+                    task_type=task_type,
+                ),
+                created_by_id=created_by_id,
+            )
+        except TaskAlreadyExistsException:
+            task = await self.task_repo.get_by_task_type(task_type)
+            if task is None:
+                raise
+            return task
+
+
+def _build_shop_dashboard_payload_validator() -> ShopDashboardPayloadValidator:
+    from src.application.collection.runtime_loader import CollectionRuntimeLoader
+
+    loader = CollectionRuntimeLoader()
+
+    async def validate(session: AsyncSession, payload: dict[str, Any]) -> None:
+        execution_id = str(payload.get("execution_id") or "").strip()
+        if not execution_id:
+            execution_id = "api-run-task-validation"
+        await loader.load(
+            session=session,
+            data_source_id=int(payload["data_source_id"]),
+            rule_id=int(payload["rule_id"]),
+            execution_id=execution_id,
+            overrides=payload,
+        )
+
+    return validate
+
 
 def get_task_dispatcher_registry(request: Request) -> TaskDispatcherRegistry:
     registry = getattr(request.app.state, "task_dispatcher_registry", None)
@@ -430,4 +475,8 @@ async def get_task_service(
     session: AsyncSession = Depends(get_session),
     dispatcher_registry: TaskDispatcherRegistry = Depends(get_task_dispatcher_registry),
 ) -> AsyncGenerator[TaskService, None]:
-    yield TaskService(session=session, dispatcher_registry=dispatcher_registry)
+    yield TaskService(
+        session=session,
+        dispatcher_registry=dispatcher_registry,
+        shop_dashboard_payload_validator=_build_shop_dashboard_payload_validator(),
+    )
