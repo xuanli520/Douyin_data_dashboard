@@ -5,8 +5,6 @@ from sqlalchemy.orm import selectinload
 
 from src.domains.data_source.enums import ScrapingRuleStatus, TargetType
 from src.domains.scraping_rule.models import ScrapingRule
-from src.exceptions import BusinessException
-from src.shared.errors import ErrorCode
 from src.shared.repository import BaseRepository
 
 
@@ -46,12 +44,10 @@ class ScrapingRuleRepository(BaseRepository):
         )
         return list((await self.session.execute(stmt)).scalars().all())
 
-    async def update(self, rule_id: int, data: dict) -> ScrapingRule:
+    async def update(self, rule_id: int, data: dict) -> ScrapingRule | None:
         rule = await self.get_by_id(rule_id)
         if not rule:
-            raise BusinessException(
-                ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
-            )
+            return None
 
         for key, value in data.items():
             if value is not None:
@@ -60,14 +56,13 @@ class ScrapingRuleRepository(BaseRepository):
         await self._flush()
         return rule
 
-    async def delete(self, rule_id: int) -> None:
+    async def delete(self, rule_id: int) -> bool:
         rule = await self.get_by_id(rule_id)
         if not rule:
-            raise BusinessException(
-                ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
-            )
+            return False
         await self._delete(rule)
         await self.session.flush()
+        return True
 
     async def get_paginated(
         self,

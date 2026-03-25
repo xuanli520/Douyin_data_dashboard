@@ -140,17 +140,17 @@ async def test_list_tasks_supports_pagination_and_filters(
         )
         await service.create_task(
             TaskDefinitionCreate(
-                name="orders-paused",
-                task_type=TaskType.ETL_ORDERS,
-                status=TaskDefinitionStatus.PAUSED,
+                name="products-active",
+                task_type=TaskType.ETL_PRODUCTS,
+                status=TaskDefinitionStatus.ACTIVE,
             ),
             created_by_id=permission_data.id,
         )
         await service.create_task(
             TaskDefinitionCreate(
-                name="products-active",
-                task_type=TaskType.ETL_PRODUCTS,
-                status=TaskDefinitionStatus.ACTIVE,
+                name="dashboard-paused",
+                task_type=TaskType.SHOP_DASHBOARD_COLLECTION,
+                status=TaskDefinitionStatus.PAUSED,
             ),
             created_by_id=permission_data.id,
         )

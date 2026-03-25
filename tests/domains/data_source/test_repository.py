@@ -152,9 +152,8 @@ class TestDataSourceRepositoryIntegration:
     async def test_update_not_found_raises_error(self, test_db):
         async with test_db() as session:
             repo = DataSourceRepository(session)
-            with pytest.raises(BusinessException) as exc_info:
-                await repo.update(9999, {"name": "New Name"})
-            assert exc_info.value.code == ErrorCode.DATASOURCE_NOT_FOUND
+            updated = await repo.update(9999, {"name": "New Name"})
+            assert updated is None
 
     async def test_update_with_none_value_skips_field(self, test_db):
         async with test_db() as session:
@@ -186,9 +185,8 @@ class TestDataSourceRepositoryIntegration:
     async def test_delete_not_found_raises_error(self, test_db):
         async with test_db() as session:
             repo = DataSourceRepository(session)
-            with pytest.raises(BusinessException) as exc_info:
-                await repo.delete(9999)
-            assert exc_info.value.code == ErrorCode.DATASOURCE_NOT_FOUND
+            deleted = await repo.delete(9999)
+            assert deleted is False
 
     async def test_get_paginated(self, test_db):
         async with test_db() as session:
@@ -454,9 +452,8 @@ class TestScrapingRuleRepositoryIntegration:
     async def test_update_not_found_raises_error(self, test_db):
         async with test_db() as session:
             rule_repo = ScrapingRuleRepository(session)
-            with pytest.raises(BusinessException) as exc_info:
-                await rule_repo.update(9999, {"name": "New Name"})
-            assert exc_info.value.code == ErrorCode.SCRAPING_RULE_NOT_FOUND
+            updated = await rule_repo.update(9999, {"name": "New Name"})
+            assert updated is None
 
     async def test_delete_scraping_rule(self, test_db):
         async with test_db() as session:
@@ -484,6 +481,5 @@ class TestScrapingRuleRepositoryIntegration:
     async def test_delete_not_found_raises_error(self, test_db):
         async with test_db() as session:
             rule_repo = ScrapingRuleRepository(session)
-            with pytest.raises(BusinessException) as exc_info:
-                await rule_repo.delete(9999)
-            assert exc_info.value.code == ErrorCode.SCRAPING_RULE_NOT_FOUND
+            deleted = await rule_repo.delete(9999)
+            assert deleted is False
