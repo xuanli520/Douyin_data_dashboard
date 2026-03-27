@@ -49,22 +49,27 @@ def _start_runner_thread(queue_name: str, runner: Callable[[], None]) -> Thread:
     return thread
 
 
-def _wait_forever(stop_event: Event, thread: Thread | None = None) -> None:
+def _wait_forever(
+    stop_event: Event | None = None, thread: Thread | None = None
+) -> None:
+    worker_stop_event = stop_event or Event()
     try:
-        while not stop_event.wait(5):
+        while not worker_stop_event.wait(5):
             if thread is not None and not thread.is_alive():
                 return
     except KeyboardInterrupt:
-        stop_event.set()
+        worker_stop_event.set()
     logger.info("Shutting down workers")
 
 
 def run_all(etl_processes: int = 2, *, stop_event: Event | None = None) -> None:
-    worker_stop_event = stop_event or Event()
     for queue_name, runner in _queue_runners(etl_processes).items():
         _start_runner_thread(queue_name, runner)
 
-    _wait_forever(worker_stop_event)
+    if stop_event is None:
+        _wait_forever()
+        return
+    _wait_forever(stop_event)
 
 
 def run_queue(queue_name: str, etl_processes: int = 2) -> None:
