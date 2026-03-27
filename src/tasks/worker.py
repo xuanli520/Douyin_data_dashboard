@@ -51,12 +51,18 @@ def _start_runner_thread(queue_name: str, runner: Callable[[], None]) -> Thread:
 
 
 def _wait_forever(
-    stop_event: Event | None = None, threads: Sequence[Thread] | None = None
+    stop_event: Event | None = None,
+    threads: Sequence[Thread] | Thread | None = None,
 ) -> None:
     worker_stop_event = stop_event or Event()
+    thread_list = (
+        list(threads)
+        if isinstance(threads, Sequence)
+        else ([threads] if threads is not None else [])
+    )
     try:
         while not worker_stop_event.wait(5):
-            for thread in threads or ():
+            for thread in thread_list:
                 if not thread.is_alive():
                     logger.error(
                         "worker thread exited unexpectedly name=%s", thread.name
