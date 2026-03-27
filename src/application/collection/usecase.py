@@ -284,13 +284,21 @@ class CollectionUseCase:
             task_repo = TaskDefinitionRepository(db_session)
             task = await task_repo.get_by_task_type(TaskType.SHOP_DASHBOARD_COLLECTION)
             if task is None:
-                task = await task_repo.create(
-                    {
-                        "name": "shop_dashboard_collection",
-                        "task_type": TaskType.SHOP_DASHBOARD_COLLECTION,
-                    }
-                )
-                await db_session.commit()
+                try:
+                    task = await task_repo.create(
+                        {
+                            "name": "shop_dashboard_collection",
+                            "task_type": TaskType.SHOP_DASHBOARD_COLLECTION,
+                        }
+                    )
+                    await db_session.commit()
+                except IntegrityError:
+                    await db_session.rollback()
+                    task = await task_repo.get_by_task_type(
+                        TaskType.SHOP_DASHBOARD_COLLECTION
+                    )
+                    if task is None:
+                        raise
 
             trigger_mode = (
                 TaskTriggerMode.SYSTEM

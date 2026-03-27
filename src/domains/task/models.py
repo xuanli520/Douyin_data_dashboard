@@ -17,12 +17,13 @@ from src.shared.mixins import TimestampMixin
 class TaskDefinition(SQLModel, TimestampMixin, table=True):
     __tablename__ = "task_definitions"
     __table_args__ = (
+        Index("ux_task_definitions_task_type", "task_type", unique=True),
         Index("idx_task_definitions_task_type_status", "task_type", "status"),
     )
 
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(max_length=100, index=True)
-    task_type: TaskType = Field(index=True)
+    task_type: TaskType
     status: TaskDefinitionStatus = Field(
         default=TaskDefinitionStatus.ACTIVE,
         index=True,

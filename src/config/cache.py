@@ -1,4 +1,5 @@
 from typing import Literal
+from urllib.parse import quote
 
 from pydantic_settings import BaseSettings
 
@@ -23,5 +24,6 @@ class CacheSettings(BaseSettings):
     @property
     def url(self) -> str:
         if self.password:
-            return f"redis://:{self.password}@{self.host}:{self.port}/{self.db}"
+            encoded_password = quote(self.password, safe="")
+            return f"redis://:{encoded_password}@{self.host}:{self.port}/{self.db}"
         return f"redis://{self.host}:{self.port}/{self.db}"

@@ -61,11 +61,16 @@ async def test_task_indexes_exist(test_db):
     task_definition_indexes = {item["name"] for item in index_map["task_definitions"]}
     task_execution_indexes = {item["name"] for item in index_map["task_executions"]}
 
+    assert "ux_task_definitions_task_type" in task_definition_indexes
     assert "idx_task_definitions_task_type_status" in task_definition_indexes
     assert "idx_task_executions_task_id_created_at" in task_execution_indexes
     assert "ux_task_executions_queue_task_id" in task_execution_indexes
     assert "ux_task_executions_idempotency_key" in task_execution_indexes
 
+    unique_flags = {
+        item["name"]: bool(item.get("unique")) for item in index_map["task_definitions"]
+    }
+    assert unique_flags["ux_task_definitions_task_type"] is True
     unique_flags = {
         item["name"]: bool(item.get("unique")) for item in index_map["task_executions"]
     }

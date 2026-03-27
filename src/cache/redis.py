@@ -1,7 +1,6 @@
 from typing import AsyncIterator
 
 from redis.asyncio import ConnectionPool, Redis
-from redis.asyncio.client import PubSub
 
 
 class RedisCache:
@@ -30,13 +29,10 @@ class RedisCache:
             max_connections=max_connections,
             retry_on_timeout=retry_on_timeout,
         )
-        self._client: Redis | None = None
-        self._pubsub: PubSub | None = None
+        self._client = Redis(connection_pool=self._pool)
 
     @property
     def client(self) -> Redis:
-        if self._client is None:
-            self._client = Redis(connection_pool=self._pool)
         return self._client
 
     async def set(self, key: str, value: str, ttl: int | None = None) -> None:
@@ -75,23 +71,16 @@ class RedisCache:
         return await self.client.publish(channel, message)
 
     async def subscribe(self, *channels: str) -> AsyncIterator[tuple[str, str]]:
-        if self._pubsub is None:
-            self._pubsub = self.client.pubsub()
-
-        await self._pubsub.subscribe(*channels)
-
-        async for message in self._pubsub.listen():
-            if message["type"] == "message":
-                yield (message["channel"], message["data"])
+        pubsub = self.client.pubsub()
+        await pubsub.subscribe(*channels)
+        try:
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    yield (message["channel"], message["data"])
+        finally:
+            await pubsub.unsubscribe(*channels)
+            await pubsub.aclose()
 
     async def close(self) -> None:
-        if self._pubsub is not None:
-            await self._pubsub.unsubscribe()
-            await self._pubsub.aclose()
-            self._pubsub = None
-
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
-
+        await self._client.aclose()
         await self._pool.aclose()
