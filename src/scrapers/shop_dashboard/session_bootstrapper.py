@@ -205,7 +205,13 @@ class SessionBootstrapper:
                 "bootstrap_verify_error_code": verify_error_code,
             }
         if isinstance(choose_result.cookies, dict) and choose_result.cookies:
-            unit_runtime.cookies.update(choose_result.cookies)
+            unit_runtime = replace(
+                unit_runtime,
+                cookies={
+                    **dict(unit_runtime.cookies or {}),
+                    **choose_result.cookies,
+                },
+            )
 
         verify_result = await self._verify_shop_context(
             runtime=unit_runtime,
@@ -643,7 +649,11 @@ def _with_target_shop_query(
     merged_query = dict(runtime.common_query or {})
     merged_query["shop_id"] = target_shop_id
     merged_query["subject_id"] = target_shop_id
-    return replace(runtime, common_query=merged_query)
+    return replace(
+        runtime,
+        cookies=dict(runtime.cookies or {}),
+        common_query=merged_query,
+    )
 
 
 def _is_bundle_for_target(

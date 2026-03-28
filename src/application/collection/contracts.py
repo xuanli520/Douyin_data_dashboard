@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable
 from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
 from typing import Any
@@ -16,18 +15,18 @@ class SessionFactory(Protocol):
 
 
 class Bootstrapper(Protocol):
-    def bootstrap_shops(
+    async def bootstrap_shops(
         self,
         *,
         runtime: ShopDashboardRuntimeConfig,
         shop_ids: list[str],
         verify_metric_date_by_shop: Mapping[str, str] | None = None,
-    ) -> dict[str, dict[str, Any]] | Awaitable[dict[str, dict[str, Any]]]: ...
+    ) -> dict[str, dict[str, Any]]: ...
 
-    def bootstrap_shop(
+    async def bootstrap_shop(
         self,
         *,
         runtime: ShopDashboardRuntimeConfig,
         shop_id: str,
         verify_metric_date: str | None = None,
-    ) -> dict[str, Any] | Awaitable[dict[str, Any]]: ...
+    ) -> dict[str, Any]: ...

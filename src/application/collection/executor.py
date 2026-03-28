@@ -84,7 +84,13 @@ class TaskModuleCollectionExecutor:
         self,
         policy: int | dict[str, Any] | None,
     ) -> RateLimiterProtocol:
-        rate_limiter_cls = getattr(self._task_module, "_RateLimiter")
+        rate_limiter_cls = _resolve_task_module_symbol(
+            self._task_module,
+            "_RateLimiter",
+            "RateLimiter",
+        )
+        if not callable(rate_limiter_cls):
+            raise AttributeError("missing rate limiter implementation")
         return rate_limiter_cls(policy)
 
     def create_idempotency_helper(
@@ -163,7 +169,13 @@ class TaskModuleCollectionExecutor:
         plan_unit: Any | None = None,
         queue_task_id: str | None = None,
     ) -> str:
-        build_business_key = getattr(self._task_module, "_build_business_key")
+        build_business_key = _resolve_task_module_symbol(
+            self._task_module,
+            "_build_business_key",
+            "build_business_key",
+        )
+        if not callable(build_business_key):
+            raise AttributeError("missing business key builder")
         return str(
             build_business_key(
                 runtime,
@@ -182,26 +194,34 @@ class TaskModuleCollectionExecutor:
         state_store: SessionStateStore,
         login_state_manager: LoginStateManager,
     ) -> dict[str, Any]:
-        collect_one_day = getattr(self._task_module, "_collect_one_day")
-        if _supports_shared_helpers(collect_one_day):
-            return collect_one_day(
-                runtime,
-                metric_date,
-                lock_manager=lock_manager,
-                state_store=state_store,
-                login_state_manager=login_state_manager,
-            )
-        return collect_one_day(
-            runtime,
-            metric_date,
+        collect_one_day = _resolve_task_module_symbol(
+            self._task_module,
+            "_collect_one_day",
+            "collect_one_day",
         )
+        if not callable(collect_one_day):
+            raise AttributeError("missing collection entrypoint")
+        keyword_args = {
+            "lock_manager": lock_manager,
+            "state_store": state_store,
+            "login_state_manager": login_state_manager,
+        }
+        if _supports_shared_helpers(collect_one_day):
+            return collect_one_day(runtime, metric_date, **keyword_args)
+        if _signature_unavailable(collect_one_day):
+            try:
+                return collect_one_day(runtime, metric_date, **keyword_args)
+            except TypeError as exc:
+                if not _is_unexpected_keyword_error(exc, keyword_args):
+                    raise
+        return collect_one_day(runtime, metric_date)
 
 
 def _supports_shared_helpers(collector: Any) -> bool:
     try:
         signature = inspect.signature(collector)
     except (TypeError, ValueError):
-        return True
+        return False
     parameters = signature.parameters
     if any(
         parameter.kind == inspect.Parameter.VAR_KEYWORD
@@ -210,3 +230,33 @@ def _supports_shared_helpers(collector: Any) -> bool:
         return True
     required = {"lock_manager", "state_store", "login_state_manager"}
     return required.issubset(parameters.keys())
+
+
+def _signature_unavailable(call: Any) -> bool:
+    try:
+        inspect.signature(call)
+    except (TypeError, ValueError):
+        return True
+    return False
+
+
+def _is_unexpected_keyword_error(exc: TypeError, keyword_args: dict[str, Any]) -> bool:
+    message = str(exc)
+    if "unexpected keyword argument" not in message:
+        return False
+    return any(name in message for name in keyword_args)
+
+
+def _resolve_task_module_symbol(task_module: Any, *names: str) -> Any:
+    for module in (task_module, _default_task_module()):
+        for name in names:
+            value = getattr(module, name, None)
+            if value is not None:
+                return value
+    return None
+
+
+def _default_task_module() -> Any:
+    from src.tasks.collection import douyin_shop_dashboard as task_module
+
+    return task_module
