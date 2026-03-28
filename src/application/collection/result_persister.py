@@ -141,7 +141,6 @@ class CollectionResultPersister:
                 resolved_shop_id,
                 metric_day_text,
             )
-            raise
 
     async def _invalidate_experience_cache(
         self,
