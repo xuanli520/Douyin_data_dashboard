@@ -251,6 +251,7 @@ async def test_invalidate_shop_date_should_refresh_cached_dashboard_data(test_db
         repo = ShopDashboardRepository(session)
         await _seed_materials(repo)
         await session.commit()
+        latest_date = date(2026, 3, 3)
 
         cache = LocalCache()
         service = ExperienceQueryService(repo=repo, cache=cache)
@@ -262,7 +263,7 @@ async def test_invalidate_shop_date_should_refresh_cached_dashboard_data(test_db
 
         await repo.upsert_score(
             shop_id="1001",
-            metric_date=date(2026, 3, 3),
+            metric_date=latest_date,
             total_score=62.0,
             product_score=62.0,
             logistics_score=62.0,
@@ -278,7 +279,7 @@ async def test_invalidate_shop_date_should_refresh_cached_dashboard_data(test_db
         )
         assert stale.model_dump() == first.model_dump()
 
-        await service.invalidate_shop_date(shop_id=1001, metric_date=date(2026, 3, 3))
+        await service.invalidate_shop_date(shop_id=1001, metric_date=latest_date)
         refreshed = await service.get_dashboard_overview(
             shop_id=1001,
             date_range=SEEDED_DATE_RANGE,

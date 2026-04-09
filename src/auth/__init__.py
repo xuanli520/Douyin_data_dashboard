@@ -7,12 +7,12 @@ from src.audit.schemas import AuditAction, AuditResult
 from src.audit.service import extract_client_info
 from src.auth.models import User
 
-from .backend import auth_backend
+from .backend import bearer_auth_backend, cookie_auth_backend
 from .manager import get_user_manager
 
 fastapi_users = FastAPIUsers[User, int](
     get_user_manager=get_user_manager,
-    auth_backends=[auth_backend],
+    auth_backends=[cookie_auth_backend, bearer_auth_backend],
 )
 
 _current_user_base = fastapi_users.current_user(active=True)

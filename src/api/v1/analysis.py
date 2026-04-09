@@ -6,6 +6,7 @@ from src.auth.permissions import AnalysisPermission
 from src.core.endpoint_status import in_development
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
+EXPECTED_RELEASE = "2026-04-30"
 
 
 @router.get("")
@@ -32,7 +33,7 @@ router = APIRouter(prefix="/analysis", tags=["analysis"])
             }
         ],
     },
-    expected_release="2026-03-01",
+    expected_release=EXPECTED_RELEASE,
 )
 async def list_analyses(
     user: User = Depends(current_user),
