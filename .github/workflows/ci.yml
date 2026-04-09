@@ -54,7 +54,7 @@ jobs:
 
       - name: Sync dependencies
         shell: bash
-        run: ./.github/scripts/uv-sync-with-mirrors.sh
+        run: bash ./.github/scripts/uv-sync-with-mirrors.sh
 
       - name: Verify migration chain
         run: |
@@ -94,7 +94,7 @@ jobs:
 
       - name: Sync dependencies
         shell: bash
-        run: ./.github/scripts/uv-sync-with-mirrors.sh
+        run: bash ./.github/scripts/uv-sync-with-mirrors.sh
 
       - name: CI Gate
         env:

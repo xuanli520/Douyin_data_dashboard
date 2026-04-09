@@ -3,3 +3,4 @@ CLAUDE.md text eol=lf
 .clinerules text eol=lf
 .cursorrules text eol=lf
 .github/copilot-instructions.md text eol=lf
+*.sh text eol=lf
