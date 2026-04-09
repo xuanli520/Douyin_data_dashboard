@@ -68,3 +68,11 @@ markers = [
 name = "tsinghua"
 url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 
+[[tool.uv.index]]
+name = "aliyun"
+url = "https://mirrors.aliyun.com/pypi/simple"
+
+[[tool.uv.index]]
+name = "tencent"
+url = "https://mirrors.cloud.tencent.com/pypi/simple"
+

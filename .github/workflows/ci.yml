@@ -53,7 +53,8 @@ jobs:
           cache-dependency-glob: "**/pyproject.toml"
 
       - name: Sync dependencies
-        run: uv sync --dev
+        shell: bash
+        run: ./.github/scripts/uv-sync-with-mirrors.sh
 
       - name: Verify migration chain
         run: |
@@ -92,7 +93,8 @@ jobs:
         uses: extractions/setup-just@v2
 
       - name: Sync dependencies
-        run: uv sync --dev
+        shell: bash
+        run: ./.github/scripts/uv-sync-with-mirrors.sh
 
       - name: CI Gate
         env:
