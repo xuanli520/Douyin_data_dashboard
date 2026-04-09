@@ -4,7 +4,7 @@ from fastapi.exceptions import HTTPException, RequestValidationError
 from httpx import AsyncClient, ASGITransport
 
 from src.shared.errors import ErrorCode
-from src.exceptions import BusinessException
+from src.exceptions import AuthSessionException, BusinessException
 from src.handlers import register_exception_handlers
 
 
@@ -187,3 +187,36 @@ async def test_handler_returns_unified_response_for_unhandled_exception(
     assert body["code"] == 500
     assert body["msg"] == "Internal server error"
     assert body["data"]["error_type"] == "RuntimeError"
+
+
+@pytest.mark.asyncio
+async def test_handler_clears_session_cookies_for_auth_session_exception(
+    full_app: FastAPI,
+    settings,
+):
+    @full_app.get("/test-auth")
+    async def test_endpoint():
+        raise AuthSessionException(ErrorCode.AUTH_TOKEN_INVALID, "Invalid token")
+
+    async with AsyncClient(
+        transport=ASGITransport(app=full_app), base_url="http://test"
+    ) as client:
+        response = await client.get("/test-auth")
+
+    assert response.status_code == 401
+    assert response.json()["code"] == ErrorCode.AUTH_TOKEN_INVALID
+    set_cookies = response.headers.get_list("set-cookie")
+    assert any(
+        header.startswith(f"{settings.auth.access_cookie_name}=")
+        for header in set_cookies
+    )
+    assert any(
+        header.startswith(f"{settings.auth.refresh_cookie_name}=")
+        for header in set_cookies
+    )
+    assert all("Max-Age=0" in header for header in set_cookies)
+    assert all("expires=" in header.lower() for header in set_cookies)
+    assert all("HttpOnly" in header for header in set_cookies)
+    assert all("Path=/" in header for header in set_cookies)
+    assert all("SameSite=lax" in header for header in set_cookies)
+    assert all("Domain=" not in header for header in set_cookies)

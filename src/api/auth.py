@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, Form, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -12,18 +13,18 @@ from src.auth.backend import (
     get_jwt_strategy,
     get_refresh_token_manager,
 )
+from src.auth.cookies import clear_session_cookies, set_auth_cookie
 from src.auth.captcha import AliyunCaptchaService, get_captcha_service
 from src.auth.manager import UserManager, get_user_manager
 from src.auth.schemas import (
-    AccessTokenResponse,
     MessageResponse,
-    TokenResponse,
     UserCreate,
     UserRead,
     UserUpdate,
 )
+from src.config import Settings, get_settings
 from src.shared.errors import ErrorCode
-from src.exceptions import BusinessException
+from src.exceptions import AuthSessionException, BusinessException
 from src.session import get_session
 
 
@@ -91,7 +92,7 @@ router.include_router(
 )
 
 
-@router.post("/jwt/login")
+@router.post("/login")
 async def login(
     request: Request,
     username: str = Form(...),
@@ -103,7 +104,8 @@ async def login(
     audit_service: AuditService = Depends(get_audit_service),
     captcha_service: AliyunCaptchaService = Depends(get_captcha_service),
     session: AsyncSession = Depends(get_session),
-) -> TokenResponse:
+    settings: Settings = Depends(get_settings),
+) -> JSONResponse:
     user_agent, ip = extract_client_info(request)
 
     try:
@@ -159,24 +161,53 @@ async def login(
         extra=extra or None,
     )
 
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        token_type="Bearer",
+    response = JSONResponse(
+        status_code=200,
+        content=MessageResponse(detail="Login successful").model_dump(),
     )
+    set_auth_cookie(
+        response,
+        name=settings.auth.access_cookie_name,
+        value=access_token,
+        max_age=settings.auth.jwt_lifetime_seconds,
+        request=request,
+        settings=settings,
+    )
+    set_auth_cookie(
+        response,
+        name=settings.auth.refresh_cookie_name,
+        value=refresh_token,
+        max_age=settings.auth.refresh_token_lifetime_seconds,
+        request=request,
+        settings=settings,
+    )
+    return response
 
 
-@router.post("/jwt/refresh")
+@router.post("/refresh")
 async def refresh_jwt(
     request: Request,
-    refresh_token: str,
     user_manager: UserManager = Depends(get_user_manager),
     strategy=Depends(get_jwt_strategy),
     refresh_manager: RefreshTokenManager = Depends(get_refresh_token_manager),
     audit_service: AuditService = Depends(get_audit_service),
     session: AsyncSession = Depends(get_session),
-) -> AccessTokenResponse:
+    settings: Settings = Depends(get_settings),
+) -> JSONResponse:
     user_agent, ip = extract_client_info(request)
+    refresh_token = request.cookies.get(settings.auth.refresh_cookie_name)
+
+    if not refresh_token:
+        await audit_service.log(
+            action=AuditAction.REFRESH,
+            result=AuditResult.FAILURE,
+            user_agent=user_agent,
+            ip=ip,
+        )
+        raise AuthSessionException(
+            ErrorCode.AUTH_TOKEN_INVALID,
+            "Invalid token",
+        )
 
     user_id = await refresh_manager.verify_refresh_token(refresh_token)
 
@@ -187,7 +218,10 @@ async def refresh_jwt(
             user_agent=user_agent,
             ip=ip,
         )
-        raise BusinessException(ErrorCode.AUTH_TOKEN_INVALID, "Invalid token")
+        raise AuthSessionException(
+            ErrorCode.AUTH_TOKEN_INVALID,
+            "Invalid token",
+        )
 
     user = await user_manager.get(user_id)
     if not user or not user.is_active:
@@ -203,7 +237,10 @@ async def refresh_jwt(
             ip=ip,
             extra=extra,
         )
-        raise BusinessException(ErrorCode.USER_INACTIVE, "User inactive")
+        raise AuthSessionException(
+            ErrorCode.USER_INACTIVE,
+            "User inactive",
+        )
 
     access_token = await strategy.write_token(user)
 
@@ -218,18 +255,44 @@ async def refresh_jwt(
         extra=extra or None,
     )
 
-    return AccessTokenResponse(access_token=access_token, token_type="Bearer")
+    response = JSONResponse(
+        status_code=200,
+        content=MessageResponse(detail="Session refreshed").model_dump(),
+    )
+    set_auth_cookie(
+        response,
+        name=settings.auth.access_cookie_name,
+        value=access_token,
+        max_age=settings.auth.jwt_lifetime_seconds,
+        request=request,
+        settings=settings,
+    )
+    return response
 
 
-@router.post("/jwt/logout")
+@router.post("/logout")
 async def logout(
     request: Request,
-    refresh_token: str,
     refresh_manager: RefreshTokenManager = Depends(get_refresh_token_manager),
     audit_service: AuditService = Depends(get_audit_service),
     session: AsyncSession = Depends(get_session),
-) -> MessageResponse:
+    settings: Settings = Depends(get_settings),
+) -> JSONResponse:
     user_agent, ip = extract_client_info(request)
+    refresh_token = request.cookies.get(settings.auth.refresh_cookie_name)
+
+    if not refresh_token:
+        await audit_service.log(
+            action=AuditAction.LOGOUT,
+            result=AuditResult.FAILURE,
+            user_agent=user_agent,
+            ip=ip,
+        )
+        raise AuthSessionException(
+            ErrorCode.AUTH_TOKEN_INVALID,
+            "Invalid token",
+        )
+
     user_id = await refresh_manager.verify_refresh_token(refresh_token)
 
     if not user_id:
@@ -239,7 +302,10 @@ async def logout(
             user_agent=user_agent,
             ip=ip,
         )
-        raise BusinessException(ErrorCode.AUTH_TOKEN_INVALID, "Invalid token")
+        raise AuthSessionException(
+            ErrorCode.AUTH_TOKEN_INVALID,
+            "Invalid token",
+        )
 
     await refresh_manager.revoke_token(refresh_token)
 
@@ -258,4 +324,9 @@ async def logout(
         extra=extra,
     )
 
-    return MessageResponse(detail="Successfully logged out")
+    response = JSONResponse(
+        status_code=200,
+        content=MessageResponse(detail="Successfully logged out").model_dump(),
+    )
+    clear_session_cookies(response, request, settings)
+    return response
