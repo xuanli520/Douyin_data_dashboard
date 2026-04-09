@@ -97,7 +97,14 @@ async def test_db():
 
     async def override_get_session():
         async with async_session() as session:
-            yield session
+            try:
+                yield session
+                if session.in_transaction():
+                    await session.commit()
+            except Exception:
+                if session.in_transaction():
+                    await session.rollback()
+                raise
 
     app.dependency_overrides[get_session] = override_get_session
 
