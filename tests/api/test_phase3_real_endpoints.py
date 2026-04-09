@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -98,9 +98,12 @@ async def phase3_user(test_db):
 async def seeded_phase3_data(test_db):
     async with test_db() as session:
         repo = ShopDashboardRepository(session)
+        first_date = date.today() - timedelta(days=2)
+        second_date = date.today() - timedelta(days=1)
+        latest_date = date.today()
         for metric_date, values in [
             (
-                date(2026, 3, 1),
+                first_date,
                 {
                     "total": 86.6,
                     "product": 90.0,
@@ -110,7 +113,7 @@ async def seeded_phase3_data(test_db):
                 },
             ),
             (
-                date(2026, 3, 2),
+                second_date,
                 {
                     "total": 87.2,
                     "product": 91.0,
@@ -120,7 +123,7 @@ async def seeded_phase3_data(test_db):
                 },
             ),
             (
-                date(2026, 3, 3),
+                latest_date,
                 {
                     "total": 89.9,
                     "product": 92.0,
@@ -143,7 +146,7 @@ async def seeded_phase3_data(test_db):
 
         await repo.replace_violations(
             shop_id="1001",
-            metric_date=date(2026, 3, 3),
+            metric_date=latest_date,
             violations=[
                 {
                     "violation_id": "issue_1",
@@ -156,7 +159,7 @@ async def seeded_phase3_data(test_db):
         )
         await repo.replace_violations(
             shop_id="1001",
-            metric_date=date(2026, 3, 2),
+            metric_date=second_date,
             violations=[
                 {
                     "violation_id": "issue_2",
@@ -169,7 +172,7 @@ async def seeded_phase3_data(test_db):
         )
         await repo.upsert_cold_metrics(
             shop_id="1001",
-            metric_date=date(2026, 3, 1),
+            metric_date=first_date,
             reason="cold reason fallback",
             violations_detail=[],
             arbitration_detail=[],
