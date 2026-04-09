@@ -2,6 +2,10 @@ import asyncio
 import hashlib
 from datetime import datetime, timezone
 
+import pytest
+from fastapi import Request
+from fastapi.responses import Response
+
 from src.auth.backend import (
     RefreshTokenManager,
     bearer_auth_backend,
@@ -9,7 +13,37 @@ from src.auth.backend import (
     cookie_auth_backend,
     cookie_transport,
 )
+from src.api.oauth import create_oauth_router
+from src.auth.cookies import bind_auth_request_context, set_auth_cookie
+from src.config import get_settings
 from src.shared.redis_keys import redis_keys
+
+
+def _build_request(
+    *,
+    scheme: str = "http",
+    headers: list[tuple[bytes, bytes]] | None = None,
+    cookies: dict[str, str] | None = None,
+) -> Request:
+    request_headers = list(headers or [])
+    if cookies:
+        cookie_header = "; ".join(f"{key}={value}" for key, value in cookies.items())
+        request_headers.append((b"cookie", cookie_header.encode()))
+    return Request(
+        {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": scheme,
+            "path": "/",
+            "raw_path": b"/",
+            "query_string": b"",
+            "headers": request_headers,
+            "client": ("testclient", 50000),
+            "server": ("testserver", 80),
+            "root_path": "",
+        }
+    )
 
 
 async def test_create_refresh_token(local_cache, settings):
@@ -135,3 +169,65 @@ def test_auth_backends_keep_cookie_and_bearer():
     assert cookie_auth_backend.name == "cookie"
     assert bearer_auth_backend.name == "jwt"
     assert bearer_transport.scheme.model.flows.password.tokenUrl == "/auth/login"
+
+
+def test_set_auth_cookie_honors_cookie_secure_config(monkeypatch):
+    monkeypatch.setenv("AUTH__COOKIE_SECURE", "true")
+    get_settings.cache_clear()
+
+    try:
+        settings = get_settings()
+        response = Response()
+
+        set_auth_cookie(
+            response,
+            name=settings.auth.access_cookie_name,
+            value="token",
+            max_age=60,
+            request=_build_request(),
+            settings=settings,
+        )
+
+        assert "Secure" in response.headers["set-cookie"]
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_cookie_transport_uses_runtime_settings_and_request_context(monkeypatch):
+    monkeypatch.setenv("AUTH__ACCESS_COOKIE_NAME", "session_access")
+    monkeypatch.setenv("AUTH__COOKIE_PATH", "/api/v1")
+    monkeypatch.setenv("AUTH__COOKIE_SECURE", "false")
+    get_settings.cache_clear()
+
+    bind = bind_auth_request_context(
+        _build_request(headers=[(b"x-forwarded-proto", b"https")])
+    )
+    await anext(bind)
+
+    try:
+        response = await cookie_transport.get_login_response("token")
+        set_cookie = response.headers["set-cookie"]
+        assert set_cookie.startswith("session_access=token;")
+        assert "Path=/api/v1" in set_cookie
+        assert "Secure" in set_cookie
+
+        token = await cookie_transport.scheme(
+            _build_request(cookies={"session_access": "token"})
+        )
+        assert token == "token"
+    finally:
+        with pytest.raises(StopAsyncIteration):
+            await anext(bind)
+        get_settings.cache_clear()
+
+
+def test_create_oauth_router_binds_auth_request_context(monkeypatch):
+    monkeypatch.setenv("AUTH__OAUTH_GOOGLE_CLIENT_ID", "google-client")
+    monkeypatch.setenv("AUTH__OAUTH_GOOGLE_CLIENT_SECRET", "google-secret")
+    get_settings.cache_clear()
+
+    try:
+        router = create_oauth_router(get_settings())
+        assert router.dependencies[0].dependency is bind_auth_request_context
+    finally:
+        get_settings.cache_clear()

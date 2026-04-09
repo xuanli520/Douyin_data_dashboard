@@ -1,7 +1,8 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from httpx_oauth.clients.github import GitHubOAuth2
 from httpx_oauth.clients.google import GoogleOAuth2
 
+from src.auth.cookies import bind_auth_request_context
 from src.config import Settings
 
 from src.auth import fastapi_users
@@ -9,8 +10,7 @@ from src.auth.backend import cookie_auth_backend
 
 
 def create_oauth_router(settings: Settings) -> APIRouter:
-    """Create OAuth router with settings."""
-    oauth_router = APIRouter()
+    oauth_router = APIRouter(dependencies=[Depends(bind_auth_request_context)])
 
     if (
         settings.auth.oauth_google_client_id

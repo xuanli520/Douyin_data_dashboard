@@ -4,15 +4,18 @@ import hashlib
 import secrets
 from datetime import datetime, timezone
 
-from fastapi import Depends
+from fastapi import Depends, Request
+from fastapi.responses import Response
+from fastapi.security.api_key import APIKeyCookie
 from fastapi_users.authentication import (
     AuthenticationBackend,
     BearerTransport,
-    CookieTransport,
     JWTStrategy,
 )
 from fastapi_users.password import PasswordHelper
+from starlette import status
 
+from src.auth.cookies import get_auth_request, should_secure_cookie
 from src.cache import CacheProtocol, get_cache
 from src.config import Settings, get_settings
 from src.shared.redis_keys import redis_keys
@@ -120,18 +123,90 @@ def get_refresh_token_manager(
     return RefreshTokenManager(cache, settings)
 
 
-_runtime_settings = get_settings()
+class DynamicAPIKeyCookie(APIKeyCookie):
+    def __init__(self) -> None:
+        super().__init__(name=get_settings().auth.access_cookie_name, auto_error=False)
+
+    async def __call__(self, request: Request) -> str | None:
+        self.model.name = get_settings().auth.access_cookie_name
+        api_key = request.cookies.get(self.model.name)
+        return self.check_api_key(api_key)
+
+
+class RuntimeCookieTransport:
+    scheme: APIKeyCookie
+
+    def __init__(self) -> None:
+        self.scheme = DynamicAPIKeyCookie()
+
+    @property
+    def cookie_name(self) -> str:
+        return get_settings().auth.access_cookie_name
+
+    @property
+    def cookie_max_age(self) -> int:
+        return get_settings().auth.jwt_lifetime_seconds
+
+    @property
+    def cookie_path(self) -> str:
+        return get_settings().auth.cookie_path
+
+    @property
+    def cookie_domain(self) -> None:
+        return None
+
+    @property
+    def cookie_secure(self) -> bool:
+        settings = get_settings()
+        return should_secure_cookie(get_auth_request(), settings)
+
+    @property
+    def cookie_httponly(self) -> bool:
+        return get_settings().auth.cookie_httponly
+
+    @property
+    def cookie_samesite(self) -> str:
+        return get_settings().auth.cookie_samesite
+
+    async def get_login_response(self, token: str) -> Response:
+        response = Response(status_code=status.HTTP_204_NO_CONTENT)
+        response.set_cookie(
+            self.cookie_name,
+            token,
+            max_age=self.cookie_max_age,
+            path=self.cookie_path,
+            domain=self.cookie_domain,
+            secure=self.cookie_secure,
+            httponly=self.cookie_httponly,
+            samesite=self.cookie_samesite,
+        )
+        return response
+
+    async def get_logout_response(self) -> Response:
+        response = Response(status_code=status.HTTP_204_NO_CONTENT)
+        response.set_cookie(
+            self.cookie_name,
+            "",
+            max_age=0,
+            path=self.cookie_path,
+            domain=self.cookie_domain,
+            secure=self.cookie_secure,
+            httponly=self.cookie_httponly,
+            samesite=self.cookie_samesite,
+        )
+        return response
+
+    @staticmethod
+    def get_openapi_login_responses_success():
+        return {status.HTTP_204_NO_CONTENT: {"model": None}}
+
+    @staticmethod
+    def get_openapi_logout_responses_success():
+        return {status.HTTP_204_NO_CONTENT: {"model": None}}
+
 
 bearer_transport = BearerTransport(tokenUrl="/auth/login")
-cookie_transport = CookieTransport(
-    cookie_name=_runtime_settings.auth.access_cookie_name,
-    cookie_max_age=_runtime_settings.auth.jwt_lifetime_seconds,
-    cookie_path=_runtime_settings.auth.cookie_path,
-    cookie_domain=None,
-    cookie_secure=_runtime_settings.auth.cookie_secure,
-    cookie_httponly=_runtime_settings.auth.cookie_httponly,
-    cookie_samesite=_runtime_settings.auth.cookie_samesite,
-)
+cookie_transport = RuntimeCookieTransport()
 
 bearer_auth_backend = AuthenticationBackend(
     name="jwt",
