@@ -5,6 +5,8 @@ from src.domains.experience.services import ExperienceQueryService
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
 from src.shared.redis_keys import redis_keys
 
+SEEDED_DATE_RANGE = "2026-03-01,2026-03-03"
+
 
 class _FakeRedisClient:
     def __init__(self) -> None:
@@ -148,7 +150,10 @@ async def test_get_overview_returns_weighted_score_and_alerts(test_db):
         await session.commit()
 
         service = ExperienceQueryService(repo=repo)
-        overview = await service.get_overview(shop_id=1001, date_range="30d")
+        overview = await service.get_overview(
+            shop_id=1001,
+            date_range=SEEDED_DATE_RANGE,
+        )
 
         assert overview.shop_id == 1001
         assert len(overview.dimensions) == 4
@@ -171,7 +176,7 @@ async def test_get_metric_detail_risk_contains_penalty_fields(test_db):
             shop_id=1001,
             metric_type="risk",
             period="30d",
-            date_range="30d",
+            date_range=SEEDED_DATE_RANGE,
         )
 
         assert detail.metric_type == "risk"
@@ -190,7 +195,10 @@ async def test_get_dashboard_kpis_contains_trend_and_change(test_db):
         await session.commit()
 
         service = ExperienceQueryService(repo=repo)
-        kpis = await service.get_dashboard_kpis(shop_id=1001, date_range="30d")
+        kpis = await service.get_dashboard_kpis(
+            shop_id=1001,
+            date_range=SEEDED_DATE_RANGE,
+        )
 
         assert kpis.shop_id == 1001
         assert len(kpis.kpis) == 3
@@ -224,13 +232,13 @@ async def test_get_metric_detail_uses_cache_on_repeated_query(test_db):
             shop_id=1001,
             metric_type="product",
             period="30d",
-            date_range="30d",
+            date_range=SEEDED_DATE_RANGE,
         )
         second = await service.get_metric_detail(
             shop_id=1001,
             metric_type="product",
             period="30d",
-            date_range="30d",
+            date_range=SEEDED_DATE_RANGE,
         )
 
         assert list_display_materials_call_count == 1
@@ -247,7 +255,10 @@ async def test_invalidate_shop_date_should_refresh_cached_dashboard_data(test_db
         cache = LocalCache()
         service = ExperienceQueryService(repo=repo, cache=cache)
 
-        first = await service.get_dashboard_overview(shop_id=1001, date_range="30d")
+        first = await service.get_dashboard_overview(
+            shop_id=1001,
+            date_range=SEEDED_DATE_RANGE,
+        )
 
         await repo.upsert_score(
             shop_id="1001",
@@ -261,11 +272,17 @@ async def test_invalidate_shop_date_should_refresh_cached_dashboard_data(test_db
         )
         await session.commit()
 
-        stale = await service.get_dashboard_overview(shop_id=1001, date_range="30d")
+        stale = await service.get_dashboard_overview(
+            shop_id=1001,
+            date_range=SEEDED_DATE_RANGE,
+        )
         assert stale.model_dump() == first.model_dump()
 
         await service.invalidate_shop_date(shop_id=1001, metric_date=date(2026, 3, 3))
-        refreshed = await service.get_dashboard_overview(shop_id=1001, date_range="30d")
+        refreshed = await service.get_dashboard_overview(
+            shop_id=1001,
+            date_range=SEEDED_DATE_RANGE,
+        )
 
         assert refreshed.cards["gmv"] != stale.cards["gmv"]
         await cache.close()

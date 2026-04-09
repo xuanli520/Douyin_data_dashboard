@@ -24,7 +24,6 @@ class CSVParser:
             detected = result.get("encoding")
             detected_lower = detected.lower() if detected else ""
             normalized_detected = {
-                "gb18030": "gbk",
                 "gb2312": "gbk",
                 "utf-8-sig": "utf-8",
             }.get(detected_lower, detected_lower)

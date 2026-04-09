@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings
 class AuthSettings(BaseSettings):
     jwt_secret: str
 
-    jwt_algorithm: Literal["HS256", "HS512", "RS256"] = Field(default="HS256")
+    jwt_algorithm: Literal["HS256", "HS512"] = Field(default="HS256")
     jwt_lifetime_seconds: int = Field(default=1800)
     refresh_token_lifetime_seconds: int = Field(default=2592000)
 

@@ -79,9 +79,12 @@ class RefreshTokenManager:
         if not value:
             return None
 
-        parts = value.split(":", maxsplit=2)
-        user_id = int(parts[0])
-        token_created_time = parts[2]
+        try:
+            parts = value.split(":", maxsplit=2)
+            user_id = int(parts[0])
+            token_created_time = parts[2]
+        except (IndexError, ValueError):
+            return None
 
         revoke_time = await self._cache.get(redis_keys.user_revoked(user_id=user_id))
         if revoke_time:

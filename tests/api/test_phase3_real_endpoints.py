@@ -9,6 +9,8 @@ from src.cache import get_cache
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
 from src.main import app
 
+SEEDED_DATE_RANGE = "2026-03-01,2026-03-03"
+
 
 class MockCaptchaService:
     async def verify(self, captcha_verify_param: str) -> bool:
@@ -183,19 +185,19 @@ async def seeded_phase3_data(test_db):
     "path,expected_keys",
     [
         (
-            "/api/v1/experience/overview?shop_id=1001&date_range=30d",
+            f"/api/v1/experience/overview?shop_id=1001&date_range={SEEDED_DATE_RANGE}",
             {"shop_id", "date_range", "overall_score", "dimensions", "alerts"},
         ),
         (
-            "/api/v1/experience/trend?shop_id=1001&dimension=product&date_range=30d",
+            f"/api/v1/experience/trend?shop_id=1001&dimension=product&date_range={SEEDED_DATE_RANGE}",
             {"shop_id", "dimension", "date_range", "trend"},
         ),
         (
-            "/api/v1/experience/issues?shop_id=1001&dimension=all&status=all&date_range=30d&page=1&size=20",
+            f"/api/v1/experience/issues?shop_id=1001&dimension=all&status=all&date_range={SEEDED_DATE_RANGE}&page=1&size=20",
             {"items", "meta"},
         ),
         (
-            "/api/v1/experience/drilldown/product?shop_id=1001&date_range=30d&page=1&size=20",
+            f"/api/v1/experience/drilldown/product?shop_id=1001&date_range={SEEDED_DATE_RANGE}&page=1&size=20",
             {
                 "shop_id",
                 "dimension",
@@ -209,7 +211,7 @@ async def seeded_phase3_data(test_db):
             },
         ),
         (
-            "/api/v1/metrics/product?shop_id=1001&date_range=30d&period=30d",
+            f"/api/v1/metrics/product?shop_id=1001&date_range={SEEDED_DATE_RANGE}&period=30d",
             {
                 "shop_id",
                 "metric_type",
@@ -256,7 +258,7 @@ async def test_phase3_experience_and_metrics_use_seeded_rows(
     )
 
     overview_resp = await api_client.get(
-        "/api/v1/experience/overview?shop_id=1001&date_range=30d",
+        f"/api/v1/experience/overview?shop_id=1001&date_range={SEEDED_DATE_RANGE}",
         headers=headers,
     )
     overview = overview_resp.json()["data"]
@@ -264,7 +266,7 @@ async def test_phase3_experience_and_metrics_use_seeded_rows(
     assert len(overview["dimensions"]) == 4
 
     issues_resp = await api_client.get(
-        "/api/v1/experience/issues?shop_id=1001&dimension=all&status=all&date_range=30d&page=1&size=20",
+        f"/api/v1/experience/issues?shop_id=1001&dimension=all&status=all&date_range={SEEDED_DATE_RANGE}&page=1&size=20",
         headers=headers,
     )
     issues = issues_resp.json()["data"]
@@ -272,7 +274,7 @@ async def test_phase3_experience_and_metrics_use_seeded_rows(
     assert any(item["id"] == "issue_1" for item in issues["items"])
 
     metric_resp = await api_client.get(
-        "/api/v1/metrics/product?shop_id=1001&date_range=30d&period=30d",
+        f"/api/v1/metrics/product?shop_id=1001&date_range={SEEDED_DATE_RANGE}&period=30d",
         headers=headers,
     )
     metric = metric_resp.json()["data"]

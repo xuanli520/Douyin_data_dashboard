@@ -9,6 +9,8 @@ from src.cache import get_cache
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
 from src.main import app
 
+SEEDED_DATE_RANGE = "2026-03-01,2026-03-03"
+
 
 class MockCaptchaService:
     async def verify(self, captcha_verify_param: str) -> bool:
@@ -191,7 +193,7 @@ async def test_experience_real_data_success_contract(
     )
 
     response = await api_client.get(
-        "/api/v1/experience/overview?shop_id=1001&date_range=30d",
+        f"/api/v1/experience/overview?shop_id=1001&date_range={SEEDED_DATE_RANGE}",
         headers=headers,
     )
     assert response.status_code == 200
@@ -202,7 +204,7 @@ async def test_experience_real_data_success_contract(
     assert "mock" not in payload["data"]
 
     metric_response = await api_client.get(
-        "/api/v1/metrics/product?shop_id=1001&date_range=30d&period=30d",
+        f"/api/v1/metrics/product?shop_id=1001&date_range={SEEDED_DATE_RANGE}&period=30d",
         headers=headers,
     )
     assert metric_response.status_code == 200
@@ -255,7 +257,7 @@ async def test_experience_real_data_issue_filters_should_work(
         "phase3real123",
     )
     response = await api_client.get(
-        "/api/v1/experience/issues?shop_id=1001&dimension=product&status=pending&date_range=30d&page=1&size=20",
+        f"/api/v1/experience/issues?shop_id=1001&dimension=product&status=pending&date_range={SEEDED_DATE_RANGE}&page=1&size=20",
         headers=headers,
     )
     assert response.status_code == 200
