@@ -1,9 +1,13 @@
+import os
+import tempfile
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+import pytest
 from sqlalchemy import create_engine, inspect, text
 
 from src.config import get_settings
@@ -13,6 +17,18 @@ from src.domains.scraping_rule.models import ScrapingRule
 from src.domains.task.models import TaskDefinition, TaskExecution
 
 _ = (CollectionJob, DataSource, ScrapingRule, TaskDefinition, TaskExecution)
+
+
+@contextmanager
+def _temp_sqlite_db(root: Path, prefix: str):
+    _ = root
+    fd, temp_name = tempfile.mkstemp(prefix=f"{prefix}-", suffix=".db")
+    os.close(fd)
+    db_path = Path(temp_name)
+    try:
+        yield db_path
+    finally:
+        db_path.unlink(missing_ok=True)
 
 
 async def _collect_schema(session):
@@ -96,81 +112,262 @@ async def test_schedule_columns_removed(test_db):
     assert "schedule" not in task_definition_columns
 
 
-def test_contract_migration_executes_through_alembic(tmp_path, monkeypatch):
-    db_path = tmp_path / "contract_migration_smoke.db"
-    sqlite_url = str(db_path).replace("\\", "/")
+def test_contract_migration_executes_through_alembic(monkeypatch):
     root = Path(__file__).resolve().parents[2]
+    with _temp_sqlite_db(root, "contract_migration_smoke") as db_path:
+        sqlite_url = str(db_path).replace("\\", "/")
 
-    connection = sqlite3.connect(db_path)
-    try:
-        connection.execute(
-            """
-            CREATE TABLE data_sources (
-                id INTEGER PRIMARY KEY,
-                name VARCHAR(100),
-                shop_id VARCHAR(50),
-                account_name VARCHAR(100),
-                extra_config TEXT
+        connection = sqlite3.connect(db_path)
+        try:
+            connection.execute(
+                """
+                CREATE TABLE data_sources (
+                    id INTEGER PRIMARY KEY,
+                    name VARCHAR(100),
+                    shop_id VARCHAR(50),
+                    account_name VARCHAR(100),
+                    extra_config TEXT
+                )
+                """
             )
-            """
-        )
-        connection.execute(
-            "CREATE INDEX ix_data_sources_shop_id ON data_sources (shop_id)"
-        )
-        connection.execute(
-            """
-            CREATE TABLE scraping_rules (
-                id INTEGER PRIMARY KEY,
-                schedule TEXT
+            connection.execute(
+                "CREATE INDEX ix_data_sources_shop_id ON data_sources (shop_id)"
             )
-            """
-        )
-        connection.execute(
-            """
-            CREATE TABLE task_definitions (
-                id INTEGER PRIMARY KEY,
-                schedule TEXT
+            connection.execute(
+                """
+                CREATE TABLE scraping_rules (
+                    id INTEGER PRIMARY KEY,
+                    schedule TEXT
+                )
+                """
             )
-            """
-        )
-        connection.execute(
-            "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)"
-        )
-        connection.execute(
-            "INSERT INTO alembic_version (version_num) VALUES ('c4f8d20e91a1')"
-        )
-        connection.commit()
-    finally:
-        connection.close()
+            connection.execute(
+                """
+                CREATE TABLE task_definitions (
+                    id INTEGER PRIMARY KEY,
+                    schedule TEXT
+                )
+                """
+            )
+            connection.execute(
+                "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)"
+            )
+            connection.execute(
+                "INSERT INTO alembic_version (version_num) VALUES ('c4f8d20e91a1')"
+            )
+            connection.commit()
+        finally:
+            connection.close()
 
-    monkeypatch.setenv("DB__DRIVER", "sqlite")
-    monkeypatch.setenv("DB__DATABASE", sqlite_url)
-    get_settings.cache_clear()
-    try:
-        config = Config(str(root / "alembic.ini"))
-        expected_head = ScriptDirectory.from_config(config).get_current_head()
-        command.upgrade(config, "head")
-    finally:
+        monkeypatch.setenv("DB__DRIVER", "sqlite")
+        monkeypatch.setenv("DB__DATABASE", sqlite_url)
         get_settings.cache_clear()
+        try:
+            config = Config(str(root / "alembic.ini"))
+            expected_head = ScriptDirectory.from_config(config).get_current_head()
+            command.upgrade(config, "head")
+        finally:
+            get_settings.cache_clear()
 
-    engine = create_engine(f"sqlite:///{sqlite_url}")
-    with engine.connect() as conn:
-        inspector = inspect(conn)
-        data_source_columns = {
-            column["name"] for column in inspector.get_columns("data_sources")
-        }
-        scraping_rule_columns = {
-            column["name"] for column in inspector.get_columns("scraping_rules")
-        }
-        task_definition_columns = {
-            column["name"] for column in inspector.get_columns("task_definitions")
-        }
-        version_num = conn.execute(
-            text("SELECT version_num FROM alembic_version")
-        ).scalar()
+        engine = create_engine(f"sqlite:///{sqlite_url}")
+        try:
+            with engine.connect() as conn:
+                inspector = inspect(conn)
+                data_source_columns = {
+                    column["name"] for column in inspector.get_columns("data_sources")
+                }
+                scraping_rule_columns = {
+                    column["name"] for column in inspector.get_columns("scraping_rules")
+                }
+                task_definition_columns = {
+                    column["name"]
+                    for column in inspector.get_columns("task_definitions")
+                }
+                version_num = conn.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar()
+        finally:
+            engine.dispose()
 
-    assert "shop_id" not in data_source_columns
-    assert "account_name" not in data_source_columns
-    assert "schedule" not in scraping_rule_columns
-    assert "schedule" not in task_definition_columns
-    assert version_num == expected_head
+        assert "shop_id" not in data_source_columns
+        assert "account_name" not in data_source_columns
+        assert "schedule" not in scraping_rule_columns
+        assert "schedule" not in task_definition_columns
+        assert version_num == expected_head
+
+
+def test_unique_task_type_migration_rejects_duplicate_definitions(monkeypatch):
+    root = Path(__file__).resolve().parents[2]
+    with _temp_sqlite_db(root, "duplicate_task_type_migration") as db_path:
+        sqlite_url = str(db_path).replace("\\", "/")
+
+        connection = sqlite3.connect(db_path)
+        try:
+            connection.executescript(
+                """
+                CREATE TABLE task_definitions (
+                    id INTEGER PRIMARY KEY,
+                    name VARCHAR(100) NOT NULL,
+                    task_type VARCHAR(100) NOT NULL,
+                    status VARCHAR(50),
+                    config TEXT,
+                    created_by_id INTEGER,
+                    updated_by_id INTEGER,
+                    created_at DATETIME,
+                    updated_at DATETIME
+                );
+                CREATE INDEX ix_task_definitions_task_type
+                ON task_definitions (task_type);
+                CREATE TABLE task_executions (
+                    id INTEGER PRIMARY KEY,
+                    task_id INTEGER NOT NULL,
+                    created_at DATETIME
+                );
+                INSERT INTO task_definitions (
+                    id,
+                    name,
+                    task_type,
+                    status,
+                    config,
+                    created_at,
+                    updated_at
+                ) VALUES
+                    (
+                        1,
+                        'primary dashboard task',
+                        'SHOP_DASHBOARD_COLLECTION',
+                        'ACTIVE',
+                        '{"window":"primary"}',
+                        '2026-03-17T00:00:00',
+                        '2026-03-17T00:00:00'
+                    ),
+                    (
+                        2,
+                        'secondary dashboard task',
+                        'SHOP_DASHBOARD_COLLECTION',
+                        'DISABLED',
+                        '{"window":"secondary"}',
+                        '2026-03-17T00:00:00',
+                        '2026-03-17T00:00:00'
+                    );
+                INSERT INTO task_executions (id, task_id, created_at) VALUES
+                    (11, 1, '2026-03-17T00:00:00'),
+                    (12, 2, '2026-03-17T00:00:00');
+                CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL);
+                INSERT INTO alembic_version (version_num) VALUES ('20260317_01');
+                """
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        monkeypatch.setenv("DB__DRIVER", "sqlite")
+        monkeypatch.setenv("DB__DATABASE", sqlite_url)
+        get_settings.cache_clear()
+        try:
+            config = Config(str(root / "alembic.ini"))
+            with pytest.raises(
+                RuntimeError,
+                match="Duplicate task_definitions.task_type",
+            ):
+                command.upgrade(config, "head")
+        finally:
+            get_settings.cache_clear()
+
+        engine = create_engine(f"sqlite:///{sqlite_url}")
+        try:
+            with engine.connect() as conn:
+                task_definition_rows = (
+                    conn.execute(
+                        text(
+                            """
+                        SELECT id, name, task_type, status, config
+                        FROM task_definitions
+                        ORDER BY id
+                        """
+                        )
+                    )
+                    .mappings()
+                    .all()
+                )
+                task_execution_rows = (
+                    conn.execute(
+                        text(
+                            """
+                        SELECT id, task_id
+                        FROM task_executions
+                        ORDER BY id
+                        """
+                        )
+                    )
+                    .mappings()
+                    .all()
+                )
+                version_num = conn.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar()
+        finally:
+            engine.dispose()
+
+        assert [row["id"] for row in task_definition_rows] == [1, 2]
+        assert [row["task_id"] for row in task_execution_rows] == [1, 2]
+        assert version_num == "20260317_01"
+
+
+def test_audit_logs_action_index_round_trips_on_single_step_downgrade(monkeypatch):
+    root = Path(__file__).resolve().parents[2]
+    with _temp_sqlite_db(root, "audit_logs_action_index") as db_path:
+        sqlite_url = str(db_path).replace("\\", "/")
+
+        connection = sqlite3.connect(db_path)
+        try:
+            connection.executescript(
+                """
+                CREATE TABLE audit_logs (
+                    id INTEGER PRIMARY KEY,
+                    action VARCHAR(100)
+                );
+                CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL);
+                INSERT INTO alembic_version (version_num) VALUES ('6a799160424b');
+                """
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        monkeypatch.setenv("DB__DRIVER", "sqlite")
+        monkeypatch.setenv("DB__DATABASE", sqlite_url)
+        get_settings.cache_clear()
+        try:
+            config = Config(str(root / "alembic.ini"))
+            command.upgrade(config, "06038dbc9807")
+            engine = create_engine(f"sqlite:///{sqlite_url}")
+            try:
+                with engine.connect() as conn:
+                    inspector = inspect(conn)
+                    upgraded_indexes = {
+                        item["name"] for item in inspector.get_indexes("audit_logs")
+                    }
+            finally:
+                engine.dispose()
+            assert "ix_audit_logs_action" in upgraded_indexes
+
+            command.downgrade(config, "6a799160424b")
+        finally:
+            get_settings.cache_clear()
+
+        engine = create_engine(f"sqlite:///{sqlite_url}")
+        try:
+            with engine.connect() as conn:
+                inspector = inspect(conn)
+                downgraded_indexes = {
+                    item["name"] for item in inspector.get_indexes("audit_logs")
+                }
+                version_num = conn.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar()
+        finally:
+            engine.dispose()
+
+        assert "ix_audit_logs_action" not in downgraded_indexes
+        assert version_num == "6a799160424b"
