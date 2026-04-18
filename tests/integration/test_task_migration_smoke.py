@@ -369,5 +369,134 @@ def test_audit_logs_action_index_round_trips_on_single_step_downgrade(monkeypatc
         finally:
             engine.dispose()
 
-        assert "ix_audit_logs_action" not in downgraded_indexes
-        assert version_num == "6a799160424b"
+    assert "ix_audit_logs_action" not in downgraded_indexes
+    assert version_num == "6a799160424b"
+
+
+def test_init_downgrade_tolerates_missing_audit_logs_action_index(monkeypatch):
+    root = Path(__file__).resolve().parents[2]
+    with _temp_sqlite_db(root, "init_downgrade_missing_audit_index") as db_path:
+        sqlite_url = str(db_path).replace("\\", "/")
+
+        connection = sqlite3.connect(db_path)
+        try:
+            connection.executescript(
+                """
+                CREATE TABLE permissions (
+                    id INTEGER PRIMARY KEY,
+                    code VARCHAR(150),
+                    name VARCHAR(100),
+                    description VARCHAR(255),
+                    module VARCHAR(100),
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL
+                );
+                CREATE UNIQUE INDEX ix_permissions_code ON permissions (code);
+
+                CREATE TABLE roles (
+                    id INTEGER PRIMARY KEY,
+                    name VARCHAR(100),
+                    description VARCHAR(255),
+                    is_system BOOLEAN NOT NULL,
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL
+                );
+                CREATE UNIQUE INDEX ix_roles_name ON roles (name);
+
+                CREATE TABLE users (
+                    id INTEGER PRIMARY KEY,
+                    username VARCHAR(50),
+                    email VARCHAR(320),
+                    hashed_password VARCHAR(1024),
+                    is_active BOOLEAN NOT NULL,
+                    is_superuser BOOLEAN NOT NULL,
+                    is_verified BOOLEAN NOT NULL,
+                    gender VARCHAR(20),
+                    phone VARCHAR(20),
+                    department VARCHAR(100),
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL
+                );
+                CREATE UNIQUE INDEX ix_users_email ON users (email);
+                CREATE UNIQUE INDEX ix_users_username ON users (username);
+
+                CREATE TABLE audit_logs (
+                    id INTEGER PRIMARY KEY,
+                    occurred_at DATETIME NOT NULL,
+                    request_id VARCHAR(36),
+                    actor_id INTEGER,
+                    action VARCHAR(64) NOT NULL,
+                    resource_type VARCHAR(64),
+                    resource_id TEXT,
+                    result VARCHAR(32) NOT NULL,
+                    user_agent TEXT,
+                    ip VARCHAR(45),
+                    extra TEXT,
+                    FOREIGN KEY(actor_id) REFERENCES users(id) ON DELETE SET NULL
+                );
+                CREATE INDEX ix_audit_logs_actor_id ON audit_logs (actor_id);
+                CREATE INDEX ix_audit_logs_occurred_at ON audit_logs (occurred_at);
+
+                CREATE TABLE oauth_accounts (
+                    id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    oauth_name VARCHAR(100) NOT NULL,
+                    access_token VARCHAR(1024) NOT NULL,
+                    expires_at INTEGER,
+                    refresh_token VARCHAR(1024),
+                    account_id VARCHAR(320) NOT NULL,
+                    account_email VARCHAR(320) NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users(id)
+                );
+                CREATE INDEX ix_oauth_accounts_account_id
+                ON oauth_accounts (account_id);
+                CREATE INDEX ix_oauth_accounts_oauth_name
+                ON oauth_accounts (oauth_name);
+                CREATE INDEX ix_oauth_accounts_user_id
+                ON oauth_accounts (user_id);
+
+                CREATE TABLE role_permissions (
+                    role_id INTEGER NOT NULL,
+                    permission_id INTEGER NOT NULL,
+                    assigned_at DATETIME NOT NULL,
+                    PRIMARY KEY (role_id, permission_id),
+                    FOREIGN KEY(role_id) REFERENCES roles(id),
+                    FOREIGN KEY(permission_id) REFERENCES permissions(id)
+                );
+
+                CREATE TABLE user_roles (
+                    user_id INTEGER NOT NULL,
+                    role_id INTEGER NOT NULL,
+                    assigned_at DATETIME NOT NULL,
+                    PRIMARY KEY (user_id, role_id),
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(role_id) REFERENCES roles(id)
+                );
+
+                CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL);
+                INSERT INTO alembic_version (version_num) VALUES ('000000000000');
+                """
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        monkeypatch.setenv("DB__DRIVER", "sqlite")
+        monkeypatch.setenv("DB__DATABASE", sqlite_url)
+        get_settings.cache_clear()
+        try:
+            config = Config(str(root / "alembic.ini"))
+            command.downgrade(config, "base")
+        finally:
+            get_settings.cache_clear()
+
+        engine = create_engine(f"sqlite:///{sqlite_url}")
+        try:
+            with engine.connect() as conn:
+                inspector = inspect(conn)
+                remaining_tables = set(inspector.get_table_names())
+        finally:
+            engine.dispose()
+
+        assert "audit_logs" not in remaining_tables
+        assert "users" not in remaining_tables
