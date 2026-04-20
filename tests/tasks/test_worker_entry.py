@@ -1,3 +1,6 @@
+from types import SimpleNamespace
+
+
 def test_tasks_package_imports_task_modules():
     import src.tasks as tasks
 
@@ -186,3 +189,59 @@ def test_worker_run_queue_supports_dead_letter_queue(monkeypatch):
 
     module.run_queue("etl_orders_dlx", etl_processes=2)
     assert calls == ["etl_orders_dlx"]
+
+
+def test_worker_main_keeps_etl_queue_alive_when_multiprocess_runner_returns(
+    monkeypatch,
+):
+    from src.tasks import worker as module
+
+    calls = []
+
+    monkeypatch.setattr(
+        module,
+        "_parse_args",
+        lambda: SimpleNamespace(queue="etl_orders", etl_processes=2),
+    )
+    monkeypatch.setattr(
+        module,
+        "_queue_runners",
+        lambda _etl_processes: {"etl_orders": lambda: calls.append("runner")},
+    )
+    monkeypatch.setattr(module, "_init_worker_db", lambda: calls.append("init_db"))
+    monkeypatch.setattr(module, "_close_worker_db", lambda: calls.append("close_db"))
+    monkeypatch.setattr(
+        module,
+        "_start_worker_loop",
+        lambda: (SimpleNamespace(), SimpleNamespace()),
+    )
+    monkeypatch.setattr(
+        module,
+        "_stop_worker_loop",
+        lambda _loop, _thread: calls.append("stop_loop"),
+    )
+    monkeypatch.setattr(module.signal, "signal", lambda *_args: None)
+
+    class _FakeThread:
+        def __init__(self, target, name, daemon=False):
+            self._target = target
+            self.name = name
+
+        def start(self):
+            self._target()
+
+        def is_alive(self):
+            return False
+
+    def _fake_wait(stop_event, thread=None):
+        calls.append(("wait", thread))
+        stop_event.set()
+
+    monkeypatch.setattr(module, "Thread", _FakeThread)
+    monkeypatch.setattr(module, "_wait_forever", _fake_wait)
+
+    module.main()
+
+    assert calls[0:2] == ["init_db", "runner"]
+    assert ("wait", None) in calls
+    assert calls[-2:] == ["close_db", "stop_loop"]

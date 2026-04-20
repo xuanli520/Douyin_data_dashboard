@@ -16,6 +16,8 @@ from src.tasks.etl import products as etl_products
 
 logger = logging.getLogger(__name__)
 
+_MULTIPROCESS_QUEUES = frozenset({"etl_orders", "etl_products"})
+
 
 def _queue_runners(etl_processes: int) -> dict[str, Callable[[], None]]:
     return {
@@ -48,6 +50,10 @@ def _start_runner_thread(queue_name: str, runner: Callable[[], None]) -> Thread:
     thread = Thread(target=runner, name=f"worker-{queue_name}", daemon=True)
     thread.start()
     return thread
+
+
+def _runner_thread_to_watch(queue_name: str, thread: Thread) -> Thread | None:
+    return None if queue_name in _MULTIPROCESS_QUEUES else thread
 
 
 def _wait_forever(
@@ -162,7 +168,9 @@ def main() -> None:
             if runner is None:
                 raise ValueError(f"unsupported queue name: {args.queue}")
             runner_thread = _start_runner_thread(args.queue, runner)
-            _wait_forever(stop_event, runner_thread)
+            _wait_forever(
+                stop_event, _runner_thread_to_watch(args.queue, runner_thread)
+            )
         else:
             run_all(etl_processes=args.etl_processes, stop_event=stop_event)
     finally:

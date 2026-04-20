@@ -3,7 +3,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import fakeredis
-from redis.exceptions import RedisError
+import pytest
+from redis.exceptions import RedisError, ResponseError, WatchError
 
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.tasks.collection import douyin_shop_dashboard as collection_module
@@ -129,6 +130,122 @@ def test_idempotency_cache_result_handles_redis_error(caplog):
         helper.cache_result("shop-1:2026-03-03", {"status": "success"})
 
     assert "failed to cache idempotency result" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "error_message",
+    [
+        "unknown command 'eval'",
+        "lua scripts are disabled",
+    ],
+)
+def test_idempotency_eval_unsupported_fallback_uses_transaction(error_message):
+    redis_client = fakeredis.FakeRedis(decode_responses=True)
+    helper = FunboostIdempotencyHelper(redis_client, "sync_shop_dashboard")
+    business_key = "shop-1:2026-03-04"
+    lock_key = f"douyin:lock:sync_shop_dashboard:{business_key}"
+
+    def _raise_eval_unsupported(*_args):
+        raise ResponseError(error_message)
+
+    redis_client.eval = _raise_eval_unsupported
+
+    token = helper.acquire_lock(business_key, ttl=120)
+    assert token is not None
+
+    assert helper.refresh_lock(business_key, token, 600)
+    assert redis_client.ttl(lock_key) > 120
+
+    helper.release_lock(business_key, token)
+    assert redis_client.get(lock_key) is None
+
+
+class _TransientEvalRedis:
+    def __init__(self):
+        self.get_calls = 0
+        self.expire_calls = 0
+        self.delete_calls = 0
+
+    def eval(self, *_args):
+        raise RedisError("connection lost")
+
+    def get(self, _key):
+        self.get_calls += 1
+        raise AssertionError("transient eval failure must not call get")
+
+    def expire(self, *_args):
+        self.expire_calls += 1
+        raise AssertionError("transient eval failure must not call expire")
+
+    def delete(self, *_args):
+        self.delete_calls += 1
+        raise AssertionError("transient eval failure must not call delete")
+
+
+def test_idempotency_transient_eval_error_does_not_use_non_atomic_fallback():
+    redis_client = _TransientEvalRedis()
+    helper = FunboostIdempotencyHelper(redis_client, "sync_shop_dashboard")
+
+    assert not helper.refresh_lock("shop-1:2026-03-05", "token-a", 600)
+    helper.release_lock("shop-1:2026-03-05", "token-a")
+
+    assert redis_client.get_calls == 0
+    assert redis_client.expire_calls == 0
+    assert redis_client.delete_calls == 0
+
+
+class _RacingPipeline:
+    def __init__(self, redis_client):
+        self.redis_client = redis_client
+        self.key = ""
+
+    def watch(self, key):
+        self.key = key
+
+    def get(self, key):
+        return self.redis_client.store.get(key)
+
+    def multi(self):
+        self.redis_client.store[self.key] = "token-b"
+
+    def expire(self, *_args):
+        return None
+
+    def delete(self, *_args):
+        return None
+
+    def execute(self):
+        raise WatchError("lock owner changed")
+
+    def reset(self):
+        return None
+
+
+class _EvalUnsupportedRacingRedis:
+    def __init__(self):
+        self.store: dict[str, str] = {}
+
+    def eval(self, *_args):
+        raise ResponseError("unknown command 'eval'")
+
+    def pipeline(self, transaction=True):
+        assert transaction is True
+        return _RacingPipeline(self)
+
+
+def test_idempotency_transaction_fallback_does_not_mutate_new_owner_lock():
+    redis_client = _EvalUnsupportedRacingRedis()
+    helper = FunboostIdempotencyHelper(redis_client, "sync_shop_dashboard")
+    business_key = "shop-1:2026-03-06"
+    lock_key = f"douyin:lock:sync_shop_dashboard:{business_key}"
+    redis_client.store[lock_key] = "token-a"
+
+    assert not helper.refresh_lock(business_key, "token-a", 600)
+    assert redis_client.store[lock_key] == "token-b"
+
+    redis_client.store[lock_key] = "token-a"
+    helper.release_lock(business_key, "token-a")
+    assert redis_client.store[lock_key] == "token-b"
 
 
 def test_build_business_key_supports_extended_dedupe_variables():
