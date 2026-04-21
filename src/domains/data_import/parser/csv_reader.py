@@ -1,7 +1,8 @@
 import csv
-import chardet
 from pathlib import Path
-from typing import Generator, Callable
+from typing import Callable, Generator
+
+import chardet
 
 
 class CSVParser:
@@ -20,15 +21,12 @@ class CSVParser:
             raw_data = f.read(sample_size)
             if not raw_data:
                 return "utf-8"
+            if raw_data.startswith(b"\xef\xbb\xbf"):
+                return "utf-8-sig"
             result = chardet.detect(raw_data)
             detected = result.get("encoding")
             confidence = result.get("confidence") or 0
             detected_lower = detected.lower() if detected else ""
-            normalized_detected = {
-                "gb2312": "gbk",
-                "utf-8-sig": "utf-8",
-            }.get(detected_lower, detected_lower)
-            candidates: list[str] = []
             ignored_detected = {
                 "utf-8",
                 "ascii",
@@ -36,22 +34,25 @@ class CSVParser:
                 "windows-1250",
                 "windows-1252",
             }
-            if (
-                normalized_detected
-                and normalized_detected not in ignored_detected
-                and confidence >= 0.7
-            ):
-                candidates.append(normalized_detected)
+            candidates: list[str] = []
             candidates.append("utf-8")
             if (
-                normalized_detected
-                and normalized_detected not in candidates
-                and normalized_detected not in ignored_detected
+                detected
+                and detected_lower not in ignored_detected
+                and confidence >= 0.7
             ):
-                candidates.append(normalized_detected)
-            for encoding in ("gbk", "ascii"):
-                if encoding not in candidates:
-                    candidates.append(encoding)
+                if detected_lower == "gb2312":
+                    candidates.extend(["gbk", "gb18030"])
+                elif detected_lower == "gb18030":
+                    try:
+                        raw_data.decode("gbk")
+                    except UnicodeDecodeError:
+                        candidates.append("gb18030")
+                    else:
+                        candidates.extend(["gbk", "gb18030"])
+                else:
+                    candidates.append(detected_lower)
+            candidates.extend(["gbk", "gb18030"])
             for encoding in candidates:
                 try:
                     raw_data.decode(encoding)
@@ -94,3 +95,4 @@ class CSVParser:
             encoding = self._detect_encoding()
             self._row_count = self._count_rows(encoding)
         return self._row_count
+
