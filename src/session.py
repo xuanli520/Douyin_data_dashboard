@@ -1,6 +1,7 @@
 import ast
 import asyncio
 import importlib
+import logging
 import threading
 from collections.abc import AsyncGenerator, Coroutine
 from dataclasses import dataclass
@@ -9,10 +10,12 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from sqlalchemy import event
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 T = TypeVar("T")
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -30,6 +33,39 @@ _worker_loop_lock = threading.Lock()
 def _get_db_state() -> _DbState | None:
     with _db_state_lock:
         return _db_state
+
+
+def _get_engine_options(url: str, echo: bool) -> dict[str, Any]:
+    options: dict[str, Any] = {"echo": echo}
+    try:
+        if make_url(url).get_backend_name() == "sqlite":
+            return options
+        from src.config import get_settings
+
+        db_settings = get_settings().db
+    except Exception as exc:
+        logger.warning("Failed to load database pool settings, using defaults: %s", exc)
+        return options
+
+    options.update(
+        pool_size=db_settings.pool_size,
+        max_overflow=db_settings.max_overflow,
+        pool_recycle=db_settings.pool_recycle,
+    )
+    return options
+
+
+def _get_run_coro_timeout_seconds() -> float:
+    try:
+        from src.config import get_settings
+
+        timeout_seconds = float(get_settings().db.run_coro_timeout_seconds)
+    except Exception as exc:
+        logger.warning(
+            "Failed to load run_coro timeout setting, using default: %s", exc
+        )
+        return 30.0
+    return timeout_seconds if timeout_seconds > 0 else 30.0
 
 
 def __getattr__(name: str) -> Any:
@@ -84,31 +120,35 @@ def _load_sqlmodel_models() -> None:
 async def init_db(url: str, echo: bool = False) -> None:
     global _db_state
     _load_sqlmodel_models()
-    old_engine: AsyncEngine | None = None
     with _db_state_lock:
         if _db_state is not None:
             return
-        next_engine = create_async_engine(url, echo=echo)
-        try:
-            if next_engine.dialect.name == "sqlite":
 
-                @event.listens_for(next_engine.sync_engine, "connect")
-                def set_sqlite_pragma(dbapi_conn, connection_record):
-                    cursor = dbapi_conn.cursor()
-                    cursor.execute("PRAGMA foreign_keys=ON")
-                    cursor.close()
+    next_engine = create_async_engine(url, **_get_engine_options(url, echo))
+    try:
+        if next_engine.dialect.name == "sqlite":
 
-            next_factory = sessionmaker(
-                next_engine, class_=AsyncSession, expire_on_commit=False
-            )
-        except Exception:
-            await next_engine.dispose()
-            raise
+            @event.listens_for(next_engine.sync_engine, "connect")
+            def set_sqlite_pragma(dbapi_conn, connection_record):
+                cursor = dbapi_conn.cursor()
+                cursor.execute("PRAGMA foreign_keys=ON")
+                cursor.close()
 
-        _db_state = _DbState(engine=next_engine, session_factory=next_factory)
+        next_factory = sessionmaker(
+            next_engine, class_=AsyncSession, expire_on_commit=False
+        )
+    except Exception:
+        await next_engine.dispose()
+        raise
 
-    if old_engine is not None:
-        await old_engine.dispose()
+    dispose_engine = False
+    with _db_state_lock:
+        if _db_state is None:
+            _db_state = _DbState(engine=next_engine, session_factory=next_factory)
+            return
+        dispose_engine = True
+    if dispose_engine:
+        await next_engine.dispose()
 
 
 async def close_db() -> None:
@@ -123,7 +163,7 @@ async def close_db() -> None:
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    state = _db_state
+    state = _get_db_state()
     if state is None:
         raise RuntimeError("Database not initialized. Call init_db() first.")
     async with state.session_factory() as session:
@@ -159,7 +199,7 @@ def run_coro(coro: Coroutine[Any, Any, T]) -> T:
 
     future = asyncio.run_coroutine_threadsafe(coro, loop)
     try:
-        return future.result(timeout=500)
+        return future.result(timeout=_get_run_coro_timeout_seconds())
     except TimeoutError:
         future.cancel()
         raise
