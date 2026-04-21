@@ -1,6 +1,7 @@
 import ast
 import asyncio
 import importlib
+import logging
 import threading
 from collections.abc import AsyncGenerator, Coroutine
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engin
 from sqlalchemy.orm import sessionmaker
 
 T = TypeVar("T")
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -41,7 +43,8 @@ def _get_engine_options(url: str, echo: bool) -> dict[str, Any]:
         from src.config import get_settings
 
         db_settings = get_settings().db
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to load database pool settings, using defaults: %s", exc)
         return options
 
     options.update(
@@ -57,7 +60,10 @@ def _get_run_coro_timeout_seconds() -> float:
         from src.config import get_settings
 
         timeout_seconds = float(get_settings().db.run_coro_timeout_seconds)
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "Failed to load run_coro timeout setting, using default: %s", exc
+        )
         return 30.0
     return timeout_seconds if timeout_seconds > 0 else 30.0
 
@@ -114,35 +120,35 @@ def _load_sqlmodel_models() -> None:
 async def init_db(url: str, echo: bool = False) -> None:
     global _db_state
     _load_sqlmodel_models()
-    next_engine: AsyncEngine | None = None
-    next_factory: sessionmaker[AsyncSession] | None = None
-    init_error: Exception | None = None
     with _db_state_lock:
         if _db_state is not None:
             return
-        next_engine = create_async_engine(url, **_get_engine_options(url, echo))
-        try:
-            if next_engine.dialect.name == "sqlite":
 
-                @event.listens_for(next_engine.sync_engine, "connect")
-                def set_sqlite_pragma(dbapi_conn, connection_record):
-                    cursor = dbapi_conn.cursor()
-                    cursor.execute("PRAGMA foreign_keys=ON")
-                    cursor.close()
+    next_engine = create_async_engine(url, **_get_engine_options(url, echo))
+    try:
+        if next_engine.dialect.name == "sqlite":
 
-            next_factory = sessionmaker(
-                next_engine, class_=AsyncSession, expire_on_commit=False
-            )
-        except Exception as exc:
-            init_error = exc
-        else:
+            @event.listens_for(next_engine.sync_engine, "connect")
+            def set_sqlite_pragma(dbapi_conn, connection_record):
+                cursor = dbapi_conn.cursor()
+                cursor.execute("PRAGMA foreign_keys=ON")
+                cursor.close()
+
+        next_factory = sessionmaker(
+            next_engine, class_=AsyncSession, expire_on_commit=False
+        )
+    except Exception:
+        await next_engine.dispose()
+        raise
+
+    dispose_engine = False
+    with _db_state_lock:
+        if _db_state is None:
             _db_state = _DbState(engine=next_engine, session_factory=next_factory)
             return
-
-    if next_engine is not None:
+        dispose_engine = True
+    if dispose_engine:
         await next_engine.dispose()
-    if init_error is not None:
-        raise init_error
 
 
 async def close_db() -> None:
