@@ -1,7 +1,8 @@
 import csv
-import chardet
 from pathlib import Path
-from typing import Generator, Callable
+from typing import Callable, Generator
+
+import chardet
 
 
 class CSVParser:
@@ -20,20 +21,31 @@ class CSVParser:
             raw_data = f.read(sample_size)
             if not raw_data:
                 return "utf-8"
+            if raw_data.startswith(b"\xef\xbb\xbf"):
+                return "utf-8-sig"
             result = chardet.detect(raw_data)
             detected = result.get("encoding")
             detected_lower = detected.lower() if detected else ""
             candidates: list[str] = []
+            candidates.append("utf-8")
             if detected and detected_lower not in {
                 "ascii",
                 "macroman",
                 "windows-1250",
                 "windows-1252",
             }:
-                candidates.append(detected)
-            candidates.extend(["utf-8", "gbk"])
-            if detected and detected not in candidates:
-                candidates.append(detected)
+                if detected_lower == "gb2312":
+                    candidates.extend(["gbk", "gb18030"])
+                elif detected_lower == "gb18030":
+                    try:
+                        raw_data.decode("gbk")
+                    except UnicodeDecodeError:
+                        candidates.append("gb18030")
+                    else:
+                        candidates.extend(["gbk", "gb18030"])
+                else:
+                    candidates.append(detected_lower)
+            candidates.extend(["gbk", "gb18030"])
             for encoding in candidates:
                 try:
                     raw_data.decode(encoding)

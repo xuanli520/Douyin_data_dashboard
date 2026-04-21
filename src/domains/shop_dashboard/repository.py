@@ -312,6 +312,12 @@ class ShopDashboardRepository(BaseRepository):
             end_date=end_date,
         )
 
+    async def get_latest_metric_date(self, *, shop_id: str) -> date | None:
+        stmt = select(func.max(ShopDashboardScore.metric_date)).where(
+            ShopDashboardScore.shop_id == shop_id
+        )
+        return (await self.session.execute(stmt)).scalar_one()
+
     async def list_shops(self) -> list[dict[str, Any]]:
         latest_metric_date_subquery = (
             select(

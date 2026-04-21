@@ -58,7 +58,10 @@ class ExperienceQueryService:
         shop_id: int,
         date_range: str | None,
     ) -> ExperienceOverviewResponse:
-        start_date, end_date, normalized_range = self._parse_date_range(date_range)
+        start_date, end_date, response_range, _ = await self._resolve_date_range(
+            shop_id=shop_id,
+            date_range=date_range,
+        )
         materials = await self.repo.list_display_materials(
             shop_id=str(shop_id),
             start_date=start_date,
@@ -66,7 +69,7 @@ class ExperienceQueryService:
         )
         payload = build_overview(
             shop_id=shop_id,
-            date_range=normalized_range,
+            date_range=response_range,
             materials=materials,
             dimension_weights=DIMENSION_WEIGHTS,
         )
@@ -79,7 +82,10 @@ class ExperienceQueryService:
         dimension: str | None,
         date_range: str | None,
     ) -> ExperienceTrendResponse:
-        start_date, end_date, normalized_range = self._parse_date_range(date_range)
+        start_date, end_date, response_range, _ = await self._resolve_date_range(
+            shop_id=shop_id,
+            date_range=date_range,
+        )
         normalized_dimension = normalize_dimension(dimension)
         materials = await self.repo.list_display_materials(
             shop_id=str(shop_id),
@@ -89,7 +95,7 @@ class ExperienceQueryService:
         payload = build_trend(
             shop_id=shop_id,
             dimension=normalized_dimension,
-            date_range=normalized_range,
+            date_range=response_range,
             materials=materials,
         )
         return ExperienceTrendResponse.model_validate(payload)
@@ -104,7 +110,15 @@ class ExperienceQueryService:
         page: int,
         size: int,
     ) -> ExperienceIssueListResponse:
-        start_date, end_date, normalized_range = self._parse_date_range(date_range)
+        (
+            start_date,
+            end_date,
+            response_range,
+            cache_range,
+        ) = await self._resolve_date_range(
+            shop_id=shop_id,
+            date_range=date_range,
+        )
         normalized_dimension = normalize_dimension_with_all(dimension)
         normalized_status = (
             "all" if status in {None, "", "all"} else str(status).strip() or "all"
@@ -113,7 +127,7 @@ class ExperienceQueryService:
             shop_id=shop_id,
             dimension=normalized_dimension,
             status=normalized_status,
-            date_range=normalized_range,
+            date_range=cache_range,
             page=page,
             size=size,
         )
@@ -128,7 +142,7 @@ class ExperienceQueryService:
         )
         payload = build_issues(
             shop_id=shop_id,
-            date_range=normalized_range,
+            date_range=response_range,
             materials=materials,
             dimension=normalized_dimension,
             status=normalized_status,
@@ -154,12 +168,20 @@ class ExperienceQueryService:
         period: str,
         date_range: str | None,
     ) -> MetricDetailResponse:
-        start_date, end_date, normalized_range = self._parse_date_range(date_range)
+        (
+            start_date,
+            end_date,
+            response_range,
+            cache_range,
+        ) = await self._resolve_date_range(
+            shop_id=shop_id,
+            date_range=date_range,
+        )
         normalized_dimension = normalize_dimension(metric_type)
         cache_key = redis_keys.experience_metrics(
             shop_id=shop_id,
             dimension=normalized_dimension,
-            date_range=normalized_range,
+            date_range=cache_range,
         )
         cached = await self._cache_get_model(cache_key, MetricDetailResponse)
         if cached is not None:
@@ -176,7 +198,7 @@ class ExperienceQueryService:
             shop_id=shop_id,
             metric_type=normalized_dimension,
             period=period,
-            date_range=normalized_range,
+            date_range=response_range,
             materials=materials,
         )
         response = MetricDetailResponse.model_validate(payload)
@@ -232,10 +254,18 @@ class ExperienceQueryService:
         shop_id: int,
         date_range: str | None,
     ) -> DashboardOverviewResponse:
-        start_date, end_date, normalized_range = self._parse_date_range(date_range)
+        (
+            start_date,
+            end_date,
+            response_range,
+            cache_range,
+        ) = await self._resolve_date_range(
+            shop_id=shop_id,
+            date_range=date_range,
+        )
         cache_key = redis_keys.experience_dashboard(
             shop_id=shop_id,
-            date_range=normalized_range,
+            date_range=cache_range,
             section="overview",
         )
         cached = await self._cache_get_model(cache_key, DashboardOverviewResponse)
@@ -249,13 +279,13 @@ class ExperienceQueryService:
         )
         overview_payload = build_overview(
             shop_id=shop_id,
-            date_range=normalized_range,
+            date_range=response_range,
             materials=materials,
             dimension_weights=DIMENSION_WEIGHTS,
         )
         payload = build_dashboard_overview(
             shop_id=shop_id,
-            date_range=normalized_range,
+            date_range=response_range,
             materials=materials,
             overview_payload=overview_payload,
         )
@@ -276,10 +306,18 @@ class ExperienceQueryService:
         shop_id: int,
         date_range: str | None,
     ) -> DashboardKpisResponse:
-        start_date, end_date, normalized_range = self._parse_date_range(date_range)
+        (
+            start_date,
+            end_date,
+            response_range,
+            cache_range,
+        ) = await self._resolve_date_range(
+            shop_id=shop_id,
+            date_range=date_range,
+        )
         cache_key = redis_keys.experience_dashboard(
             shop_id=shop_id,
-            date_range=normalized_range,
+            date_range=cache_range,
             section="kpis",
         )
         cached = await self._cache_get_model(cache_key, DashboardKpisResponse)
@@ -293,11 +331,11 @@ class ExperienceQueryService:
         )
         dashboard_overview = await self.get_dashboard_overview(
             shop_id=shop_id,
-            date_range=normalized_range,
+            date_range=response_range,
         )
         payload = build_dashboard_kpis(
             shop_id=shop_id,
-            date_range=normalized_range,
+            date_range=response_range,
             materials=materials,
             overview_payload=dashboard_overview.model_dump(),
         )
@@ -467,6 +505,31 @@ class ExperienceQueryService:
         days = (end_date - start_date).days
         return [start_date + timedelta(days=offset) for offset in range(days + 1)]
 
+    async def _resolve_date_range(
+        self,
+        *,
+        shop_id: int,
+        date_range: str | None,
+    ) -> tuple[date, date, str, str]:
+        clean = (date_range or "").strip()
+        if clean and (
+            "," in clean or not clean.endswith("d") or not clean[:-1].isdigit()
+        ):
+            start_date, end_date, normalized_range = self._parse_date_range(date_range)
+            return start_date, end_date, normalized_range, normalized_range
+
+        anchor_date = await self.repo.get_latest_metric_date(shop_id=str(shop_id))
+        start_date, end_date, normalized_range = self._parse_date_range(
+            date_range,
+            anchor_date=anchor_date,
+        )
+        return (
+            start_date,
+            end_date,
+            normalized_range,
+            f"{start_date.isoformat()},{end_date.isoformat()}",
+        )
+
     @staticmethod
     def _decode_cache_key_list(raw: str | None) -> list[str]:
         if not raw:
@@ -492,8 +555,12 @@ class ExperienceQueryService:
         return keys
 
     @staticmethod
-    def _parse_date_range(date_range: str | None) -> tuple[date, date, str]:
-        today = date.today()
+    def _parse_date_range(
+        date_range: str | None,
+        *,
+        anchor_date: date | None = None,
+    ) -> tuple[date, date, str]:
+        today = anchor_date or date.today()
         if not date_range:
             return today - timedelta(days=29), today, "30d"
 
