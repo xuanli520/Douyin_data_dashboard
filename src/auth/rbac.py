@@ -308,7 +308,7 @@ def owner_or_perm(
                 resource_id=request.url.path,
                 user_agent=user_agent,
                 ip=ip,
-                extra={"permissions": list(perms), "bypass": "owner"},
+                extra={"permissions": list(perms), "bypass": "superuser"},
             )
             return
 
@@ -331,7 +331,7 @@ def owner_or_perm(
                 resource_id=request.url.path,
                 user_agent=user_agent,
                 ip=ip,
-                extra={"permissions": list(perms), "bypass": "superuser"},
+                extra={"permissions": list(perms), "bypass": "owner"},
             )
             return
 

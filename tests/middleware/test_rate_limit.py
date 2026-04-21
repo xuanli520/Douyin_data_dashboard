@@ -136,15 +136,17 @@ class TestSlidingWindow:
 
 class TestClientIdentifier:
     @pytest.mark.asyncio
-    async def test_client_identifier_forwarded_for(self):
+    async def test_client_identifier_ignores_forwarded_for(self):
         settings = RateLimitSettings(enabled=True)
         middleware = RateLimitMiddleware(app=MagicMock(), settings=settings)
 
         request = create_mock_request(
-            "/api/test", forwarded_for="192.168.1.100, 10.0.0.1"
+            "/api/test",
+            client_host="10.0.0.50",
+            forwarded_for="192.168.1.100, 10.0.0.1",
         )
         client_id = middleware._default_client_identifier(request)
-        assert client_id == "192.168.1.100"
+        assert client_id == "10.0.0.50"
 
     @pytest.mark.asyncio
     async def test_client_identifier_direct_ip(self):

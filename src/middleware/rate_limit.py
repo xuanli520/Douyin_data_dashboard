@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 import json
 import time
@@ -31,11 +32,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._redis = redis_client
         self._settings = settings
         self._client_identifier = client_identifier or self._default_client_identifier
+        self._cache_locks: dict[str, asyncio.Lock] = {}
 
     def _default_client_identifier(self, request: Request) -> str:
-        forwarded = request.headers.get("X-Forwarded-For")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
         return request.client.host if request.client else "unknown"
 
     async def _resolve_backend(self, request: Request) -> Redis | CacheProtocol | None:
@@ -85,7 +84,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         results = await pipe.execute()
 
         current_count = results[2]
-        remaining = limit - current_count
+        remaining = max(limit - current_count, 0)
         return current_count >= limit, remaining
 
     async def _cache_sliding_window(
@@ -99,15 +98,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         now = time.time()
         window_start = now - window
         key = f"rate_limit:{endpoint}:{client_id}"
-        raw = await cache.get(key)
-        timestamps = json.loads(raw) if raw else []
-        timestamps = [ts for ts in timestamps if ts > window_start]
-        timestamps.append(now)
-        await cache.set(key, json.dumps(timestamps), ttl=int(window) + 1)
+        lock = self._cache_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            raw = await cache.get(key)
+            timestamps = json.loads(raw) if raw else []
+            timestamps = [ts for ts in timestamps if ts > window_start]
+            timestamps.append(now)
+            await cache.set(key, json.dumps(timestamps), ttl=int(window) + 1)
 
-        current_count = len(timestamps)
-        remaining = limit - current_count
-        return current_count >= limit, remaining
+            current_count = len(timestamps)
+            remaining = max(limit - current_count, 0)
+            return current_count >= limit, remaining
 
     async def _apply_limit(
         self,

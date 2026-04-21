@@ -133,15 +133,12 @@ class TestRateLimitPerClient:
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client1:
             async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
+                transport=ASGITransport(app=app, client=("192.168.1.2", 123)),
+                base_url="http://test",
             ) as client2:
                 for _ in range(2):
-                    response = await client1.get(
-                        "/api/test", headers={"X-Forwarded-For": "192.168.1.1"}
-                    )
+                    response = await client1.get("/api/test")
                 assert response.status_code == 429
 
-                response = await client2.get(
-                    "/api/test", headers={"X-Forwarded-For": "192.168.1.2"}
-                )
+                response = await client2.get("/api/test")
                 assert response.status_code == 200

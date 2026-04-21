@@ -58,7 +58,7 @@ class AliyunCaptchaService:
             body = getattr(response, "body", response)
             result = getattr(body, "result", None)
             if result:
-                return result.verify_result
+                return bool(result.verify_result)
             return False
         except Exception as exc:
             raise CaptchaUnavailableError("Captcha verification unavailable") from exc

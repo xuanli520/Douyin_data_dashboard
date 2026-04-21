@@ -8,7 +8,7 @@ class RateLimitEndpoint(BaseModel):
 
 
 DEFAULT_RATE_LIMIT_ENDPOINTS = {
-    "/api/v1/auth/jwt/login": RateLimitEndpoint(limit=5, window=60),
+    "/api/v1/auth/login": RateLimitEndpoint(limit=5, window=60),
 }
 
 
