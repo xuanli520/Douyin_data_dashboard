@@ -106,6 +106,20 @@ class _FakeLoginStateManager:
         self.state_store = state_store
         self.redis_client = redis_client
 
+    async def check_and_refresh(self, _account_id: str) -> bool:
+        return True
+
+    async def mark_expired(self, _account_id: str, reason: str) -> None:
+        _ = reason
+        return None
+
+
+class _RecordingLoginStateManager(_FakeLoginStateManager):
+    marked_expired: list[tuple[str, str]] = []
+
+    async def mark_expired(self, account_id: str, reason: str) -> None:
+        type(self).marked_expired.append((account_id, reason))
+
 
 class _FakeSessionBootstrapper:
     def __init__(self, state_store):
@@ -215,6 +229,49 @@ class _BootstrapVerifyRequestFailed:
             "bootstrap_verify_status": "failed",
             "bootstrap_verify_actual_shop_id": "",
             "bootstrap_verify_error_code": "verify_request_failed",
+        }
+
+
+class _BootstrapVerifyLoginExpired:
+    def __init__(self, state_store):
+        self.state_store = state_store
+
+    async def bootstrap_shops(
+        self,
+        *,
+        runtime,
+        shop_ids,
+        verify_metric_date_by_shop=None,
+        force_serial=None,
+    ):
+        _ = (runtime, verify_metric_date_by_shop, force_serial)
+        return {
+            str(shop_id): {
+                "shop_id": str(shop_id),
+                "target_shop_id": str(shop_id),
+                "bootstrap_failed": True,
+                "error_code": "verify_login_expired",
+                "error": "http_401",
+                "bootstrap_choose_status": "passed",
+                "bootstrap_verify_status": "failed",
+                "bootstrap_verify_actual_shop_id": "",
+                "bootstrap_verify_error_code": "verify_login_expired",
+            }
+            for shop_id in shop_ids
+        }
+
+    async def bootstrap_shop(self, *, runtime, shop_id, verify_metric_date=None):
+        _ = (runtime, shop_id, verify_metric_date)
+        return {
+            "shop_id": str(shop_id),
+            "target_shop_id": str(shop_id),
+            "bootstrap_failed": True,
+            "error_code": "verify_login_expired",
+            "error": "http_401",
+            "bootstrap_choose_status": "passed",
+            "bootstrap_verify_status": "failed",
+            "bootstrap_verify_actual_shop_id": "",
+            "bootstrap_verify_error_code": "verify_login_expired",
         }
 
 
@@ -631,6 +688,57 @@ async def test_bootstrap_verify_request_failed_not_counted_as_shop_mismatch(
     assert result["shop_mismatch_count"] == 0
     assert result["items"][0]["reason"] == "bootstrap_verify_failed"
     assert result["items"][0]["error_code"] == "verify_request_failed"
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_verify_login_expired_marks_login_state_expired(
+    test_db,
+    monkeypatch,
+):
+    _RecordingLoginStateManager.marked_expired = []
+    data_source_id, rule_id = await _seed_entities(test_db)
+    monkeypatch.setattr(
+        db_session_module,
+        "async_session_factory",
+        test_db,
+        raising=False,
+    )
+    monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
+    monkeypatch.setattr(
+        module,
+        "SessionBootstrapper",
+        _BootstrapVerifyLoginExpired,
+        raising=False,
+    )
+    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
+    monkeypatch.setattr(module, "LoginStateManager", _RecordingLoginStateManager)
+    monkeypatch.setattr(
+        module,
+        "_materialize_runtime_storage_state",
+        lambda runtime, _store: runtime,
+    )
+    monkeypatch.setattr(
+        CollectionUseCase,
+        "_raise_when_all_units_failed",
+        lambda self, result: None,
+    )
+
+    usecase = CollectionUseCase()
+    result = await usecase._execute_async(
+        data_source_id=data_source_id,
+        rule_id=rule_id,
+        execution_id="exec-bootstrap-login-expired",
+        queue_task_id="queue-bootstrap-login-expired",
+        triggered_by=1,
+        overrides={},
+        redis_client=_FakeRedis(),
+    )
+
+    assert result["bootstrap_verify_failed_count"] == 1
+    assert result["items"][0]["error_code"] == "verify_login_expired"
+    assert _RecordingLoginStateManager.marked_expired == [
+        (f"rule_{rule_id}", "verify_login_expired")
+    ]
 
 
 @pytest.mark.asyncio

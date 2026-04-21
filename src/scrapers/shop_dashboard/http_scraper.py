@@ -21,6 +21,7 @@ from src.scrapers.shop_dashboard.parsers import (
     parse_violation_details,
     parse_violation_summary,
 )
+from src.scrapers.shop_dashboard.exceptions import LoginExpiredError
 from src.scrapers.shop_dashboard.exceptions import ShopDashboardScraperError
 from src.scrapers.shop_dashboard.query_builder import (
     build_endpoint_request_payload,
@@ -274,6 +275,8 @@ class HttpScraper:
                     max_retries=max_retries,
                 )
             except ShopDashboardScraperError as exc:
+                if isinstance(exc, LoginExpiredError):
+                    raise
                 if group_name in CORE_REQUIRED_GROUPS:
                     raise
                 payloads[group_name] = self._build_default_payload()
@@ -405,6 +408,17 @@ class HttpScraper:
                 path,
                 status_code,
             )
+            if status_code in {401, 403}:
+                raise LoginExpiredError(
+                    f"http_{status_code}",
+                    error_data={
+                        "method": method,
+                        "path": path,
+                        "url": url,
+                        "status_code": status_code,
+                        "response_body_snippet": response_body_snippet,
+                    },
+                ) from exc
             raise ShopDashboardScraperError(
                 "HTTP status error",
                 error_data={

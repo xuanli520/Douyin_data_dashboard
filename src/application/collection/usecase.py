@@ -669,6 +669,13 @@ class CollectionUseCase:
                     bootstrap_result.get("error_code") or "verify_request_failed"
                 ).strip()
                 bootstrap_error = str(bootstrap_result.get("error") or "").strip()
+                if bootstrap_error_code == "verify_login_expired":
+                    mark_expired = getattr(login_state_manager, "mark_expired", None)
+                    if callable(mark_expired):
+                        await mark_expired(
+                            storage_account_id,
+                            reason=bootstrap_error_code,
+                        )
                 bootstrap_verify_failed_count += 1
                 observe_shop_dashboard_bootstrap_verify_failed(
                     error_code=bootstrap_error_code

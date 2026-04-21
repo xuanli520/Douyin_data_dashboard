@@ -66,6 +66,7 @@ class LoginStateManager:
             {
                 "status": "expired",
                 "reason": str(reason),
+                "last_probe_at": str(now),
                 "updated_at": str(now),
             },
         )

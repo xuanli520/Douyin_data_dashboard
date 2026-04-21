@@ -6,7 +6,7 @@ from typing import Any
 from src.scrapers.shop_dashboard.exceptions import LoginExpiredError
 from src.scrapers.shop_dashboard.exceptions import ShopDashboardScraperError
 
-LOGIN_EXPIRED_CODE = "10008"
+LOGIN_EXPIRED_CODES = frozenset({"10008", "401", "403"})
 
 
 def ensure_payload_success(payload: Mapping[str, Any]) -> None:
@@ -21,7 +21,7 @@ def ensure_payload_success(payload: Mapping[str, Any]) -> None:
     if code_str in {"0", "200"}:
         return
     message = str(payload.get("message", payload.get("msg", "scraping failed")))
-    if code_str == LOGIN_EXPIRED_CODE:
+    if code_str in LOGIN_EXPIRED_CODES:
         raise LoginExpiredError(
             "Login session expired",
             error_data={"code": code_str, "message": message},
