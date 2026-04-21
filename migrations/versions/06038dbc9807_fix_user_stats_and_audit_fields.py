@@ -31,4 +31,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
-    pass
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    existing_indexes = {index["name"] for index in inspector.get_indexes("audit_logs")}
+    index_name = op.f("ix_audit_logs_action")
+    if index_name in existing_indexes:
+        op.drop_index(index_name, table_name="audit_logs")

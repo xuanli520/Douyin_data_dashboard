@@ -127,6 +127,62 @@ class TestImportServiceUnit:
                 await import_service.confirm_import(1, [{"field": "value"}])
 
     @pytest.mark.asyncio
+    async def test_confirm_import_checks_cancellation_before_each_row(
+        self, import_service
+    ):
+        mock_record = MagicMock(spec=DataImportRecord)
+        mock_record.status = ImportStatus.PENDING
+        mock_record.field_mapping = {}
+
+        with (
+            patch.object(
+                import_service.repo,
+                "get_by_id",
+                new_callable=AsyncMock,
+                return_value=mock_record,
+            ),
+            patch.object(
+                import_service.repo,
+                "update_status",
+                new_callable=AsyncMock,
+            ) as mock_update_status,
+            patch.object(
+                import_service.repo,
+                "update_counts",
+                new_callable=AsyncMock,
+            ) as mock_update_counts,
+            patch.object(
+                import_service.repo,
+                "mark_completed",
+                new_callable=AsyncMock,
+            ) as mock_mark_completed,
+            patch.object(
+                import_service.detail_repo,
+                "bulk_create",
+                new_callable=AsyncMock,
+            ) as mock_bulk_create,
+            patch.object(
+                import_service,
+                "_is_cancelled",
+                new_callable=AsyncMock,
+                side_effect=[False, False, True],
+            ) as mock_is_cancelled,
+        ):
+            result = await import_service.confirm_import(
+                1,
+                [{"field": "value-1"}, {"field": "value-2"}],
+                batch_size=1000,
+            )
+
+        assert result == {"cancelled": True}
+        assert mock_is_cancelled.await_count == 3
+        mock_update_status.assert_any_await(1, ImportStatus.PROCESSING)
+        mock_update_status.assert_any_await(1, ImportStatus.CANCELLED)
+        mock_update_counts.assert_not_called()
+        mock_mark_completed.assert_not_called()
+        mock_bulk_create.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_get_import_record(self, import_service, mock_session):
         mock_record = MagicMock(spec=DataImportRecord)
         mock_record.id = 1

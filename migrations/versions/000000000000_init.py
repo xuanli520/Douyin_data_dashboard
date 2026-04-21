@@ -257,7 +257,7 @@ def downgrade() -> None:
     op.drop_table("oauth_accounts")
     op.drop_index(op.f("ix_audit_logs_occurred_at"), table_name="audit_logs")
     op.drop_index(op.f("ix_audit_logs_actor_id"), table_name="audit_logs")
-    op.drop_index(op.f("ix_audit_logs_action"), table_name="audit_logs")
+    op.drop_index(op.f("ix_audit_logs_action"), table_name="audit_logs", if_exists=True)
     op.drop_table("audit_logs")
     op.drop_index(op.f("ix_users_username"), table_name="users")
     op.drop_index(op.f("ix_users_email"), table_name="users")

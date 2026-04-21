@@ -31,37 +31,28 @@ def upgrade() -> None:
     task_definition_indexes = {
         item["name"] for item in inspector.get_indexes("task_definitions")
     }
-    duplicate_rows = conn.execute(
-        sa.text(
-            """
-            SELECT id, keep_id
-            FROM (
-                SELECT
-                    id,
-                    task_type,
-                    MIN(id) OVER (PARTITION BY task_type) AS keep_id
-                FROM task_definitions
-            ) ranked
-            WHERE id <> keep_id
-            ORDER BY id
-            """
-        )
-    ).mappings()
-
-    for row in duplicate_rows:
+    duplicate_rows = (
         conn.execute(
             sa.text(
                 """
-                UPDATE task_executions
-                SET task_id = :keep_id
-                WHERE task_id = :task_id
-                """
-            ),
-            {"keep_id": row["keep_id"], "task_id": row["id"]},
+            SELECT task_type, COUNT(*) AS duplicate_count
+            FROM task_definitions
+            GROUP BY task_type
+            HAVING COUNT(*) > 1
+            ORDER BY task_type
+            """
+            )
         )
-        conn.execute(
-            sa.text("DELETE FROM task_definitions WHERE id = :task_id"),
-            {"task_id": row["id"]},
+        .mappings()
+        .all()
+    )
+    if duplicate_rows:
+        duplicates = ", ".join(
+            f"{row['task_type']} ({row['duplicate_count']})" for row in duplicate_rows
+        )
+        raise RuntimeError(
+            "Duplicate task_definitions.task_type detected; "
+            f"manual cleanup required before upgrade: {duplicates}"
         )
 
     if op.f("ix_task_definitions_task_type") in task_definition_indexes:
