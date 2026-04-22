@@ -95,4 +95,3 @@ class CSVParser:
             encoding = self._detect_encoding()
             self._row_count = self._count_rows(encoding)
         return self._row_count
-
