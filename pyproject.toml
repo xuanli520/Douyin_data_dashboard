@@ -56,7 +56,7 @@ asyncio_mode = "auto"
 timeout = 5
 pythonpath = ["."]
 testpaths = ["tests"]
-addopts = ["--import-mode=importlib"]
+addopts = ["--import-mode=importlib", "--basetemp=.pytest_tmp"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

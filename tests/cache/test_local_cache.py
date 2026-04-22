@@ -2,6 +2,8 @@ import asyncio
 
 import pytest
 
+from src.cache.local import LocalCache
+
 
 async def test_set_get(local_cache):
     await local_cache.set("key1", "value1")
@@ -25,6 +27,36 @@ async def test_set_with_ttl(local_cache):
 async def test_set_with_zero_ttl_raises(local_cache):
     with pytest.raises(ValueError, match="ttl must be greater than 0"):
         await local_cache.set("key_ttl_zero", "value", ttl=0)
+
+
+async def test_max_entries_evicts_oldest_key():
+    cache = LocalCache(max_entries=2)
+    try:
+        await cache.set("key1", "value1")
+        await cache.set("key2", "value2")
+        await cache.set("key3", "value3")
+
+        assert await cache.get("key1") is None
+        assert await cache.get("key2") == "value2"
+        assert await cache.get("key3") == "value3"
+    finally:
+        await cache.close()
+
+
+async def test_get_refreshes_lru_recency():
+    cache = LocalCache(max_entries=2)
+    try:
+        await cache.set("key1", "value1")
+        await cache.set("key2", "value2")
+        assert await cache.get("key1") == "value1"
+
+        await cache.set("key3", "value3")
+
+        assert await cache.get("key1") == "value1"
+        assert await cache.get("key2") is None
+        assert await cache.get("key3") == "value3"
+    finally:
+        await cache.close()
 
 
 async def test_delete(local_cache):

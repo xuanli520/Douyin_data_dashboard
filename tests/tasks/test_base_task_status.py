@@ -1,8 +1,9 @@
-from types import SimpleNamespace
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
+from src import session as session_module
 from src.config import get_settings
 from src.domains.task.enums import (
     TaskDefinitionStatus,
@@ -11,7 +12,6 @@ from src.domains.task.enums import (
     TaskType,
 )
 from src.domains.task.models import TaskDefinition, TaskExecution
-from src import session as session_module
 from src.tasks.base import TaskStatusMixin
 from src.tasks.funboost_compat import FunctionResultStatus
 from src.tasks.status_store import (
@@ -33,7 +33,43 @@ class FakeRedis:
         self.expire_calls.append((key, seconds))
 
 
-class FakePipeline:
+class RecordingPipeline:
+    def __init__(self, redis):
+        self.redis = redis
+        self.commands = []
+
+    def hset(self, key, mapping):
+        self.commands.append(("hset", key, mapping))
+        return self
+
+    def expire(self, key, seconds):
+        self.commands.append(("expire", key, seconds))
+        return self
+
+    def execute(self):
+        self.redis.executed_batches.append(list(self.commands))
+        for command in self.commands:
+            if command[0] == "hset":
+                _, key, mapping = command
+                self.redis.hset(key, mapping)
+            if command[0] == "expire":
+                _, key, seconds = command
+                self.redis.expire(key, seconds)
+        return [True for _ in self.commands]
+
+
+class FakePipelineRedis(FakeRedis):
+    def __init__(self):
+        super().__init__()
+        self.executed_batches = []
+        self.pipeline_transactions = []
+
+    def pipeline(self, transaction=True):
+        self.pipeline_transactions.append(transaction)
+        return RecordingPipeline(self)
+
+
+class FailingPipeline:
     def __init__(self, raise_on_execute=False):
         self.raise_on_execute = raise_on_execute
         self.closed = False
@@ -60,6 +96,25 @@ class PipelineRedis:
     def pipeline(self, transaction=True):
         _ = transaction
         return self._pipeline
+
+
+def test_write_status_mapping_uses_pipeline_transaction():
+    fake_redis = FakePipelineRedis()
+    ttl = get_settings().funboost.status_ttl_seconds
+
+    _write_status_mapping(fake_redis, "status-key", {"status": "STARTED", 1: "value"})
+
+    assert fake_redis.pipeline_transactions == [True]
+    assert fake_redis.executed_batches == [
+        [
+            ("hset", "status-key", {"status": "STARTED", "1": "value"}),
+            ("expire", "status-key", ttl),
+        ]
+    ]
+    assert fake_redis.hset_calls == [
+        ("status-key", {"status": "STARTED", "1": "value"})
+    ]
+    assert fake_redis.expire_calls == [("status-key", ttl)]
 
 
 def test_task_status_hook_writes_fields_and_ttl():
@@ -138,7 +193,7 @@ def test_write_finished_task_status_ignores_interpreter_shutdown(monkeypatch):
 
 
 def test_write_status_mapping_closes_pipeline_on_error():
-    pipeline = FakePipeline(raise_on_execute=True)
+    pipeline = FailingPipeline(raise_on_execute=True)
 
     with pytest.raises(RuntimeError, match="pipeline execute failed"):
         _write_status_mapping(

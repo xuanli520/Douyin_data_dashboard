@@ -23,6 +23,12 @@ class CSVParser:
                 return "utf-8"
             if raw_data.startswith(b"\xef\xbb\xbf"):
                 return "utf-8-sig"
+            for encoding in ("utf-8", "utf-8-sig"):
+                try:
+                    raw_data.decode(encoding)
+                    return encoding
+                except UnicodeDecodeError:
+                    continue
             result = chardet.detect(raw_data)
             detected = result.get("encoding")
             confidence = result.get("confidence") or 0

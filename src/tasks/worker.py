@@ -16,6 +16,8 @@ from src.tasks.etl import products as etl_products
 
 logger = logging.getLogger(__name__)
 
+_MULTIPROCESS_QUEUES = frozenset({"etl_orders", "etl_products"})
+
 
 def _queue_runners(etl_processes: int) -> dict[str, Callable[[], None]]:
     return {
@@ -50,13 +52,26 @@ def _start_runner_thread(queue_name: str, runner: Callable[[], None]) -> Thread:
     return thread
 
 
+def _start_queue(queue_name: str, runner: Callable[[], None]) -> Thread | None:
+    if queue_name in _MULTIPROCESS_QUEUES:
+        runner()
+        return None
+    return _start_runner_thread(queue_name, runner)
+
+
 def _wait_forever(
-    stop_event: Event | None = None, threads: Sequence[Thread] | None = None
+    stop_event: Event | None = None,
+    threads: Sequence[Thread] | Thread | None = None,
 ) -> None:
     worker_stop_event = stop_event or Event()
+    thread_list = (
+        list(threads)
+        if isinstance(threads, Sequence)
+        else ([threads] if threads is not None else [])
+    )
     try:
         while not worker_stop_event.wait(5):
-            for thread in threads or ():
+            for thread in thread_list:
                 if not thread.is_alive():
                     logger.error(
                         "worker thread exited unexpectedly name=%s", thread.name
@@ -70,7 +85,9 @@ def _wait_forever(
 def run_all(etl_processes: int = 2, *, stop_event: Event | None = None) -> None:
     threads: list[Thread] = []
     for queue_name, runner in _queue_runners(etl_processes).items():
-        threads.append(_start_runner_thread(queue_name, runner))
+        thread = _start_queue(queue_name, runner)
+        if thread is not None:
+            threads.append(thread)
 
     if stop_event is None:
         _wait_forever(threads=threads)
@@ -155,7 +172,7 @@ def main() -> None:
             runner = _queue_runners(args.etl_processes).get(args.queue)
             if runner is None:
                 raise ValueError(f"unsupported queue name: {args.queue}")
-            runner_thread = _start_runner_thread(args.queue, runner)
+            runner_thread = _start_queue(args.queue, runner)
             _wait_forever(stop_event, runner_thread)
         else:
             run_all(etl_processes=args.etl_processes, stop_event=stop_event)
