@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -8,6 +8,8 @@ from src.auth.captcha import get_captcha_service
 from src.cache import get_cache
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
 from src.main import app
+
+SEEDED_DATE_RANGE = "2026-03-01,2026-03-03"
 
 
 class MockCaptchaService:
@@ -98,12 +100,9 @@ async def phase3_user(test_db):
 async def seeded_phase3_data(test_db):
     async with test_db() as session:
         repo = ShopDashboardRepository(session)
-        first_date = date.today() - timedelta(days=2)
-        second_date = date.today() - timedelta(days=1)
-        latest_date = date.today()
         for metric_date, values in [
             (
-                first_date,
+                date(2026, 3, 1),
                 {
                     "total": 86.6,
                     "product": 90.0,
@@ -113,7 +112,7 @@ async def seeded_phase3_data(test_db):
                 },
             ),
             (
-                second_date,
+                date(2026, 3, 2),
                 {
                     "total": 87.2,
                     "product": 91.0,
@@ -123,7 +122,7 @@ async def seeded_phase3_data(test_db):
                 },
             ),
             (
-                latest_date,
+                date(2026, 3, 3),
                 {
                     "total": 89.9,
                     "product": 92.0,
@@ -146,7 +145,7 @@ async def seeded_phase3_data(test_db):
 
         await repo.replace_violations(
             shop_id="1001",
-            metric_date=latest_date,
+            metric_date=date(2026, 3, 3),
             violations=[
                 {
                     "violation_id": "issue_1",
@@ -159,7 +158,7 @@ async def seeded_phase3_data(test_db):
         )
         await repo.replace_violations(
             shop_id="1001",
-            metric_date=second_date,
+            metric_date=date(2026, 3, 2),
             violations=[
                 {
                     "violation_id": "issue_2",
@@ -172,7 +171,7 @@ async def seeded_phase3_data(test_db):
         )
         await repo.upsert_cold_metrics(
             shop_id="1001",
-            metric_date=first_date,
+            metric_date=date(2026, 3, 1),
             reason="cold reason fallback",
             violations_detail=[],
             arbitration_detail=[],
@@ -195,7 +194,7 @@ async def test_experience_real_data_success_contract(
     )
 
     response = await api_client.get(
-        "/api/v1/experience/overview?shop_id=1001&date_range=30d",
+        f"/api/v1/experience/overview?shop_id=1001&date_range={SEEDED_DATE_RANGE}",
         headers=headers,
     )
     assert response.status_code == 200
@@ -206,7 +205,7 @@ async def test_experience_real_data_success_contract(
     assert "mock" not in payload["data"]
 
     metric_response = await api_client.get(
-        "/api/v1/metrics/product?shop_id=1001&date_range=30d&period=30d",
+        f"/api/v1/metrics/product?shop_id=1001&date_range={SEEDED_DATE_RANGE}&period=30d",
         headers=headers,
     )
     assert metric_response.status_code == 200
@@ -259,7 +258,7 @@ async def test_experience_real_data_issue_filters_should_work(
         "phase3real123",
     )
     response = await api_client.get(
-        "/api/v1/experience/issues?shop_id=1001&dimension=product&status=pending&date_range=30d&page=1&size=20",
+        f"/api/v1/experience/issues?shop_id=1001&dimension=product&status=pending&date_range={SEEDED_DATE_RANGE}&page=1&size=20",
         headers=headers,
     )
     assert response.status_code == 200

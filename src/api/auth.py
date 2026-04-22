@@ -14,7 +14,12 @@ from src.auth.backend import (
     get_refresh_token_manager,
 )
 from src.auth.cookies import clear_session_cookies, set_auth_cookie
-from src.auth.captcha import AliyunCaptchaService, get_captcha_service
+from src.auth.captcha import (
+    AliyunCaptchaService,
+    CaptchaConfigurationError,
+    CaptchaUnavailableError,
+    get_captcha_service,
+)
 from src.auth.manager import UserManager, get_user_manager
 from src.auth.schemas import (
     MessageResponse,
@@ -108,10 +113,25 @@ async def login(
 ) -> JSONResponse:
     user_agent, ip = extract_client_info(request)
 
+    captcha_extra: dict = {}
     try:
         is_human = await captcha_service.verify(captchaVerifyParam)
-    except Exception:
-        is_human = False
+    except CaptchaConfigurationError as exc:
+        extra = _build_audit_extra(username=username)
+        extra["reason"] = "captcha_configuration_error"
+        await audit_service.log(
+            action=AuditAction.LOGIN,
+            result=AuditResult.FAILURE,
+            user_agent=user_agent,
+            ip=ip,
+            extra=extra,
+        )
+        raise BusinessException(
+            ErrorCode.SYS_INTERNAL_ERROR, "Captcha service unavailable"
+        ) from exc
+    except CaptchaUnavailableError:
+        is_human = True
+        captcha_extra["captcha_bypass"] = "unavailable"
 
     if not is_human:
         extra = _build_audit_extra(username=username)
@@ -135,6 +155,7 @@ async def login(
     user = await user_manager.authenticate(credentials)
     if not user or not user.is_active:
         extra = _build_audit_extra(username=username)
+        extra.update(captcha_extra)
         await audit_service.log(
             action=AuditAction.LOGIN,
             result=AuditResult.FAILURE,
@@ -152,6 +173,7 @@ async def login(
 
     user_with_roles = await _load_user_with_roles(session, user.id) or user
     extra = _build_audit_extra(user_with_roles, user.username)
+    extra.update(captcha_extra)
     await audit_service.log(
         action=AuditAction.LOGIN,
         result=AuditResult.SUCCESS,

@@ -31,7 +31,7 @@ class TestCorsIntegration:
                 headers={
                     "Origin": "http://localhost:3000",
                     "Access-Control-Request-Method": "GET",
-                    "Access-Control-Request-Headers": "X-Test",
+                    "Access-Control-Request-Headers": "X-Request-ID",
                 },
             )
 
@@ -42,7 +42,7 @@ class TestCorsIntegration:
             )
             assert response.headers["access-control-allow-credentials"] == "true"
             assert "GET" in response.headers["access-control-allow-methods"]
-            assert "X-Test" in response.headers["access-control-allow-headers"]
+            assert "X-Request-ID" in response.headers["access-control-allow-headers"]
 
     @pytest.mark.asyncio
     async def test_actual_request_includes_cors_headers(self, cors_app):

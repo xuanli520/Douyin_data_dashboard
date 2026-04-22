@@ -5,6 +5,7 @@ from fastapi_users import BaseUserManager, IntegerIDMixin
 from fastapi_users.db import SQLAlchemyUserDatabase
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.cache import CacheProtocol, get_cache
 from src.auth.models import OAuthAccount, User
 from src.config import Settings, get_settings
 from src.session import get_session
@@ -17,9 +18,10 @@ async def get_user_db(
 
 
 class UserManager(IntegerIDMixin, BaseUserManager[User, int]):
-    def __init__(self, user_db, settings: Settings):
+    def __init__(self, user_db, settings: Settings, cache: CacheProtocol):
         super().__init__(user_db)
         self.settings = settings
+        self.cache = cache
 
     @property
     def reset_password_token_secret(self):
@@ -42,16 +44,15 @@ class UserManager(IntegerIDMixin, BaseUserManager[User, int]):
     async def on_after_reset_password(
         self, user: User, request: Request | None = None
     ) -> None:
-        from src.cache import cache
-
         from .backend import RefreshTokenManager
 
-        refresh_manager = RefreshTokenManager(cache, self.settings)
+        refresh_manager = RefreshTokenManager(self.cache, self.settings)
         await refresh_manager.revoke_all_user_tokens(user.id)
 
 
 async def get_user_manager(
     user_db=Depends(get_user_db),
     settings: Settings = Depends(get_settings),
+    cache: CacheProtocol = Depends(get_cache),
 ) -> AsyncGenerator[UserManager, None]:
-    yield UserManager(user_db, settings)
+    yield UserManager(user_db, settings, cache)

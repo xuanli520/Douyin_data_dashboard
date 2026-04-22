@@ -97,7 +97,14 @@ async def test_db():
 
     async def override_get_session():
         async with async_session() as session:
-            yield session
+            try:
+                yield session
+                if session.in_transaction():
+                    await session.commit()
+            except Exception:
+                if session.in_transaction():
+                    await session.rollback()
+                raise
 
     app.dependency_overrides[get_session] = override_get_session
 
@@ -128,10 +135,18 @@ async def import_test_db():
     async with engine.connect() as conn:
         await insert_rbac_seed_data_async(conn)
 
-    async with async_session() as session:
-        yield session
-
-    await engine.dispose()
+    try:
+        async with async_session() as session:
+            try:
+                yield session
+                if session.in_transaction():
+                    await session.commit()
+            except Exception:
+                if session.in_transaction():
+                    await session.rollback()
+                raise
+    finally:
+        await engine.dispose()
 
 
 @pytest.fixture
@@ -185,17 +200,22 @@ class MockCaptchaService:
 @pytest.fixture
 async def test_client(test_db, local_cache):
     from src.cache import get_cache
+    from src import cache as cache_module
 
     async def override_get_cache():
         yield local_cache
 
+    previous_cache = cache_module.cache
+    cache_module.cache = local_cache
     app.dependency_overrides[get_cache] = override_get_cache
     app.dependency_overrides[get_captcha_service] = lambda: MockCaptchaService()
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        yield client
-
-    app.dependency_overrides.pop(get_cache, None)
-    app.dependency_overrides.pop(get_captcha_service, None)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            yield client
+    finally:
+        app.dependency_overrides.pop(get_cache, None)
+        app.dependency_overrides.pop(get_captcha_service, None)
+        cache_module.cache = previous_cache

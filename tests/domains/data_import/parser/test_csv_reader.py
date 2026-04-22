@@ -1,5 +1,6 @@
 import tempfile
 import os
+from unittest.mock import patch
 
 
 def test_csv_parser_detects_encoding():
@@ -123,5 +124,27 @@ def test_csv_parser_with_gbk_encoding():
 
         assert len(rows) == 1
         assert rows[0]["name"] == "test"
+    finally:
+        os.unlink(temp_path)
+
+
+def test_csv_parser_preserves_gb18030_detection():
+    from src.domains.data_import.parser.csv_reader import CSVParser
+
+    with tempfile.NamedTemporaryFile(mode="wb", suffix=".csv", delete=False) as f:
+        f.write("id,name\n1,\U00020bb7\n".encode("gb18030"))
+        temp_path = f.name
+
+    try:
+        parser = CSVParser(temp_path)
+        with patch(
+            "src.domains.data_import.parser.csv_reader.chardet.detect",
+            return_value={"encoding": "gb18030"},
+        ):
+            encoding = parser._detect_encoding()
+            rows = list(parser._read_rows(encoding))
+
+        assert encoding == "gb18030"
+        assert rows == [{"id": "1", "name": "\U00020bb7"}]
     finally:
         os.unlink(temp_path)

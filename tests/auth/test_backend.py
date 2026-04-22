@@ -5,7 +5,9 @@ from datetime import datetime, timezone
 import pytest
 from fastapi import Request
 from fastapi.responses import Response
+from pydantic import ValidationError
 
+from src.api.oauth import create_oauth_router
 from src.auth.backend import (
     RefreshTokenManager,
     bearer_auth_backend,
@@ -13,9 +15,9 @@ from src.auth.backend import (
     cookie_auth_backend,
     cookie_transport,
 )
-from src.api.oauth import create_oauth_router
 from src.auth.cookies import bind_auth_request_context, set_auth_cookie
 from src.config import get_settings
+from src.config.auth import AuthSettings
 from src.shared.redis_keys import redis_keys
 
 
@@ -67,6 +69,28 @@ async def test_verify_invalid_token(local_cache, settings):
 
     user_id = await manager.verify_refresh_token("invalid_token")
     assert user_id is None
+
+
+def test_auth_settings_reject_unsupported_jwt_algorithm():
+    with pytest.raises(ValidationError):
+        AuthSettings(jwt_secret="secret", jwt_algorithm="RS256")
+
+
+@pytest.mark.parametrize("cached_value", ["not-an-int", "1:ua"])
+async def test_verify_refresh_token_with_malformed_cache_value_returns_none(
+    local_cache, settings, cached_value
+):
+    manager = RefreshTokenManager(local_cache, settings)
+    token = await manager.create_refresh_token(1, "Mozilla/5.0")
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+    await local_cache.set(
+        redis_keys.refresh_token(token_hash=token_hash),
+        cached_value,
+        ttl=settings.auth.refresh_token_lifetime_seconds,
+    )
+
+    assert await manager.verify_refresh_token(token) is None
 
 
 async def test_revoke_token(local_cache, settings):
