@@ -2,6 +2,8 @@ import asyncio
 from types import SimpleNamespace
 from datetime import datetime, timezone
 
+import pytest
+
 from src.config import get_settings
 from src.domains.task.enums import (
     TaskDefinitionStatus,
@@ -13,7 +15,11 @@ from src.domains.task.models import TaskDefinition, TaskExecution
 from src import session as session_module
 from src.tasks.base import TaskStatusMixin
 from src.tasks.funboost_compat import FunctionResultStatus
-from src.tasks.status_store import write_finished_task_status, write_started_task_status
+from src.tasks.status_store import (
+    _write_status_mapping,
+    write_finished_task_status,
+    write_started_task_status,
+)
 
 
 class FakeRedis:
@@ -26,6 +32,35 @@ class FakeRedis:
 
     def expire(self, key, seconds):
         self.expire_calls.append((key, seconds))
+
+
+class FakePipeline:
+    def __init__(self, raise_on_execute=False):
+        self.raise_on_execute = raise_on_execute
+        self.closed = False
+
+    def hset(self, *_args, **_kwargs):
+        return None
+
+    def expire(self, *_args, **_kwargs):
+        return None
+
+    def execute(self):
+        if self.raise_on_execute:
+            raise RuntimeError("pipeline execute failed")
+        return None
+
+    def close(self):
+        self.closed = True
+
+
+class PipelineRedis:
+    def __init__(self, pipeline):
+        self._pipeline = pipeline
+
+    def pipeline(self, transaction=True):
+        _ = transaction
+        return self._pipeline
 
 
 def test_task_status_hook_writes_fields_and_ttl():
@@ -101,6 +136,19 @@ def test_write_finished_task_status_ignores_interpreter_shutdown(monkeypatch):
         processed_rows=0,
         error_message="boom",
     )
+
+
+def test_write_status_mapping_closes_pipeline_on_error():
+    pipeline = FakePipeline(raise_on_execute=True)
+
+    with pytest.raises(RuntimeError, match="pipeline execute failed"):
+        _write_status_mapping(
+            PipelineRedis(pipeline),
+            "douyin:task:status:task-status-pipeline",
+            {"status": "STARTED"},
+        )
+
+    assert pipeline.closed is True
 
 
 async def test_status_store_syncs_execution_record_fields(test_db):

@@ -1,7 +1,9 @@
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import fakeredis
+from redis.exceptions import RedisError
 
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.tasks.collection import douyin_shop_dashboard as collection_module
@@ -43,6 +45,75 @@ def test_idempotency_refresh_lock_in_concurrent_context():
     assert True in results
     assert False in results
     assert redis_client.ttl(lock_key) > 0
+
+
+class _EvalFailRedis:
+    def __init__(self) -> None:
+        self._values: dict[str, str] = {}
+        self.expire_called = False
+        self.delete_called = False
+
+    def set(self, key, value, ex=None, nx=False):
+        _ = ex
+        if nx and key in self._values:
+            return False
+        self._values[key] = value
+        return True
+
+    def get(self, key):
+        return self._values.get(key)
+
+    def eval(self, _script, _numkeys, *_args):
+        raise RedisError("eval failed")
+
+    def expire(self, *_args):
+        self.expire_called = True
+        return True
+
+    def delete(self, *_args):
+        self.delete_called = True
+        return 1
+
+
+class _RegisterScriptRedis(_EvalFailRedis):
+    def register_script(self, script):
+        def _runner(*, keys, args, client=None):
+            _ = (script, client)
+            key = str(keys[0])
+            token = args[0]
+            ttl = int(args[1])
+            if self._values.get(key) != token:
+                return 0
+            self.expire(key, ttl)
+            return 1
+
+        return _runner
+
+
+def test_idempotency_refresh_lock_retries_with_register_script():
+    redis_client = _RegisterScriptRedis()
+    helper = FunboostIdempotencyHelper(redis_client, "sync_shop_dashboard")
+    business_key = "shop-1:2026-03-03"
+
+    token = helper.acquire_lock(business_key, ttl=120)
+    assert token is not None
+    assert helper.refresh_lock(business_key, token, 600) is True
+    assert redis_client.expire_called is True
+
+
+def test_idempotency_release_lock_does_not_fallback_to_non_atomic_delete(caplog):
+    redis_client = _EvalFailRedis()
+    helper = FunboostIdempotencyHelper(redis_client, "sync_shop_dashboard")
+    business_key = "shop-1:2026-03-03"
+
+    token = helper.acquire_lock(business_key, ttl=120)
+    assert token is not None
+
+    with caplog.at_level(logging.ERROR):
+        helper.release_lock(business_key, token)
+
+    assert redis_client.delete_called is False
+    assert "failed to release idempotency lock" in caplog.text
 
 
 def test_build_business_key_supports_extended_dedupe_variables():

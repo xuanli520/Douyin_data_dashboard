@@ -498,11 +498,11 @@ class DataSourceService:
         return self._build_data_source_response(ds)
 
     async def delete(self, ds_id: int) -> None:
-        if await self.ds_repo.get_by_id(ds_id) is None:
+        deleted = await self.ds_repo.delete(ds_id)
+        if not deleted:
             raise BusinessException(
                 ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
             )
-        await self.ds_repo.delete(ds_id)
         await self._commit()
 
     async def activate(self, ds_id: int, user_id: int) -> DataSourceResponse:

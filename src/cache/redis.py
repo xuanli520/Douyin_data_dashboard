@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from redis.asyncio import ConnectionPool, Redis
@@ -70,13 +71,20 @@ class RedisCache:
     async def publish(self, channel: str, message: str) -> int:
         return await self.client.publish(channel, message)
 
-    async def subscribe(self, *channels: str) -> AsyncIterator[tuple[str, str]]:
+    @asynccontextmanager
+    async def subscribe(
+        self, *channels: str
+    ) -> AsyncIterator[AsyncIterator[tuple[str, str]]]:
         pubsub = self.client.pubsub()
         await pubsub.subscribe(*channels)
-        try:
+
+        async def _messages() -> AsyncIterator[tuple[str, str]]:
             async for message in pubsub.listen():
                 if message["type"] == "message":
                     yield (message["channel"], message["data"])
+
+        try:
+            yield _messages()
         finally:
             await pubsub.unsubscribe(*channels)
             await pubsub.aclose()

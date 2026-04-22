@@ -1,4 +1,4 @@
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.exc import DataError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -57,12 +57,11 @@ class ScrapingRuleRepository(BaseRepository):
         return rule
 
     async def delete(self, rule_id: int) -> bool:
-        rule = await self.get_by_id(rule_id)
-        if not rule:
-            return False
-        await self._delete(rule)
+        result = await self.session.execute(
+            delete(ScrapingRule).where(ScrapingRule.id == rule_id)
+        )
         await self.session.flush()
-        return True
+        return bool(result.rowcount)
 
     async def get_paginated(
         self,

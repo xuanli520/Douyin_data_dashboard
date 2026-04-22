@@ -254,11 +254,11 @@ class ScrapingRuleService:
         return self._build_scraping_rule_response(rule)
 
     async def delete_rule(self, rule_id: int) -> None:
-        if await self.rule_repo.get_by_id(rule_id) is None:
+        deleted = await self.rule_repo.delete(rule_id)
+        if not deleted:
             raise BusinessException(
                 ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
             )
-        await self.rule_repo.delete(rule_id)
         try:
             await self.session.commit()
         except Exception:

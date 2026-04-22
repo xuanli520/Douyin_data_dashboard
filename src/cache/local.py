@@ -13,6 +13,8 @@ class LocalCache:
         return time() > expire_at
 
     def _compact(self) -> None:
+        if len(self._store) <= self._max_entries:
+            return
         expired_keys = [
             key
             for key, (_, expire_at) in self._store.items()
@@ -31,8 +33,7 @@ class LocalCache:
 
     async def set(self, key: str, value: str, ttl: int | None = None) -> None:
         if ttl is not None and ttl <= 0:
-            self._store.pop(key, None)
-            return
+            raise ValueError("ttl must be greater than 0")
         expire_at = time() + ttl if ttl is not None else None
         self._store.pop(key, None)
         self._store[key] = (value, expire_at)

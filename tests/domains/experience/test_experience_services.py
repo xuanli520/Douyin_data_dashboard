@@ -209,6 +209,28 @@ async def test_get_dashboard_kpis_contains_trend_and_change(test_db):
         assert kpis.kpis[0].change.endswith("%")
 
 
+async def test_get_dashboard_kpis_reuses_resolved_range_for_nested_overview(test_db):
+    async with test_db() as session:
+        repo = ShopDashboardRepository(session)
+        await _seed_materials(repo)
+        await session.commit()
+
+        service = ExperienceQueryService(repo=repo)
+        original_get_latest_metric_date = repo.get_latest_metric_date
+        resolve_count = 0
+
+        async def counted_get_latest_metric_date(*, shop_id: str):
+            nonlocal resolve_count
+            resolve_count += 1
+            return await original_get_latest_metric_date(shop_id=shop_id)
+
+        repo.get_latest_metric_date = counted_get_latest_metric_date  # type: ignore[method-assign]
+
+        await service.get_dashboard_kpis(shop_id=1001, date_range="30d")
+
+        assert resolve_count == 1
+
+
 async def test_get_metric_detail_uses_cache_on_repeated_query(test_db):
     async with test_db() as session:
         repo = ShopDashboardRepository(session)

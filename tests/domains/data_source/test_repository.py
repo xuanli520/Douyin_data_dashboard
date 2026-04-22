@@ -155,7 +155,7 @@ class TestDataSourceRepositoryIntegration:
             updated = await repo.update(9999, {"name": "New Name"})
             assert updated is None
 
-    async def test_update_with_none_value_skips_field(self, test_db):
+    async def test_update_with_none_value_clears_field(self, test_db):
         async with test_db() as session:
             repo = DataSourceRepository(session)
             data = {
@@ -169,7 +169,7 @@ class TestDataSourceRepositoryIntegration:
                 created.id, {"name": "New Name", "description": None}
             )
             assert updated.name == "New Name"
-            assert updated.description == "Original Desc"
+            assert updated.description is None
 
     async def test_delete_data_source(self, test_db):
         async with test_db() as session:

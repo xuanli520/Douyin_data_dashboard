@@ -37,6 +37,16 @@ class FunboostIdempotencyHelper:
     def _result_key(self, key: str) -> str:
         return f"douyin:result:{self.task_name}:{key}"
 
+    def _run_lock_script(self, script: str, lock_key: str, *args: Any) -> Any:
+        try:
+            return self.redis.eval(script, 1, lock_key, *args)
+        except RedisError:
+            register_script = getattr(self.redis, "register_script", None)
+            if not callable(register_script):
+                raise
+            runner = register_script(script)
+            return runner(keys=[lock_key], args=list(args), client=self.redis)
+
     def acquire_lock(self, key: str, ttl: int) -> str | None:
         token = binascii.hexlify(os.urandom(16)).decode()
         acquired = self.redis.set(self._lock_key(key), token, ex=ttl, nx=True)
@@ -45,48 +55,32 @@ class FunboostIdempotencyHelper:
     def refresh_lock(self, key: str, token: str, new_ttl: int) -> bool:
         lock_key = self._lock_key(key)
         try:
-            result = self.redis.eval(
+            result = self._run_lock_script(
                 self._REFRESH_SCRIPT,
-                1,
                 lock_key,
                 token,
                 new_ttl,
             )
         except RedisError:
-            try:
-                current = self.redis.get(lock_key)
-            except RedisError:
-                return False
-            if current != token:
-                return False
-            try:
-                return bool(self.redis.expire(lock_key, int(new_ttl)))
-            except RedisError:
-                return False
+            return False
         return bool(result)
 
     def release_lock(self, key: str, token: str) -> None:
         lock_key = self._lock_key(key)
         try:
-            self.redis.eval(
+            self._run_lock_script(
                 self._RELEASE_SCRIPT,
-                1,
                 lock_key,
                 token,
             )
             return
         except RedisError:
-            try:
-                current = self.redis.get(lock_key)
-                if current == token:
-                    self.redis.delete(lock_key)
-            except RedisError:
-                logger.warning(
-                    "failed to release idempotency lock task_name=%s key=%s",
-                    self.task_name,
-                    key,
-                    exc_info=True,
-                )
+            logger.error(
+                "failed to release idempotency lock task_name=%s key=%s",
+                self.task_name,
+                key,
+                exc_info=True,
+            )
 
     def cache_result(self, key: str, result: dict, ttl: int = 86400) -> None:
         self.redis.set(self._result_key(key), json.dumps(result), ex=ttl)

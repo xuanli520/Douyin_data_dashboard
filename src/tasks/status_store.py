@@ -40,9 +40,14 @@ def _write_status_mapping(redis_client: Any, key: str, mapping: dict[str, Any]) 
     pipeline_factory = getattr(redis_client, "pipeline", None)
     if callable(pipeline_factory):
         pipeline = pipeline_factory(transaction=True)
-        pipeline.hset(key, mapping=normalized_mapping)
-        pipeline.expire(key, ttl_seconds)
-        pipeline.execute()
+        try:
+            pipeline.hset(key, mapping=normalized_mapping)
+            pipeline.expire(key, ttl_seconds)
+            pipeline.execute()
+        finally:
+            close = getattr(pipeline, "close", None)
+            if callable(close):
+                close()
         return
     redis_client.hset(key, mapping=normalized_mapping)
     redis_client.expire(key, ttl_seconds)

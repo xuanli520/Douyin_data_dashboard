@@ -16,6 +16,7 @@ from src.domains.scraping_rule.models import ScrapingRule
 from src.domains.shop_dashboard.models import ShopDashboardScore
 from src.domains.task.enums import TaskExecutionStatus
 from src.domains.task.models import TaskExecution
+from src.shared.idempotency import FunboostIdempotencyHelper
 from src.tasks.collection import douyin_shop_dashboard as module
 from src.tasks.exceptions import ScrapingFailedException
 
@@ -46,14 +47,19 @@ class _FakeRedis:
     def eval(self, script: str, _num_keys: int, *args):
         key = str(args[0])
         token = args[1]
-        if "del" in script:
+        normalized_script = " ".join(str(script).split())
+        if normalized_script == " ".join(
+            FunboostIdempotencyHelper._RELEASE_SCRIPT.split()
+        ):
             if self._kv.get(key) == token:
                 del self._kv[key]
                 return 1
             return 0
-        if "expire" in script:
+        if normalized_script == " ".join(
+            FunboostIdempotencyHelper._REFRESH_SCRIPT.split()
+        ):
             return 1 if self._kv.get(key) == token else 0
-        return 0
+        raise NotImplementedError(f"unsupported script: {script!r}")
 
     def hset(self, key: str, mapping=None, **kwargs):
         target = self._hash.setdefault(key, {})

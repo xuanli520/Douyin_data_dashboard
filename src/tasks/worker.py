@@ -56,6 +56,7 @@ def _wait_forever(
     try:
         while not worker_stop_event.wait(5):
             if thread is not None and not thread.is_alive():
+                logger.error("worker thread exited unexpectedly name=%s", thread.name)
                 return
     except KeyboardInterrupt:
         worker_stop_event.set()

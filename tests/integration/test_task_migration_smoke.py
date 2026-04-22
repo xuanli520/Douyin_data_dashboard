@@ -21,8 +21,7 @@ _ = (CollectionJob, DataSource, ScrapingRule, TaskDefinition, TaskExecution)
 
 @contextmanager
 def _temp_sqlite_db(root: Path, prefix: str):
-    _ = root
-    fd, temp_name = tempfile.mkstemp(prefix=f"{prefix}-", suffix=".db")
+    fd, temp_name = tempfile.mkstemp(prefix=f"{prefix}-", suffix=".db", dir=root)
     os.close(fd)
     db_path = Path(temp_name)
     try:

@@ -263,6 +263,23 @@ class ExperienceQueryService:
             shop_id=shop_id,
             date_range=date_range,
         )
+        return await self._build_dashboard_overview(
+            shop_id=shop_id,
+            start_date=start_date,
+            end_date=end_date,
+            response_range=response_range,
+            cache_range=cache_range,
+        )
+
+    async def _build_dashboard_overview(
+        self,
+        *,
+        shop_id: int,
+        start_date: date,
+        end_date: date,
+        response_range: str,
+        cache_range: str,
+    ) -> DashboardOverviewResponse:
         cache_key = redis_keys.experience_dashboard(
             shop_id=shop_id,
             date_range=cache_range,
@@ -329,9 +346,12 @@ class ExperienceQueryService:
             start_date=start_date,
             end_date=end_date,
         )
-        dashboard_overview = await self.get_dashboard_overview(
+        dashboard_overview = await self._build_dashboard_overview(
             shop_id=shop_id,
-            date_range=response_range,
+            start_date=start_date,
+            end_date=end_date,
+            response_range=response_range,
+            cache_range=cache_range,
         )
         payload = build_dashboard_kpis(
             shop_id=shop_id,

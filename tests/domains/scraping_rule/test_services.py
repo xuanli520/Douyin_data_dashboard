@@ -268,3 +268,19 @@ async def test_list_rules_by_data_source_should_include_schedule_and_last_run_wi
         await session.refresh(rule)
         assert rule.last_executed_at is None
         assert rule.last_execution_id is None
+
+
+@pytest.mark.asyncio
+async def test_delete_rule_not_found_should_raise_business_exception():
+    session = AsyncMock()
+    service = ScrapingRuleService(
+        session=session,
+        data_source_lookup=AsyncMock(),
+    )
+    service.rule_repo = AsyncMock()
+    service.rule_repo.delete.return_value = False
+
+    with pytest.raises(BusinessException) as exc_info:
+        await service.delete_rule(1)
+
+    assert exc_info.value.code == ErrorCode.SCRAPING_RULE_NOT_FOUND

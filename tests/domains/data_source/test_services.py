@@ -281,10 +281,21 @@ class TestDataSourceServiceUnit:
 
     async def test_delete_success(self):
         mock_ds_repo = AsyncMock()
+        mock_ds_repo.delete.return_value = True
         service = DataSourceService(mock_ds_repo, mock_session)
         await service.delete(1)
 
         mock_ds_repo.delete.assert_called_once_with(1)
+
+    async def test_delete_not_found(self):
+        mock_ds_repo = AsyncMock()
+        mock_ds_repo.delete.return_value = False
+        service = DataSourceService(mock_ds_repo, mock_session)
+
+        with pytest.raises(BusinessException) as exc_info:
+            await service.delete(1)
+
+        assert exc_info.value.code == ErrorCode.DATASOURCE_NOT_FOUND
 
     async def test_activate_success(self):
         mock_ds_repo = AsyncMock()
@@ -303,6 +314,9 @@ class TestDataSourceServiceUnit:
         result = await service.activate(1, user_id=1)
 
         assert result.status == DataSourceStatus.ACTIVE
+        update_payload = mock_ds_repo.update.await_args.args[1]
+        assert "last_error_msg" in update_payload
+        assert update_payload["last_error_msg"] is None
 
     async def test_activate_already_active(self):
         mock_ds_repo = AsyncMock()

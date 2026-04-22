@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import select, func, and_
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -63,8 +63,7 @@ class DataSourceRepository(BaseRepository):
             return None
 
         for key, value in data.items():
-            if value is not None:
-                setattr(data_source, key, value)
+            setattr(data_source, key, value)
 
         try:
             await self._flush()
@@ -73,13 +72,12 @@ class DataSourceRepository(BaseRepository):
             _raise_integrity_error(e)
 
     async def delete(self, data_source_id: int) -> bool:
-        data_source = await self.get_by_id(data_source_id)
-        if not data_source:
-            return False
         try:
-            await self._delete(data_source)
+            result = await self.session.execute(
+                delete(DataSource).where(DataSource.id == data_source_id)
+            )
             await self.session.flush()
-            return True
+            return bool(result.rowcount)
         except IntegrityError as e:
             _raise_integrity_error(e)
 
