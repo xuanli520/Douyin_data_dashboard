@@ -52,8 +52,11 @@ def _start_runner_thread(queue_name: str, runner: Callable[[], None]) -> Thread:
     return thread
 
 
-def _runner_thread_to_watch(queue_name: str, thread: Thread) -> Thread | None:
-    return None if queue_name in _MULTIPROCESS_QUEUES else thread
+def _start_queue(queue_name: str, runner: Callable[[], None]) -> Thread | None:
+    if queue_name in _MULTIPROCESS_QUEUES:
+        runner()
+        return None
+    return _start_runner_thread(queue_name, runner)
 
 
 def _wait_forever(
@@ -82,7 +85,9 @@ def _wait_forever(
 def run_all(etl_processes: int = 2, *, stop_event: Event | None = None) -> None:
     threads: list[Thread] = []
     for queue_name, runner in _queue_runners(etl_processes).items():
-        threads.append(_start_runner_thread(queue_name, runner))
+        thread = _start_queue(queue_name, runner)
+        if thread is not None:
+            threads.append(thread)
 
     if stop_event is None:
         _wait_forever(threads=threads)
@@ -167,10 +172,8 @@ def main() -> None:
             runner = _queue_runners(args.etl_processes).get(args.queue)
             if runner is None:
                 raise ValueError(f"unsupported queue name: {args.queue}")
-            runner_thread = _start_runner_thread(args.queue, runner)
-            _wait_forever(
-                stop_event, _runner_thread_to_watch(args.queue, runner_thread)
-            )
+            runner_thread = _start_queue(args.queue, runner)
+            _wait_forever(stop_event, runner_thread)
         else:
             run_all(etl_processes=args.etl_processes, stop_event=stop_event)
     finally:
