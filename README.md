@@ -1,632 +1,446 @@
-# fastapi-template-agent
+# 抖音数据可视化中台
 
-[![GitHub stars](https://img.shields.io/github/stars/SingularityLab-SWUFE/fastapi-template-agent?style=social)](https://github.com/SingularityLab-SWUFE/fastapi-template-agent/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/SingularityLab-SWUFE/fastapi-template-agent?style=social)](https://github.com/SingularityLab-SWUFE/fastapi-template-agent/network/members)
-[![GitHub license](https://img.shields.io/github/license/SingularityLab-SWUFE/fastapi-template-agent)](https://github.com/SingularityLab-SWUFE/fastapi-template-agent/blob/main/LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-005571?logo=fastapi)](https://fastapi.tiangolo.com/)
+[![GitHub stars](https://img.shields.io/github/stars/xuanli520/Douyin_data_dashboard?style=social)](https://github.com/xuanli520/Douyin_data_dashboard/stargazers)
+[![GitHub license](https://img.shields.io/github/license/xuanli520/Douyin_data_dashboard)](https://github.com/xuanli520/Douyin_data_dashboard/blob/main/LICENSE)
 
-Modern FastAPI Boilerplate for Agent Coding
+基于抖店平台数据，构建自动化数据采集、处理、分析与展示的可视化中台系统。
 
-## Features
+## 技术栈
 
-### Agent
+| 类别 | 技术 |
+|------|------|
+| 框架 | FastAPI 0.115+ |
+| 运行时 | Python 3.12+ |
+| 包管理 | uv |
+| 任务运行 | just |
+| 数据库 | SQLModel + Alembic (PostgreSQL) |
+| 缓存 | Redis |
+| 认证 | fastapi-users JWT + RBAC |
+| 任务调度 | funboost workers + beat scheduler |
+| 监控 | Prometheus metrics, circuit breaker |
+| 浏览器自动化 | Playwright |
+| 数据导入 | openpyxl (Excel 解析) |
 
-Have you ever been bothered by coding agent consistently wasting token usage? This repo summarizes few patterns (e.g. outputing unnecessary documentation rubbish), and offer a ready-to-use solution:
+## 项目结构
 
-- **Cost-Effective Instructions**: Well-crafted prompts and guidelines optimized for efficient and economical agent usage.
-- **Unified Instruction for all agents**: Instructions that different coding agents can consistently follow, and automatic sync in precommit hook.
-
-| Agent product | Instruction file |
-| --- | --- |
-| Codex | `AGENTS.md` (source of truth) |
-| Claude Code | `CLAUDE.md` |
-| Cline | `.clinerules` |
-| Cursor | `.cursorrules` |
-| GitHub Copilot | `.github/copilot-instructions.md` |
-
-You can use the same pattern to your any other project that uses coding agent as well.
-
-### Backend
-
-This repo also provides a full-featured, best-practiced backend template for building a robust/modern FastAPI application:
-
-- **Modern Tooling Stack**: State-of-the-art setup with `uv` for package management, `just` as task runner, `pre-commit` for git hooks, `pytest` for testing, and more.
-- **Authentication & Authorization**: Secure JWT-based authentication with role-based access control (RBAC).
-- **Structured Logging**: Production-ready logging with loguru - colored console output with clickable file:line references for development, JSON logs for production.
-- **Caching**: Pluggable caching system with built-in Redis support.
-- **Retry Mechanism**: Automatic retry for network errors and transient failures with exponential backoff using `tenacity`.
-- **Standardized Responses**: Middleware for consistent, unified JSON response formatting across all endpoints.
-- **Custom Error Codes**: Flexible handling of business-specific error codes and messages.
-- **Pagination**: Built-in support for paginating query results using `fastapi-pagination`.
-
-### Phase 3 Real Data Status (2026-03-12)
-
-Phase 3 experience endpoints are now running on real query services (not mock fallback):
-
-- `GET /api/v1/experience/overview`
-- `GET /api/v1/experience/trend`
-- `GET /api/v1/experience/issues`
-- `GET /api/v1/experience/drilldown/{dimension}`
-- `GET /api/v1/metrics/{metric_type}`
-- `GET /api/v1/dashboard/overview`
-- `GET /api/v1/dashboard/kpis`
-
-Supporting materials for frontend integration:
-
-- Real response examples: `docs/phase3-experience-real-api.md`
-- Integration seed SQL: `docs/phase3-experience-seed.sql`
-
-Cache policy for these endpoints:
-
-- metrics: 1h
-- dashboard: 30m
-- issues: 5m
-
-Collection write success triggers precise cache invalidation by `shop_id + metric_date`.
-
-### DDD guidelines
-
-This repo follows **Domain-Driven Design (DDD)** principles to structure the codebase for better maintainability and scalability:
-
-- **Domain Modules**: Each domain (e.g., `auth/`, `users/`) has its own module containing models(SQLTable), schemas (Request/Response), services.
-- **Representation Layer**: `api/` module handles HTTP requests, routing, and controllers. You can add `grpc`, `graphql` in this layer as needed.
-- **Core Layer**: `core/` module contains business-related domains.
-
-The `shared/` module contains **cross-cutting concerns** used by multiple domains. Before adding code to `shared/`, it must meet these criteria:
-
-**✅ Belongs in `shared/`:**
-- Used by 3+ domains
-- Pure utility with no business logic
-- Infrastructure-level abstractions (error codes, mixins, cache keys)
-
-**❌ Does NOT belong in `shared/`:**
-- Domain-specific logic (put in domain directory)
-- Used by only 1-2 domains (co-locate with primary domain)
-- Business rules or policies
-
-## Use
-
-You can **clone or fork** the repo as it is, or use `copier` to create a new project from the template:
-
-```bash
-uvx copier copy gh:SingularityLab-SWUFE/fastapi-template-agent my-backend-project --trust  # will do some file mv
 ```
-
-This repo is also a public template on GitHub, you can directly use the "Use this template" button on the repo page, and vibing with Copilot!
-
-## CI
-
-The CI workflow runs tests on pull requests with branch names starting with `fix/`, `feat/`, or `refactor/`.
-
-To enables/configures ci, create repository variables and secrets as needed:
-
-- `CI_JWT_SECRET`
-- `CI_APP_NAME`
-- `CI_CACHE_BACKEND`
-- `CI_DB_DATABASE`
-- `CI_DB_DRIVER`
-
-## Deploy
-
-### Docker Setup
-
-- Start services (production):
-
-```bash
-docker compose -f docker/docker-compose.yml up --build
+src/
+├── api/v1/          # HTTP 路由层 (18+ 路由模块)
+├── application/     # 采集编排 (计划构建、运行时加载、店铺切换)
+├── agents/          # LLM 看板智能体
+├── auth/            # JWT 认证、RBAC、权限种子
+├── audit/           # 审计日志
+├── cache/           # Redis 缓存协议
+├── config/          # 应用配置、日志、监控、熔断器
+├── core/            # 异常定义、端点状态装饰器、熔断器
+├── domains/
+│   ├── collection_job/  # 采集任务管理
+│   ├── data_import/     # 数据导入 (Excel 解析)
+│   ├── data_source/     # 数据源配置
+│   ├── experience/      # 体验分析
+│   ├── scraping_rule/   # 采集规则
+│   ├── shop_dashboard/  # 店铺看板
+│   └── task/            # 任务调度
+├── middleware/      # CORS、限流、监控中间件
+├── responses/       # 统一 JSON 响应封装
+├── shared/          # 跨领域公共模块 (分页、错误码、Schema)
+└── tasks/           # Funboost workers、beat 调度器、幂等性、队列映射
 ```
+## 基础设施
 
-- Start services for development (mounts project and enables hot reload):
+### 数据库
 
-```bash
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up --build
-```
-
-The compose files read environment variables from the repository root `.env` file. Adjust that file for DB and cache settings as needed.
-
-**Note**: the docker compose setup will run database migrations automatically before the app starts (the app image's entrypoint runs `alembic upgrade head` against the `db` service). The repository `.env` has been updated to use a local Postgres instance (`DB__DRIVER=postgresql`, host `db`).
-
-## Agent instructing
-
-This repo keeps a single source of truth for agent rules in `AGENTS.md`, and syncs it to:
-
-- `CLAUDE.md`
-- `.clinerules`
-- `.cursorrules`
-- `.github/copilot-instructions.md`
-
-Update `AGENTS.md`, then run:
-
-```bash
-just agent-rules-sync
-```
-
-The `pre-commit` hook `agent-rules` runs the same check on commit.
-
-## Usage Examples
-
-### Structured Logging
-
-Logging system built with [loguru](https://github.com/Delgan/loguru) provides colored console output with clickable file:line references for development and JSON logs for production.
+异步引擎，支持 PostgreSQL (`asyncpg`) 和 SQLite (`aiosqlite`)。连接池配置通过 `DatabaseSettings` 管理：
 
 ```python
-from loguru import logger # just import loguru
-
-@router.post("/orders")
-async def create_order(order: Order):
-    logger.info(f"Creating order {order.id}")
-    try:
-        result = await process_order(order)
-        logger.bind(order_id=order.id, amount=order.total).info("Order completed")
-        return result
-    except Exception as e:
-        logger.exception("Order processing failed")  # Auto-captures traceback
-        raise
+class DatabaseSettings(BaseSettings):
+    driver: Literal["postgresql", "sqlite"] = "postgresql"
+    pool_size: int = Field(default=5, ge=1)
+    max_overflow: int = Field(default=10, ge=0)
+    pool_recycle: int = Field(default=1800, ge=0)
 ```
 
-### Using Cache
+模型使用 `SQLModel` + `TimestampMixin`：
 
 ```python
-from src.cache import CacheProtocol, get_cache
+from sqlmodel import SQLModel, Field
+from src.shared.mixins import TimestampMixin
 
-@router.get("/user/{user_id}")
-async def get_user(user_id: int, cache: CacheProtocol = Depends(get_cache)):
-    # Try cache first
-    cached = await cache.get(f"user:{user_id}")
-    if cached:
-        return {"source": "cache", "data": cached}
-
-    # Fetch from DB
-    user_data = fetch_user_from_db(user_id)
-
-    # Cache for 5 minutes
-    await cache.set(f"user:{user_id}", user_data, ttl=300)
-
-    return {"source": "db", "data": user_data}
+class ShopDashboardScore(SQLModel, TimestampMixin, table=True):
+    __tablename__ = "shop_dashboard_scores"
+    id: int | None = Field(default=None, primary_key=True)
+    shop_id: str = Field(max_length=50, index=True)
+    # TimestampMixin 自动添加 created_at / updated_at (timezone-aware)
 ```
 
-### Response Middleware
-
-All JSON responses automatically wrapped in `{code, msg, data}` format:
+路由中通过 `get_session` 依赖注入，自动提交/回滚：
 
 ```python
-from fastapi import APIRouter
-from src.responses import Response
-
-router = APIRouter()
-
-# Option 1: Return raw data (middleware wraps it)
-@router.get("/items")
-async def list_items():
-    return [{"id": 1, "name": "Item 1"}]
-    # Response: {"code": 200, "msg": "success", "data": [...]}
-
-# Option 2: Explicit Response wrapper
-@router.get("/items/{item_id}")
-async def get_item(item_id: int):
-    return Response.success(data={"id": item_id, "name": "Item"})
-    # Response: {"code": 200, "msg": "success", "data": {...}}
-
-# Custom success message
-@router.post("/items")
-async def create_item(item: dict):
-    return Response.success(data=item, msg="Item created", code=201)
-```
-
-### Custom Error Codes
-
-**1. Define error codes:**
-```python
-# src/shared/errors.py
-class ErrorCode(IntEnum):
-    # Your custom codes
-    PRODUCT_OUT_OF_STOCK = 50101
-    PAYMENT_DECLINED = 50201
-    SHIPPING_UNAVAILABLE = 50301
-
-# mapping to HTTP status code
-ERROR_CODE_TO_HTTP = {
-    ErrorCode.PRODUCT_OUT_OF_STOCK: 409,
-    ErrorCode.PAYMENT_DECLINED: 402,
-    ErrorCode.SHIPPING_UNAVAILABLE: 503,
-}
-```
-
-**2. Raise business exceptions:**
-```python
-from src.shared.errors import ErrorCode
-from src.exceptions import BusinessException
-
-@router.post("/orders")
-async def create_order(product_id: int, quantity: int):
-    stock = get_stock(product_id)
-    if stock < quantity:
-        raise BusinessException(
-            ErrorCode.PRODUCT_OUT_OF_STOCK,
-            f"Only {stock} items available",
-            data={"available": stock, "requested": quantity}
-        )
-
-    # Response:
-    # HTTP 409
-    # {"code": 50101, "msg": "Only 3 items available", "data": {...}}
-```
-
-**3. Custom exception classes:**
-```python
-# src/exceptions.py
-class OutOfStockException(BusinessException):
-    def __init__(self, product_id: int, available: int):
-        super().__init__(
-            code=ErrorCode.PRODUCT_OUT_OF_STOCK,
-            msg=f"Product {product_id} out of stock",
-            data={"product_id": product_id, "available": available}
-        )
-
-# Usage
-raise OutOfStockException(product_id=123, available=0)
-```
-
-`BusinessException` can be addressed globally by the exception handlers, so you don't need to catch it in every endpoint.
-
-### Pagination
-
-Paginate query results with built-in [`fastapi-pagination`](https://github.com/uriyyo/fastapi-pagination) support.
-
-**Usage:**
-```python
-from fastapi import APIRouter, Depends
-from fastapi_pagination import Page
-from fastapi_pagination.ext.sqlalchemy import apaginate
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from src.auth.schemas import User
 from src.session import get_session
 
-router = APIRouter()
-
-@router.get("/users", response_model=Page[User])
-async def list_users(session: AsyncSession = Depends(get_session)):
-    return await apaginate(session, select(User))
-    # Response: {"code": 200, "msg": "success", "data": {"items": [...], "total": 100, "page": 1, "size": 50}}
+@router.get("/items")
+async def list_items(session: AsyncSession = Depends(get_session)):
+    result = await session.execute(select(Item))
+    return result.scalars().all()
 ```
 
-### Protected Routes
+模型通过 AST 扫描自动发现（扫描 `src/` 下所有含 `table=True` 的类），无需手动注册。同步 funboost worker 通过 `bind_worker_loop()` + `run_coro()` 桥接异步数据库调用。
 
-Authentication is well-implemented by `fastapi-users`, so use `current_user` and `current_superuser` dependencies to register route login or superuser access:
+```bash
+just db-migrate   # 生成迁移 (alembic revision --autogenerate)
+just db-upgrade   # 应用迁移 (alembic upgrade head)
+just db-downgrade # 回滚迁移 (alembic downgrade -1)
+just db-history   # 查看迁移历史
+```
+### 缓存
+
+双后端缓存抽象，通过 `CacheProtocol` 统一接口。
+
+| 后端 | 实现 | 场景 |
+|------|------|------|
+| `redis` | `RedisCache` (redis.asyncio, max_connections=50) | 生产环境 |
+| `local` | `LocalCache` (内存 dict + TTL) | 开发/测试 |
 
 ```python
-from fastapi import APIRouter, Depends
-from src.auth import current_user, current_superuser
-from src.auth.schemas import User
+from src.cache import get_cache, CacheProtocol
 
-router = APIRouter()
+@router.get("/data")
+async def get_data(cache: CacheProtocol = Depends(get_cache)):
+    cached = await cache.get("my_key")
+    if cached:
+        return cached
+    data = await fetch_from_db()
+    await cache.set("my_key", data, ttl=300)
+    return data
+```
+
+`RedisKeyRegistry` 提供类型化的 key 生成，避免硬编码：
+
+```python
+from src.shared.redis_keys import redis_keys
+
+redis_keys.refresh_token(token_hash="abc123")           # refresh_token:abc123
+redis_keys.experience_metrics(shop_id=1, ...)           # experience:metrics:1:...
+redis_keys.shop_dashboard_shop_catalog(account_id="x")  # shop_dashboard:shop_catalog:x
+```
+
+同步 worker 使用 `SyncRedisCache` 访问缓存。
+### 认证与授权
+
+基于 `fastapi-users`，双认证后端：`cookie_auth_backend` (HttpOnly Cookie) + `bearer_auth_backend` (Bearer Token)。JWT 使用 HS256/HS512，RefreshToken 存储于 Redis 并经 SHA-256 哈希。
+
+RBAC 模型：`User` ↔ `UserRole` ↔ `Role` ↔ `RolePermission` ↔ `Permission` (多对多)。预置角色：`super_admin`、`admin`、`user`。
+
+```python
+from src.auth import current_user, User
 
 @router.get("/profile")
 async def get_profile(user: User = Depends(current_user)):
-    return {"username": user.username, "email": user.email}
-
-@router.delete("/users/{user_id}")
-async def delete_user(user_id: int, admin: User = Depends(current_superuser)):
-    # Only superusers can access
-    delete_user_from_db(user_id)
-    return {"deleted": user_id}
+    return {"id": user.id, "username": user.username}
 ```
 
-We recommend you use RBAC related dependencies for permission control. Try avoid use `current_superuser`.
-
-### RBAC (Role-Based Access Control)
-
-If your views require more fine-grained permission control, use the `require_permissions`, `require_roles`, and `owner_or_perm` dependencies:
+权限守卫：
 
 ```python
-from fastapi import APIRouter, Depends
-from src.auth import require_permissions, require_roles, owner_or_perm
+from src.auth.rbac import require_permissions
+from src.auth.permissions import ExportPermission
 
-router = APIRouter()
-
-# Require specific permission
-# Note: you do not need to set current_user dependency here, as require_permissions does it internally
-@router.post("/users", dependencies=[Depends(require_permissions("user:create"))])
-async def create_user(data: dict):
-    return {"created": True}
-
-# Require multiple permissions (all)
-@router.delete(
-    "/users/{user_id}",
-    dependencies=[Depends(require_permissions("user:delete", "audit:log", match="all"))]
-)
-async def delete_user(user_id: int):
-    return {"deleted": user_id}
-
-# Require any of multiple permissions
-@router.get(
-    "/users/{user_id}",
-    dependencies=[Depends(require_permissions("user:read", "user:write", match="any"))]
-)
-async def get_user(user_id: int):
-    return {"id": user_id}
-
-# Require specific role
-# You can register an endpoint that both needs permission check and role check
-@router.get("/admin/stats", dependencies=[Depends(require_roles("admin"))])
-async def admin_stats():
-    return {"stats": "..."}
-
-# Owner or permission check
-async def get_post_owner_id(post_id: int) -> int:
-    # Fetch owner_id from database
-    return fetch_post_owner(post_id)
-
-@router.put(
-    "/posts/{post_id}",
-    dependencies=[Depends(owner_or_perm(get_post_owner_id, ["post:edit"]))]
-)
-async def update_post(post_id: int, data: dict):
-    # User can edit if they own the post OR have "post:edit" permission
-    return {"updated": True}
-```
-
-**Permission Format:**
-- `required_perm` must be `module:action` (e.g., `"user:read"`, `"post:delete"`)
-- `user_perm` can be `module` (full module access) or `module:action` (specific action)
-- `user_perm="user"` matches any `required_perm="user:*"`
-- Use `bypass_superuser=True` to allow superusers to bypass checks
-
-### Dependency Injection settings
-
-`settings` can be injected into your path operation functions using `Depends`:
-
-```python
-from fastapi import Depends
-from src.config import Settings, get_settings
-from src.cache import CacheProtocol, get_cache
-
-async def my_handler(
-    settings: Settings = Depends(get_settings),
-    cache: CacheProtocol = Depends(get_cache)
+@router.get("/exports")
+async def list_exports(
+    user: User = Depends(current_user),
+    _=Depends(require_permissions(ExportPermission.VIEW, bypass_superuser=True)),
 ):
-    max_retries = settings.app.max_retries
-    await cache.set("config", settings.app.name)
+    ...
 ```
 
-This allows you to test different configurations by overriding the `get_settings` dependency in your tests.
+权限常量按模块组织（`src/api/v1/permissions.py`），支持通配符：`module:*` 匹配模块下所有操作，`*` 为全局权限。
 
-### Retry
+其他装饰器：
+- `require_roles("admin", match="any")` — 角色检查
+- `owner_or_perm(get_owner_id, ["task:update"])` — 资源所有者或持有指定权限
+### 中间件
 
-Automatic retry for network errors, timeouts, and 5xx responses using [tenacity](https://github.com/jd/tenacity). Retries up to 3 times with exponential backoff (1-10 seconds).
+四个中间件在 `src/main.py` 通过 `middleware=[]` 列表加载。
+
+| 中间件 | 职责 |
+|---|---|
+| `CORSMiddleware` | 跨域，读取 `settings.cors` |
+| `RateLimitMiddleware` | 滑动窗口限流（Redis sorted set，降级到 CacheProtocol） |
+| `MonitorMiddleware` | Prometheus 指标采集 |
+| `ResponseWrapperMiddleware` | JSON 响应自动包装为 `{code, msg, data}` |
+
+限流按端点配置，全局默认 1000 req/60s，登录 5 req/60s。超限返回 429 + `Retry-After`，响应头携带：
+
+```
+X-RateLimit-Limit: 1000
+X-RateLimit-Remaining: 999
+X-RateLimit-Window: 60.0
+```
+
+Prometheus 指标：
 
 ```python
-import httpx
+http_requests_total          # Counter  [method, endpoint, status_code]
+http_request_duration_seconds # Histogram [method, endpoint]
+http_requests_in_progress    # Gauge    [method, endpoint]
+http_exceptions_total        # Counter  [method, endpoint, exception_type]
+```
+
+`generate_metrics()` 返回 Prometheus exposition 格式文本，挂载到 `/metrics` 端点。
+### 统一响应
+
+`src/responses/base.py` 定义统一响应信封：
+
+```python
+class Response(BaseModel, Generic[T]):
+    code: int
+    msg: str
+    data: T | None = None
+
+    @classmethod
+    def success(cls, data=None, msg="success", code=200): ...
+    @classmethod
+    def error(cls, code, msg, data=None): ...
+```
+
+`ResponseWrapperMiddleware` 自动将所有 JSON 响应包装为此格式，跳过 `/docs`、`/health`、认证端点。路由中直接返回业务数据即可：
+
+```python
+@router.get("/shops")
+async def list_shops():
+    return [{"id": 1, "name": "测试店铺"}]
+# 实际响应: {"code": 200, "msg": "success", "data": [{"id": 1, "name": "测试店铺"}]}
+```
+
+手动控制错误响应：`return Response.error(code=40001, msg="店铺不存在")`
+### 分页
+
+`src/shared/schemas/pagination.py` 提供分页三件套：
+
+```python
+from src.shared.schemas.pagination import PaginatedData, PaginationParams
+
+@router.get("/shops")
+async def list_shops(
+    params: PaginationParams = Depends(),
+    session: AsyncSession = Depends(get_session),
+):
+    stmt = select(Shop).offset(params.offset()).limit(params.size)
+    items = (await session.execute(stmt)).scalars().all()
+    total = ...
+    return PaginatedData.create(
+        items=items, total=total, page=params.page, size=params.size
+    )
+```
+
+`PaginationParams` 默认 page=1, size=20 (max 100)。`PaginatedData` 自动计算 `pages`、`has_next`、`has_prev`。
+### 审计日志
+
+`src/audit/` 提供结构化审计追踪。核心模型 `AuditLog`：
+
+| 字段 | 说明 |
+|---|---|
+| `actor_id` | FK → users.id |
+| `action` | `AuditAction` 枚举（登录/登出/CRUD/权限检查/任务生命周期） |
+| `result` | `AuditResult`（success/failure/granted/denied） |
+| `resource_type` / `resource_id` | 资源定位 |
+| `request_id` | UUID v4 请求关联 |
+| `ip` | 客户端 IP（x-forwarded-for 感知） |
+
+`AuditService.log()` 异常静默，不影响业务流程：
+
+```python
+from src.audit.service import AuditService, extract_client_info
+
+async def some_handler(request: Request, audit: AuditService = Depends(get_audit_service)):
+    user_agent, ip = extract_client_info(request)
+    await audit.log(
+        action=AuditAction.CREATE, result=AuditResult.SUCCESS,
+        actor_id=user.id, resource_type="shop", resource_id=str(shop.id),
+        user_agent=user_agent, ip=ip, request_id=request.state.request_id,
+    )
+```
+### 配置管理
+
+`src/config/settings.py` 基于 pydantic-settings，组合 12 个子配置模块：
+
+`app` · `auth` · `db` · `cache` · `captcha` · `log` · `rate_limit` · `circuit_breaker` · `monitor` · `cors` · `funboost` · `shop_dashboard`
+
+`get_settings()` 通过 `@lru_cache()` 单例化。环境变量使用 `__` 分隔符映射嵌套字段：
+
+```bash
+DB__POOL_SIZE=10
+CACHE__URL=redis://localhost:6379/0
+AUTH__SECRET=your-secret-key
+RATE_LIMIT__GLOBAL_LIMIT=2000
+```
+### 任务系统
+
+基于 funboost（Redis 消息队列）构建，非 Celery。
+
+| 队列 | 用途 |
+|---|---|
+| `collection_shop_dashboard` | 店铺看板数据采集 |
+| `collection_shop_dashboard_agent` | 代理采集 |
+| `etl_orders` | 订单 ETL（多进程） |
+| `etl_products` | 商品 ETL（多进程） |
+| `*_dlx` | 各队列对应的死信队列 |
+
+Worker（`src/tasks/worker.py`）启动 asyncio 事件循环，初始化数据库，运行队列消费者。Beat（`src/tasks/beat.py`）从数据库加载已启用的 `CollectionJob`，注册 APScheduler 任务，每 10 分钟刷新。
+
+`TaskStatusMixin` 在任务完成时写入状态记录。任务幂等性通过 `src/tasks/idempotency.py` 保证。
+
+```bash
+just funboost-worker              # 启动全部队列
+just funboost-worker-q <queue>    # 启动单个队列
+just funboost-beat                # 启动调度器
+```
+### 公共基础设施
+
+**BaseRepository** (`src/shared/repository.py`) — 事务辅助基类，自动回滚，`UNSET` 哨兵值区分 `None` 与未设置：
+
+```python
+from src.shared.repository import BaseRepository
+
+class UserRepository(BaseRepository):
+    async def create(self, user: User) -> User:
+        return await self._add(user)
+
+    async def update_email(self, user: User, email: str) -> None:
+        async def _op():
+            user.email = email
+        await self._tx(_op)
+```
+
+**ErrorCode** (`src/shared/errors.py`) — `IntEnum`，60+ 错误码覆盖认证、用户、角色、权限、数据校验、业务、数据源、任务等领域。`ERROR_CODE_TO_HTTP` 映射错误码到 HTTP 状态码。
+
+**TimestampMixin** (`src/shared/mixins.py`) — `created_at` / `updated_at` 自动填充，时区感知（默认 UTC+8）。
+### 熔断器
+
+`src/core/circuit_breaker.py` 封装 `circuitbreaker` 库。三态：`CLOSED` → `OPEN` → `HALF_OPEN`。默认 5 次失败触发熔断，60 秒恢复。
+
+```python
+from src.core.circuit_breaker import circuit, CircuitBreakerError
+
+@circuit(failure_threshold=5, recovery_timeout=60, name="douyin-api")
+def call_douyin_api(shop_id: str) -> dict:
+    ...
+
+try:
+    result = call_douyin_api("shop_001")
+except CircuitBreakerError:
+    ...  # 降级处理
+```
+
+`CircuitBreakerPolicy` 用于批量创建同策略的熔断器实例。
+
+### 重试机制
+
+`src/retry.py` 基于 tenacity，针对网络错误和 5xx 响应自动重试。指数退避（1s → 2s → 4s），最多 3 次。
+
+```python
 from src.retry import retry_on_network, async_retry_on_network
 
-# Decorator for sync functions
 @retry_on_network()
-def fetch_data():
-    response = httpx.get("https://api.example.com/data")
-    response.raise_for_status()
-    return response.json()
-
-# Decorator for async functions
-@retry_on_network()
-async def fetch_user(user_id: int):
-    async with httpx.AsyncClient() as client:
-        response = await client.get(f"https://api.example.com/users/{user_id}")
-        response.raise_for_status()
-        return response.json()
-
-# Manual retry control (async)
-async def fetch_with_manual_retry():
-    async for attempt in async_retry_on_network():
-        with attempt:
-            async with httpx.AsyncClient() as client:
-                response = await client.get("https://api.example.com/data")
-                response.raise_for_status()
-                return response.json()
+def fetch_shop_data(client: httpx.Client, shop_id: str) -> dict:
+    resp = client.get(f"/api/shops/{shop_id}")
+    resp.raise_for_status()
+    return resp.json()
 ```
 
-### Endpoint Development Status
+## 核心功能
 
-Mark API endpoints with development status (in development, planned, deprecated) using decorators. Useful for feature flags, API lifecycle management, and gradual rollouts.
+- **数据采集** — Playwright 自动化登录抖店后台，采集店铺经营数据
+- **采集编排** — 计划构建器、运行时加载器、店铺切换、账号店铺目录
+- **数据导入** — Excel 文件解析与批量导入
+- **体验分析** — 体验分概览、趋势、问题诊断、维度下钻
+- **店铺看板** — KPI 概览、指标监控、数据可视化
+- **任务调度** — funboost 分布式任务队列 + beat 定时调度
+- **告警通知** — 自定义告警规则与通知推送
+- **报表导出** — 数据分析报表生成与导出
+- **ETL 管道** — 订单、商品数据清洗转换
+- **LLM 数据补全** — 智能体补充冷数据缺失字段
+- **审计日志** — 全链路操作审计
+## API 模块
 
-#### `in_development` - Mark endpoints as in-development
+`api/v1/` 下包含以下路由模块：
 
-Returns mock data by default, with options to execute real logic:
+| 模块 | 说明 |
+|------|------|
+| auth | 认证与登录 |
+| admin | 管理后台 |
+| permissions | 权限管理 |
+| shops | 店铺管理 |
+| data_source | 数据源配置 |
+| scraping_rule | 采集规则 |
+| collection_job | 采集任务 |
+| data_import | 数据导入 |
+| task | 任务管理 |
+| schedules | 定时调度 |
+| experience | 体验分析 |
+| metrics | 指标监控 |
+| alerts | 告警管理 |
+| notifications | 通知推送 |
+| reports | 报表管理 |
+| exports | 数据导出 |
+| analysis | 数据分析 |
+| system | 系统管理 |
+| audit | 审计日志 |
 
-```python
-from fastapi import APIRouter
-from src.core.endpoint_status import in_development
+## 开发环境搭建
 
-router = APIRouter()
-
-# Pure mock - function body not executed
-@router.get("/analytics/realtime")
-@in_development(mock_data={"visitors": 1234, "page_views": 5678})
-async def get_realtime_analytics():
-    pass  # This code never runs
-
-# Prefer real data, fall back to mock on exception
-@router.get("/analytics/dashboard")
-@in_development(
-    mock_data={"placeholder": True},
-    prefer_real=True,
-    fallback_on_exception=True,
-    expected_release="2026-03-01"
-)
-async def get_dashboard():
-    return await fetch_dashboard_data()  # Returns real data if successful
-
-# Response format (HTTP 200):
-# {
-#   "code": 70001,
-#   "msg": "该功能正在开发中，当前返回演示数据",
-#   "data": {
-#     "mock": true,
-#     "expected_release": "2026-03-01",
-#     "data": {"visitors": 1234, "page_views": 5678}
-#   }
-# }
-```
-
-**Parameters:**
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `mock_data` | `dict \| Callable[[], dict]` | Required | Mock data or callable returning mock data |
-| `expected_release` | `str \| None` | `None` | Expected release date shown in response |
-| `prefer_real` | `bool` | `False` | Execute real function, return real data on success |
-| `fallback_on_exception` | `bool` | `False` | Fall back to mock on exception (use with `prefer_real=True`) |
-
-#### `planned` - Mark endpoints as planned
-
-Returns HTTP 501 (Not Implemented). Requires authentication to prevent information leakage.
-
-```python
-from fastapi import APIRouter
-from src.core.endpoint_status import planned
-
-router = APIRouter()
-
-@router.get("/analytics/forecast")
-@planned(expected_release="2026-04-01")
-async def get_forecast():
-    pass  # Never executed
-
-# Unauthenticated -> HTTP 401
-# Authenticated -> HTTP 501
-# Response:
-# {
-#   "code": 70002,
-#   "msg": "该功能正在规划中，暂未实现",
-#   "data": {"expected_release": "2026-04-01"}
-# }
-```
-
-#### `deprecated` - Mark endpoints as deprecated
-
-Two modes: soft (warning headers only) and strict (HTTP 410 Gone).
-
-**Soft mode (default):** Executes function, adds deprecation headers:
-
-```python
-from fastapi import APIRouter
-from src.core.endpoint_status import deprecated
-
-router = APIRouter()
-
-@router.get("/legacy/export")
-@deprecated(alternative="/api/v2/export", removal_date="2026-06-01")
-async def legacy_export():
-    return {"data": "still works"}
-
-# HTTP 200, normal response
-# Headers:
-#   X-Deprecated: true
-#   X-Deprecated-Alternative: /api/v2/export
-#   X-Deprecated-Removal-Date: 2026-06-01
-```
-
-**Strict mode:** Returns HTTP 410, requires authentication:
-
-```python
-@router.get("/old/api")
-@deprecated(mode="strict", alternative="/api/v2/new")
-async def old_endpoint():
-    pass  # Never executed
-
-# Unauthenticated -> HTTP 401
-# Authenticated -> HTTP 410
-# Response:
-# {
-#   "code": 70003,
-#   "msg": "该接口已弃用，请迁移到新接口",
-#   "data": {"alternative": "/api/v2/new"}
-# }
-```
-
-**Parameters:**
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `alternative` | `str \| None` | `None` | Alternative endpoint path |
-| `removal_date` | `str \| None` | `None` | Planned removal date |
-| `mode` | `"soft" \| "strict"` | `"soft"` | Soft adds headers, strict returns 410 |
-
-#### Summary Table
-
-| Decorator | HTTP Status | Auth Required | Use Case |
-|-----------|-------------|---------------|----------|
-| `in_development` | 200 | No | Feature flags, gradual rollout |
-| `planned` | 501 | Yes | Roadmap visibility |
-| `deprecated(soft)` | 200 | No | Graceful migration period |
-| `deprecated(strict)` | 410 | Yes | Force migration |
-
-## Douyin Shop Dashboard Login Ops
-
-- Login session persistence uses Playwright `storage_state` files only, no Redis cookie storage.
-- Bootstrap command: `python scripts/douyin_bootstrap_login.py --account-id <account_id> --state-dir .runtime/shop_dashboard_state`.
-- Collection flow lock strategy: shop-scope lock for collect, account-scope lock for browser refresh.
-- Expired account behavior: when state is missing/invalid, collection returns deterministic degraded payload and skips browser refresh.
-
-
-## Development Setup
+### 前置依赖
 
 - Python >= 3.12
 - [uv](https://github.com/astral-sh/uv)
 - [just](https://github.com/casey/just)
+- PostgreSQL
+- Redis
 
-### Install uv
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-### Install just
-
-`just` is used to simplify command execution. You can also refer to commands in `justfile` directly. Installation options:
+### 安装步骤
 
 ```bash
-cargo install just
+just dev          # 安装依赖
+just hooks        # 安装 pre-commit hooks
+just db-upgrade   # 数据库迁移
+just run          # 启动开发服务器
 ```
 
-Or
+## 部署
+
+### Docker
 
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to ~/.local/bin
+# 生产环境
+docker compose -f docker/docker-compose.yml up --build
+
+# 开发环境 (热重载)
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up --build
 ```
 
-## Contributing
+compose 文件从项目根目录 `.env` 读取环境变量。启动时自动执行数据库迁移。
 
-**Read [CONTRIBUTIONS.md](/CONTRIBUTIONS.md) before contributing.**
+多节点部署参考 `docker/.env.server-a.example` 和 `docker/.env.server-b.example`。
 
-### Quick Start for Contributors
+## 常用命令
 
-1. **Install dependencies**
-   ```bash
-   just dev
-   ```
+| 命令 | 说明 |
+|------|------|
+| `just dev` | 安装依赖 |
+| `just hooks` | 安装 pre-commit hooks |
+| `just check` | 代码格式化与 lint 检查 |
+| `just test` | 运行测试 |
+| `just run` | 启动开发服务器 |
+| `just db-migrate` | 生成数据库迁移 |
+| `just db-upgrade` | 执行数据库迁移 |
+| `just db-downgrade` | 回滚数据库迁移 |
+| `just funboost-worker` | 启动 funboost worker |
+| `just funboost-beat` | 启动 beat 调度器 |
+| `just arch-check` | 架构检查 |
+| `just ci-gate` | CI 门禁检查 |
 
-2. **Install pre-commit hooks**
-   ```bash
-   just hooks
-   ```
+## 贡献指南
 
-3. **Create an issue first**
-   - Every PR requires a corresponding issue
-   - Discuss approach and scope before writing code
-
-4. **Run checks before submitting PR**
-   ```bash
-   just check
-   just test
-   ```
-
-For Chinese contributors, since this is a open-source project, please ensure that your commit messages or issues/PRs can be understood by the global community. It's recommended to write in English or provide English version alongside Chinese descriptions.
-
-## Douyin Shop Dashboard Login State
-
-- Upload endpoint: POST /api/v1/data-sources/{id}/shop-dashboard/login-state (multipart: account_id + file)
-- Clear endpoint: DELETE /api/v1/data-sources/{id}/shop-dashboard/login-state
-- Login state source of truth: data_sources.extra_config.shop_dashboard_login_state
-- API responses only expose shop_dashboard_login_state_meta
-- Worker materializes DB storage_state into .runtime/shop_dashboard_state/<account>.json before collection
+详见 [CONTRIBUTIONS.md](/CONTRIBUTIONS.md)。
