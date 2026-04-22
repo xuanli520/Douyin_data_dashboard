@@ -1,6 +1,7 @@
 from datetime import date
 from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import select
 
 from src.application.collection.result_persister import CollectionResultPersister
@@ -61,7 +62,7 @@ async def test_persist_should_invalidate_experience_cache_after_commit(
     assert calls == [("1001", date(2026, 3, 3))]
 
 
-async def test_persist_should_not_fail_when_cache_invalidation_raises(
+async def test_persist_should_raise_when_cache_invalidation_raises(
     test_db,
     monkeypatch,
 ):
@@ -84,26 +85,27 @@ async def test_persist_should_not_fail_when_cache_invalidation_raises(
     try:
         async with test_db() as session:
             persister = CollectionResultPersister()
-            await persister.persist(
-                session=session,
-                runtime=SimpleNamespace(shop_id="1001"),
-                metric_date="2026-03-03",
-                payload={
-                    "shop_id": "1001",
-                    "target_shop_id": "1001",
-                    "actual_shop_id": "1001",
-                    "total_score": 80.0,
-                    "product_score": 82.0,
-                    "logistics_score": 78.0,
-                    "service_score": 81.0,
-                    "bad_behavior_score": 0.0,
-                    "shop_name": "demo-shop",
-                    "source": "script",
-                    "reviews": {"items": []},
-                    "violations": {"waiting_list": []},
-                    "raw": {},
-                },
-            )
+            with pytest.raises(RuntimeError, match="redis unavailable"):
+                await persister.persist(
+                    session=session,
+                    runtime=SimpleNamespace(shop_id="1001"),
+                    metric_date="2026-03-03",
+                    payload={
+                        "shop_id": "1001",
+                        "target_shop_id": "1001",
+                        "actual_shop_id": "1001",
+                        "total_score": 80.0,
+                        "product_score": 82.0,
+                        "logistics_score": 78.0,
+                        "service_score": 81.0,
+                        "bad_behavior_score": 0.0,
+                        "shop_name": "demo-shop",
+                        "source": "script",
+                        "reviews": {"items": []},
+                        "violations": {"waiting_list": []},
+                        "raw": {},
+                    },
+                )
             score = (
                 await session.execute(
                     select(ShopDashboardScore).where(

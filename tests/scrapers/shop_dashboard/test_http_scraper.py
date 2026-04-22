@@ -212,6 +212,28 @@ def test_http_scraper_raises_when_login_expired():
             scraper.fetch_dashboard("shop-1", "2026-03-03")
 
 
+def test_http_scraper_raises_when_payload_reports_401():
+    from src.scrapers.shop_dashboard.http_scraper import HttpScraper
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(
+            "/governance/shop/experiencescore/getOverviewByVersion"
+        ):
+            return httpx.Response(
+                200,
+                json={"code": 401, "message": "unauthorized"},
+            )
+        return httpx.Response(200, json={"code": 0, "data": {}})
+
+    transport = httpx.MockTransport(handler)
+    with httpx.Client(
+        transport=transport, base_url="https://fxg.jinritemai.com"
+    ) as client:
+        scraper = HttpScraper(client=client, graphql_query="query X { __typename }")
+        with pytest.raises(LoginExpiredError):
+            scraper.fetch_dashboard("shop-1", "2026-03-03")
+
+
 def test_http_scraper_accepts_runtime_context():
     from src.scrapers.shop_dashboard.http_scraper import HttpScraper
 

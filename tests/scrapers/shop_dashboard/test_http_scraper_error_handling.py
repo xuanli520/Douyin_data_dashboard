@@ -1,6 +1,7 @@
 import httpx
 import pytest
 
+from src.scrapers.shop_dashboard.exceptions import LoginExpiredError
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.scrapers.shop_dashboard.exceptions import ShopDashboardScraperError
 
@@ -180,7 +181,7 @@ def test_request_retries_on_timeout_then_recovers(monkeypatch):
     assert calls["count"] == 2
 
 
-def test_request_does_not_retry_on_4xx(monkeypatch):
+def test_request_raises_login_expired_on_401_without_retry(monkeypatch):
     from src.scrapers.shop_dashboard import http_scraper as scraper_module
     from src.scrapers.shop_dashboard.http_scraper import HttpScraper
 
@@ -197,7 +198,7 @@ def test_request_does_not_retry_on_4xx(monkeypatch):
         transport=transport, base_url="https://fxg.jinritemai.com"
     ) as client:
         scraper = HttpScraper(client=client)
-        with pytest.raises(ShopDashboardScraperError) as exc_info:
+        with pytest.raises(LoginExpiredError) as exc_info:
             scraper.fetch_dashboard_with_context(runtime, "2026-03-03")
 
     assert exc_info.value.error_data["status_code"] == 401

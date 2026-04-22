@@ -3,6 +3,7 @@ from pydantic_settings import BaseSettings
 
 class ShopDashboardSettings(BaseSettings):
     base_url: str = "https://fxg.jinritemai.com"
+    runtime_state_dir: str = ".runtime/shop_dashboard_state"
     cookie_ttl_seconds: int = 21600
     lock_ttl_seconds: int = 3600
     shop_lock_ttl_seconds: int = 600

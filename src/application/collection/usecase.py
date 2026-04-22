@@ -53,6 +53,8 @@ from src.shared.redis_keys import redis_keys
 
 logger = logging.getLogger(__name__)
 
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
 
 def _ensure_db_initialized() -> None:
     if session.async_session_factory is not None:
@@ -66,6 +68,16 @@ async def _ensure_db_initialized_async() -> None:
         return
     settings = get_settings()
     await session.init_db(settings.db.url, settings.db.echo)
+
+
+def _resolve_state_store_base_dir() -> Path:
+    configured = str(get_settings().shop_dashboard.runtime_state_dir or "").strip()
+    if not configured:
+        return _REPO_ROOT / ".runtime" / "shop_dashboard_state"
+    state_dir = Path(configured).expanduser()
+    if state_dir.is_absolute():
+        return state_dir
+    return _REPO_ROOT / state_dir
 
 
 class CollectionUseCase:
@@ -516,7 +528,7 @@ class CollectionUseCase:
             task_name="sync_shop_dashboard",
         )
         state_store = self.executor.create_state_store(
-            base_dir=Path(".runtime") / "shop_dashboard_state"
+            base_dir=_resolve_state_store_base_dir()
         )
         runtime = self.executor.materialize_runtime_storage_state(
             runtime=runtime,
@@ -674,6 +686,13 @@ class CollectionUseCase:
                     bootstrap_result.get("error_code") or "verify_request_failed"
                 ).strip()
                 bootstrap_error = str(bootstrap_result.get("error") or "").strip()
+                if bootstrap_error_code == "verify_login_expired":
+                    mark_expired = getattr(login_state_manager, "mark_expired", None)
+                    if callable(mark_expired):
+                        await mark_expired(
+                            storage_account_id,
+                            reason=bootstrap_error_code,
+                        )
                 bootstrap_verify_failed_count += 1
                 observe_shop_dashboard_bootstrap_verify_failed(
                     error_code=bootstrap_error_code
@@ -792,6 +811,9 @@ class CollectionUseCase:
                     "reason": "running",
                     "metric_date": plan_unit.metric_date,
                     "shop_id": unit_runtime.shop_id,
+                    "target_shop_id": unit_runtime.shop_id,
+                    "actual_shop_id": None,
+                    "mismatch_status": "unknown",
                     "rule_id": unit_runtime.rule_id,
                     "execution_id": unit_runtime.execution_id,
                     "retry_count": 0,
@@ -1336,14 +1358,13 @@ class CollectionUseCase:
             "runtime": runtime,
             "shop_ids": shop_ids,
         }
-        if self._supports_keyword_argument(
-            bootstrap_shops,
-            "verify_metric_date_by_shop",
-        ):
-            kwargs["verify_metric_date_by_shop"] = dict(verify_metric_date_by_shop)
-        result = bootstrap_shops(**kwargs)
-        if inspect.isawaitable(result):
-            result = await result
+        result = await self._invoke_with_optional_kwargs(
+            call=bootstrap_shops,
+            kwargs=kwargs,
+            optional_kwargs={
+                "verify_metric_date_by_shop": dict(verify_metric_date_by_shop)
+            },
+        )
         if isinstance(result, dict):
             return result
         return {}
@@ -1361,11 +1382,11 @@ class CollectionUseCase:
             "runtime": runtime,
             "shop_id": shop_id,
         }
-        if self._supports_keyword_argument(bootstrap_shop, "verify_metric_date"):
-            kwargs["verify_metric_date"] = verify_metric_date
-        result = bootstrap_shop(**kwargs)
-        if inspect.isawaitable(result):
-            result = await result
+        result = await self._invoke_with_optional_kwargs(
+            call=bootstrap_shop,
+            kwargs=kwargs,
+            optional_kwargs={"verify_metric_date": verify_metric_date},
+        )
         if isinstance(result, dict):
             return result
         return {
@@ -1377,15 +1398,58 @@ class CollectionUseCase:
             "error_code": "verify_request_failed",
         }
 
-    def _supports_keyword_argument(self, call: Any, argument_name: str) -> bool:
+    async def _invoke_with_optional_kwargs(
+        self,
+        *,
+        call: Any,
+        kwargs: dict[str, Any],
+        optional_kwargs: dict[str, Any],
+    ) -> Any:
+        merged = dict(kwargs)
         try:
             signature = inspect.signature(call)
         except (TypeError, ValueError):
-            return True
+            merged.update(optional_kwargs)
+            result = self._invoke_call(call=call, kwargs=merged)
+            if inspect.isawaitable(result):
+                return await result
+            return result
         for parameter in signature.parameters.values():
             if parameter.kind == inspect.Parameter.VAR_KEYWORD:
-                return True
-        return argument_name in signature.parameters
+                merged.update(optional_kwargs)
+                result = self._invoke_call(call=call, kwargs=merged)
+                if inspect.isawaitable(result):
+                    return await result
+                return result
+        for argument_name, value in optional_kwargs.items():
+            if argument_name in signature.parameters:
+                merged[argument_name] = value
+        result = self._invoke_call(call=call, kwargs=merged)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    def _invoke_call(self, *, call: Any, kwargs: dict[str, Any]) -> Any:
+        try:
+            return call(**kwargs)
+        except TypeError as exc:
+            if not self._is_unexpected_keyword_error(exc, kwargs):
+                raise
+            stripped_kwargs = {
+                key: value
+                for key, value in kwargs.items()
+                if key in {"runtime", "shop_ids", "shop_id"}
+            }
+            return call(**stripped_kwargs)
+
+    def _is_unexpected_keyword_error(
+        self, exc: TypeError, kwargs: dict[str, Any]
+    ) -> bool:
+        message = str(exc)
+        if "unexpected keyword argument" not in message:
+            return False
+        optional_names = set(kwargs) - {"runtime", "shop_ids", "shop_id"}
+        return any(name in message for name in optional_names)
 
     def _build_idempotency_key(
         self,

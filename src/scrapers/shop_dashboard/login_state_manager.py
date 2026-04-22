@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import time
 from collections.abc import Awaitable, Callable
@@ -30,10 +31,11 @@ class LoginStateManager:
             return False
 
         now = int(time.time())
-        state = self._get_state(account_id)
+        state = await self._get_state(account_id)
         last_probe_at = int(state.get("last_probe_at", "0") or "0")
         if (
-            self._probe_interval_seconds > 0
+            last_probe_at > 0
+            and self._probe_interval_seconds > 0
             and now - last_probe_at < self._probe_interval_seconds
         ):
             return state.get("status", "active") != "expired"
@@ -46,7 +48,7 @@ class LoginStateManager:
                 await self.mark_expired(account_id, reason="refresh_failed")
                 return False
 
-        self._set_state(
+        await self._set_state(
             account_id,
             {
                 "status": "active",
@@ -59,11 +61,12 @@ class LoginStateManager:
 
     async def mark_expired(self, account_id: str, reason: str) -> None:
         now = int(time.time())
-        self._set_state(
+        await self._set_state(
             account_id,
             {
                 "status": "expired",
                 "reason": str(reason),
+                "last_probe_at": str(now),
                 "updated_at": str(now),
             },
         )
@@ -71,17 +74,24 @@ class LoginStateManager:
     def _state_key(self, account_id: str) -> str:
         return f"{self._key_prefix}:{account_id}"
 
-    def _get_state(self, account_id: str) -> dict[str, str]:
+    async def _get_state(self, account_id: str) -> dict[str, str]:
         if self._redis is not None:
-            payload = self._redis.hgetall(self._state_key(account_id))
+            payload = await asyncio.to_thread(
+                self._redis.hgetall,
+                self._state_key(account_id),
+            )
             if isinstance(payload, dict):
                 return {str(k): str(v) for k, v in payload.items()}
             return {}
         return dict(self._memory_state.get(account_id, {}))
 
-    def _set_state(self, account_id: str, payload: dict[str, str]) -> None:
+    async def _set_state(self, account_id: str, payload: dict[str, str]) -> None:
         if self._redis is not None:
-            self._redis.hset(self._state_key(account_id), mapping=payload)
+            await asyncio.to_thread(
+                self._redis.hset,
+                self._state_key(account_id),
+                mapping=payload,
+            )
             return
         current = dict(self._memory_state.get(account_id, {}))
         current.update(payload)

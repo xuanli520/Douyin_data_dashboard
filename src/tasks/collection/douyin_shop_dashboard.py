@@ -12,7 +12,7 @@ from typing import Any
 from src.agents import LLMDashboardAgent
 from src.cache import resolve_sync_redis_client
 from src.config import get_settings
-from src.domains.shop_dashboard.repository import ShopDashboardRepository
+from src.scrapers.shop_dashboard.exceptions import LoginExpiredError
 from src.scrapers.shop_dashboard.http_scraper import HttpScraper
 from src.scrapers.shop_dashboard.lock_manager import LockManager
 from src.scrapers.shop_dashboard.login_state_manager import LoginStateManager
@@ -22,7 +22,6 @@ from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
 from src.scrapers.shop_dashboard.shop_selection_validator import (
     normalize_shop_selection_payload,
 )
-from src.shared.payload_extractors import extract_nested_list
 from src import session
 from src.tasks.base import TaskStatusMixin, write_started_status_safe
 from src.tasks.exceptions import ScrapingFailedException
@@ -253,6 +252,7 @@ def _collect_one_day(
     settings = get_settings().shop_dashboard
     lock_manager = lock_manager or LockManager()
     account_id = _resolve_account_id(runtime)
+    _ensure_login_state_active(account_id, login_state_manager)
     shop_lock_id = _resolve_shop_lock_id(runtime.shop_id, account_id)
     last_error: Exception | None = None
     http_error: Exception | None = None
@@ -294,6 +294,13 @@ def _collect_one_day(
                             retry_count=retry_count,
                             fallback_trace=fallback_trace,
                         )
+                    except LoginExpiredError as exc:
+                        _mark_login_state_expired(
+                            account_id=account_id,
+                            login_state_manager=login_state_manager,
+                            reason=str(exc).strip() or "login_expired",
+                        )
+                        raise
                     except (ScrapingFailedException, ShopDashboardScraperError) as exc:
                         retry_count += 1
                         last_error = exc
@@ -327,6 +334,38 @@ def _collect_one_day(
             )
 
 
+def _ensure_login_state_active(
+    account_id: str,
+    login_state_manager: LoginStateManager | None,
+) -> None:
+    if login_state_manager is None:
+        return
+    check_and_refresh = getattr(login_state_manager, "check_and_refresh", None)
+    if not callable(check_and_refresh):
+        return
+    active = session.run_coro(check_and_refresh(account_id))
+    if active:
+        return
+    raise LoginExpiredError(
+        "login_state_expired",
+        error_data={"account_id": account_id},
+    )
+
+
+def _mark_login_state_expired(
+    *,
+    account_id: str,
+    login_state_manager: LoginStateManager | None,
+    reason: str,
+) -> None:
+    if login_state_manager is None:
+        return
+    mark_expired = getattr(login_state_manager, "mark_expired", None)
+    if not callable(mark_expired):
+        return
+    session.run_coro(mark_expired(account_id, reason))
+
+
 def _build_expired_account_result(
     runtime: ShopDashboardRuntimeConfig,
     metric_date: str,
@@ -351,6 +390,8 @@ def _build_expired_account_result(
         "reviews": {"summary": {}, "items": []},
         "violations": {"summary": {}, "waiting_list": []},
         "raw": {},
+        "retry_count": 0,
+        "fallback_trace": [],
     }
 
 
@@ -417,6 +458,7 @@ def _build_agent_fallback_result(
     fallback_trace: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     reason = _resolve_agent_reason(http_error)
+    trace = fallback_trace if isinstance(fallback_trace, list) else []
     payload: dict[str, Any] = {
         "status": "success",
         "source": "llm",
@@ -462,14 +504,14 @@ def _build_agent_fallback_result(
         payload["reason"] = "llm_failed"
         patched = payload
         _append_fallback_trace(
-            fallback_trace if isinstance(fallback_trace, list) else [],
+            trace,
             stage="agent",
             status="failed",
             error=llm_error if llm_error is not None else RuntimeError(failure_error),
         )
     else:
         _append_fallback_trace(
-            fallback_trace if isinstance(fallback_trace, list) else [],
+            trace,
             stage="agent",
             status="success",
         )
@@ -487,7 +529,7 @@ def _build_agent_fallback_result(
         metric_date,
         patched,
         retry_count=retry_count,
-        fallback_trace=fallback_trace,
+        fallback_trace=trace,
     )
 
 
@@ -592,148 +634,21 @@ async def _persist_result(
     metric_date: str,
     payload: dict[str, Any],
 ) -> None:
+    from src.application.collection.result_persister import CollectionResultPersister
+
     session_factory = session.async_session_factory
     if session_factory is None:
         return
     async with session_factory() as db_session:
-        repo = ShopDashboardRepository(db_session)
-        metric_day = date.fromisoformat(metric_date)
-        metric_day_text = metric_day.isoformat()
-        runtime_shop_id = _normalize_shop_id(runtime.shop_id)
-        actual_shop_id = _normalize_shop_id(
-            payload.get("actual_shop_id") or payload.get("shop_id") or runtime_shop_id
-        )
-        target_shop_id = _normalize_shop_id(
-            payload.get("target_shop_id") or runtime_shop_id
-        )
-        resolved_shop_id = actual_shop_id or runtime_shop_id
-        if not resolved_shop_id or not target_shop_id:
-            logger.warning(
-                "skip dashboard persistence due to empty shop key: target_shop_id=%s actual_shop_id=%s resolved_shop_id=%s metric_date=%s",
-                target_shop_id,
-                actual_shop_id,
-                resolved_shop_id,
-                metric_day_text,
-            )
-            return
-        if actual_shop_id != target_shop_id:
-            logger.warning(
-                "skip dashboard persistence due to shop mismatch: target_shop_id=%s actual_shop_id=%s resolved_shop_id=%s metric_date=%s",
-                target_shop_id,
-                actual_shop_id,
-                resolved_shop_id,
-                metric_day_text,
-            )
-            return
-        source = str(payload.get("source", "script"))
-        await repo.upsert_score(
-            shop_id=resolved_shop_id,
-            metric_date=metric_day,
-            total_score=float(payload.get("total_score", 0.0)),
-            product_score=float(payload.get("product_score", 0.0)),
-            logistics_score=float(payload.get("logistics_score", 0.0)),
-            service_score=float(payload.get("service_score", 0.0)),
-            bad_behavior_score=float(payload.get("bad_behavior_score", 0.0)),
-            shop_name=str(payload.get("shop_name", "")).strip() or None,
-            source=source,
+        persister = CollectionResultPersister()
+        await persister.persist(
+            session=db_session,
+            runtime=runtime,
+            metric_date=metric_date,
+            payload=payload,
         )
 
-        reviews = payload.get("reviews", {}).get("items", [])
-        review_rows = []
-        for review in reviews:
-            review_rows.append(
-                {
-                    "review_id": review.get("id") or review.get("review_id") or "",
-                    "content": review.get("content") or "",
-                    "is_replied": bool(review.get("shop_reply")),
-                    "source": source,
-                }
-            )
-        await repo.replace_reviews(
-            shop_id=resolved_shop_id,
-            metric_date=metric_day,
-            reviews=review_rows,
-        )
 
-        violations = _extract_violation_items(payload)
-        violation_rows = []
-        for item in violations:
-            violation_rows.append(
-                {
-                    "violation_id": item.get("ticket_id")
-                    or item.get("ticketId")
-                    or item.get("id")
-                    or item.get("rule_id")
-                    or item.get("penalty_id")
-                    or item.get("rule")
-                    or "",
-                    "violation_type": item.get("type")
-                    or item.get("rule_type")
-                    or item.get("violation_type")
-                    or item.get("penalty_type")
-                    or "unknown",
-                    "description": item.get("description")
-                    or item.get("reason")
-                    or item.get("rule"),
-                    "score": _to_int(
-                        item.get("score")
-                        or item.get("deduct_score")
-                        or item.get("deductScore")
-                        or item.get("point")
-                        or item.get("points")
-                        or 0
-                    ),
-                    "source": source,
-                }
-            )
-        await repo.replace_violations(
-            shop_id=resolved_shop_id,
-            metric_date=metric_day,
-            violations=violation_rows,
-        )
-        await db_session.commit()
-
-
-def _extract_violation_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    violations = payload.get("violations")
-    if isinstance(violations, dict):
-        direct = _normalize_violation_items(violations.get("waiting_list"))
-        if direct:
-            return direct
-
-    raw = payload.get("raw")
-    if isinstance(raw, dict):
-        raw_violations = raw.get("violations")
-        if isinstance(raw_violations, dict):
-            extracted = extract_nested_list(raw_violations.get("waiting_list"))
-            fallback = _normalize_violation_items(extracted)
-            if fallback:
-                return fallback
-
-    return []
-
-
-def _normalize_violation_items(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    rows: list[dict[str, Any]] = []
-    for item in value:
-        if isinstance(item, Mapping):
-            rows.append(dict(item))
-    return rows
-
-
-def _to_int(value: Any) -> int:
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return 0
-
-
-def _normalize_shop_id(value: Any) -> str:
-    normalized = str(value or "").strip()
-    if not normalized:
-        return ""
-    if normalized.isdigit():
-        return str(int(normalized))
-    return normalized
+RateLimiter = _RateLimiter
+collect_one_day = _collect_one_day
+build_business_key = _build_business_key
