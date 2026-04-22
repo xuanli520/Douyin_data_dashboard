@@ -1,4 +1,4 @@
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
@@ -15,6 +15,7 @@ from src.domains.data_source.enums import (
     ScrapingRuleStatus,
     TargetType,
 )
+from src.domains.data_source.models import DataSource
 from src.domains.data_source.repository import DataSourceRepository
 from src.domains.scraping_rule.models import ScrapingRule
 from src.domains.scraping_rule.repository import ScrapingRuleRepository
@@ -36,13 +37,19 @@ from src.session import get_session
 from src.shared.errors import ErrorCode
 
 _UNSET = object()
+DataSourceLookup = Callable[[int], Awaitable[DataSource | None]]
 
 
 class ScrapingRuleService:
-    def __init__(self, session: AsyncSession):
+    def __init__(
+        self,
+        session: AsyncSession,
+        data_source_lookup: DataSourceLookup,
+        rule_repo: ScrapingRuleRepository | None = None,
+    ):
         self.session = session
-        self.ds_repo = DataSourceRepository(session=session)
-        self.rule_repo = ScrapingRuleRepository(session=session)
+        self.data_source_lookup = data_source_lookup
+        self.rule_repo = rule_repo or ScrapingRuleRepository(session=session)
 
     async def create_rule(
         self,
@@ -54,7 +61,7 @@ class ScrapingRuleService:
         description: str | None = None,
         is_active: bool = True,
     ) -> ScrapingRuleResponse:
-        ds = await self.ds_repo.get_by_id(data_source_id)
+        ds = await self.data_source_lookup(data_source_id)
         if not ds:
             raise BusinessException(
                 ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
@@ -108,7 +115,7 @@ class ScrapingRuleService:
     async def list_rules_by_data_source(
         self, data_source_id: int
     ) -> list[ScrapingRuleResponse]:
-        ds = await self.ds_repo.get_by_id(data_source_id)
+        ds = await self.data_source_lookup(data_source_id)
         if not ds:
             raise BusinessException(
                 ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
@@ -116,7 +123,6 @@ class ScrapingRuleService:
 
         rules = await self.rule_repo.get_by_data_source(data_source_id)
         last_execution_map = await self._load_last_execution_map(rules)
-        await self._backfill_last_execution_cache(rules, last_execution_map)
         schedule_map = await self._load_schedule_map(
             [rule.id for rule in rules if rule.id is not None]
         )
@@ -155,7 +161,6 @@ class ScrapingRuleService:
             data_source_id=data_source_id,
         )
         last_execution_map = await self._load_last_execution_map(rules)
-        await self._backfill_last_execution_cache(rules, last_execution_map)
         schedule_map = await self._load_schedule_map(
             [rule.id for rule in rules if rule.id is not None]
         )
@@ -182,7 +187,6 @@ class ScrapingRuleService:
                 ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
             )
         last_execution_map = await self._load_last_execution_map([rule])
-        await self._backfill_last_execution_cache([rule], last_execution_map)
         schedule_map = await self._load_schedule_map(
             [rule.id] if rule.id is not None else []
         )
@@ -211,17 +215,18 @@ class ScrapingRuleService:
             )
 
         update_data: dict[str, Any] = {}
-        if data.name is not None:
+        provided_fields = data.model_fields_set
+        if "name" in provided_fields and data.name is not None:
             update_data["name"] = data.name
-        if data.description is not None:
+        if "description" in provided_fields:
             update_data["description"] = data.description
-        if data.is_active is not None:
+        if "is_active" in provided_fields and data.is_active is not None:
             update_data["status"] = (
                 ScrapingRuleStatus.ACTIVE
                 if data.is_active
                 else ScrapingRuleStatus.INACTIVE
             )
-        if data.config is not None:
+        if "config" in provided_fields and data.config is not None:
             normalized_config = normalize_shop_selection_payload(data.config)
             if has_explicit_shop_selection(data.config):
                 try:
@@ -238,6 +243,10 @@ class ScrapingRuleService:
             update_data["version"] = (rule.version or 1) + 1
 
         rule = await self.rule_repo.update(rule_id, update_data)
+        if not rule:
+            raise BusinessException(
+                ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
+            )
         try:
             await self.session.commit()
         except Exception:
@@ -246,7 +255,11 @@ class ScrapingRuleService:
         return self._build_scraping_rule_response(rule)
 
     async def delete_rule(self, rule_id: int) -> None:
-        await self.rule_repo.delete(rule_id)
+        deleted = await self.rule_repo.delete(rule_id)
+        if not deleted:
+            raise BusinessException(
+                ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
+            )
         try:
             await self.session.commit()
         except Exception:
@@ -267,35 +280,6 @@ class ScrapingRuleService:
             return {}
         execution_repo = TaskExecutionRepository(self.session)
         return await execution_repo.get_latest_completed_by_rule_ids(missing_rule_ids)
-
-    async def _backfill_last_execution_cache(
-        self,
-        rules: list[ScrapingRule],
-        last_execution_map: dict[int, TaskExecution],
-    ) -> None:
-        should_commit = False
-        for rule in rules:
-            if rule.id is None:
-                continue
-            execution = last_execution_map.get(rule.id)
-            if execution is None:
-                continue
-            if rule.last_executed_at is None:
-                last_executed_at = self._resolve_last_executed_at(rule, execution)
-                if last_executed_at is not None:
-                    rule.last_executed_at = last_executed_at
-                    should_commit = True
-            if rule.last_execution_id is None:
-                last_execution_id = self._resolve_last_execution_id(rule, execution)
-                if last_execution_id is not None:
-                    rule.last_execution_id = last_execution_id
-                    should_commit = True
-        if not should_commit:
-            return
-        try:
-            await self.session.commit()
-        except Exception:
-            await self.session.rollback()
 
     def _format_schedule_summary(self, jobs: list[CollectionJob]) -> str | None:
         items: list[str] = []
@@ -411,4 +395,8 @@ class ScrapingRuleService:
 async def get_scraping_rule_service(
     session: AsyncSession = Depends(get_session),
 ) -> AsyncGenerator[ScrapingRuleService, None]:
-    yield ScrapingRuleService(session=session)
+    ds_repo = DataSourceRepository(session=session)
+    yield ScrapingRuleService(
+        session=session,
+        data_source_lookup=ds_repo.get_by_id,
+    )

@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
-from sqlalchemy import select, func, and_
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -11,9 +11,11 @@ from src.domains.data_source.enums import (
 )
 from src.core.exceptions import _raise_integrity_error
 from src.domains.data_source.models import DataSource
-from src.exceptions import BusinessException
-from src.shared.errors import ErrorCode
 from src.shared.repository import BaseRepository
+
+
+def _escape_ilike(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 class DataSourceRepository(BaseRepository):
@@ -32,7 +34,12 @@ class DataSourceRepository(BaseRepository):
         if source_type is not None:
             conds.append(DataSource.source_type == source_type)
         if name is not None:
-            conds.append(DataSource.name.ilike(f"%{name}%"))
+            conds.append(
+                DataSource.name.ilike(
+                    f"%{_escape_ilike(name)}%",
+                    escape="\\",
+                )
+            )
         return conds
 
     async def create(self, data: dict) -> DataSource:
@@ -59,16 +66,13 @@ class DataSourceRepository(BaseRepository):
         stmt = stmt.where(DataSource.id == data_source_id)
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
-    async def update(self, data_source_id: int, data: dict) -> DataSource:
+    async def update(self, data_source_id: int, data: dict) -> DataSource | None:
         data_source = await self.get_by_id(data_source_id)
         if not data_source:
-            raise BusinessException(
-                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
-            )
+            return None
 
         for key, value in data.items():
-            if value is not None:
-                setattr(data_source, key, value)
+            setattr(data_source, key, value)
 
         try:
             await self._flush()
@@ -76,15 +80,13 @@ class DataSourceRepository(BaseRepository):
         except IntegrityError as e:
             _raise_integrity_error(e)
 
-    async def delete(self, data_source_id: int) -> None:
-        data_source = await self.get_by_id(data_source_id)
-        if not data_source:
-            raise BusinessException(
-                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
-            )
+    async def delete(self, data_source_id: int) -> bool:
         try:
-            await self._delete(data_source)
+            result = await self.session.execute(
+                delete(DataSource).where(DataSource.id == data_source_id)
+            )
             await self.session.flush()
+            return bool(result.rowcount)
         except IntegrityError as e:
             _raise_integrity_error(e)
 
@@ -133,19 +135,19 @@ class DataSourceRepository(BaseRepository):
 
     async def update_status(
         self, data_source_id: int, status: DataSourceStatus
-    ) -> DataSource:
+    ) -> DataSource | None:
         return await self.update(data_source_id, {"status": status})
 
     async def update_last_used(self, data_source_id: int) -> None:
         data_source = await self.get_by_id(data_source_id)
         if data_source:
-            data_source.last_used_at = datetime.now()
+            data_source.last_used_at = datetime.now(UTC)
             await self._flush()
 
     async def record_error(self, data_source_id: int, error_msg: str) -> None:
         data_source = await self.get_by_id(data_source_id)
         if data_source:
-            data_source.last_error_at = datetime.now()
+            data_source.last_error_at = datetime.now(UTC)
             data_source.last_error_msg = error_msg
             data_source.status = DataSourceStatus.ERROR
             await self._flush()

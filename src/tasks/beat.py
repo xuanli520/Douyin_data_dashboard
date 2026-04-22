@@ -175,7 +175,7 @@ async def _ensure_collection_jobs_table_ready(db_session: AsyncSession) -> None:
     )
     if not has_table:
         raise RuntimeError(
-            "collection_jobs table is missing; run alembic upgrade f4d5c6b7a8e9 before starting beat"
+            "collection_jobs table is missing; run alembic upgrade head before starting beat"
         )
 
 

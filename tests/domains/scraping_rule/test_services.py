@@ -13,6 +13,7 @@ from src.domains.data_source.enums import (
     TargetType,
 )
 from src.domains.data_source.models import DataSource
+from src.domains.data_source.repository import DataSourceRepository
 from src.domains.scraping_rule.models import ScrapingRule
 from src.domains.scraping_rule.schemas import ScrapingRuleUpdate
 from src.domains.scraping_rule.services import ScrapingRuleService
@@ -35,7 +36,10 @@ async def test_scraping_rule_service_create_rule(test_db):
         await session.commit()
         await session.refresh(data_source)
 
-        service = ScrapingRuleService(session=session)
+        service = ScrapingRuleService(
+            session=session,
+            data_source_lookup=DataSourceRepository(session).get_by_id,
+        )
         created = await service.create_rule(
             data_source_id=data_source.id if data_source.id is not None else 0,
             name="rule-a",
@@ -51,13 +55,16 @@ async def test_scraping_rule_service_create_rule(test_db):
 @pytest.mark.asyncio
 async def test_scraping_rule_service_create_rule_inactive_data_source():
     session = AsyncMock()
-    service = ScrapingRuleService(session=session)
-    service.ds_repo = AsyncMock()
-    service.rule_repo = AsyncMock()
-    service.ds_repo.get_by_id.return_value = SimpleNamespace(
-        id=1,
-        status=DataSourceStatus.INACTIVE,
+    service = ScrapingRuleService(
+        session=session,
+        data_source_lookup=AsyncMock(
+            return_value=SimpleNamespace(
+                id=1,
+                status=DataSourceStatus.INACTIVE,
+            )
+        ),
     )
+    service.rule_repo = AsyncMock()
 
     with pytest.raises(BusinessException) as exc:
         await service.create_rule(
@@ -74,9 +81,11 @@ async def test_scraping_rule_service_create_rule_inactive_data_source():
 @pytest.mark.asyncio
 async def test_scraping_rule_service_update_rule_should_increment_version():
     session = AsyncMock()
-    service = ScrapingRuleService(session=session)
+    service = ScrapingRuleService(
+        session=session,
+        data_source_lookup=AsyncMock(),
+    )
     service.rule_repo = AsyncMock()
-    service.ds_repo = AsyncMock()
 
     rule = SimpleNamespace(
         id=1,
@@ -121,6 +130,59 @@ async def test_scraping_rule_service_update_rule_should_increment_version():
 
     assert result.version == 2
     update_payload = service.rule_repo.update.await_args.args[1]
+    assert update_payload["version"] == 2
+
+
+@pytest.mark.asyncio
+async def test_scraping_rule_service_update_rule_can_clear_description():
+    session = AsyncMock()
+    service = ScrapingRuleService(
+        session=session,
+        data_source_lookup=AsyncMock(),
+    )
+    service.rule_repo = AsyncMock()
+
+    rule = SimpleNamespace(
+        id=1,
+        data_source_id=1,
+        name="rule-a",
+        target_type=TargetType.SHOP_OVERVIEW,
+        description="Original Desc",
+        status=ScrapingRuleStatus.ACTIVE,
+        version=1,
+        granularity="DAY",
+        timezone="Asia/Shanghai",
+        time_range=None,
+        incremental_mode="BY_DATE",
+        backfill_last_n_days=3,
+        filters=None,
+        dimensions=None,
+        metrics=None,
+        dedupe_key=None,
+        rate_limit=None,
+        data_latency="T+1",
+        top_n=None,
+        sort_by=None,
+        include_long_tail=False,
+        session_level=False,
+        last_executed_at=None,
+        last_execution_id=None,
+        extra_config=None,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        data_source=None,
+    )
+    service.rule_repo.get_by_id.return_value = rule
+    updated_rule_data = dict(rule.__dict__)
+    updated_rule_data["description"] = None
+    updated_rule_data["version"] = 2
+    service.rule_repo.update.return_value = SimpleNamespace(**updated_rule_data)
+
+    result = await service.update_rule(1, ScrapingRuleUpdate(description=None))
+
+    assert result.description is None
+    update_payload = service.rule_repo.update.await_args.args[1]
+    assert update_payload["description"] is None
     assert update_payload["version"] == 2
 
 
@@ -172,7 +234,10 @@ async def test_list_rules_paginated_should_include_schedule_summary(test_db):
         )
         await session.commit()
 
-        service = ScrapingRuleService(session=session)
+        service = ScrapingRuleService(
+            session=session,
+            data_source_lookup=DataSourceRepository(session).get_by_id,
+        )
         rules, total = await service.list_rules_paginated(page=1, size=10)
 
         assert total == 1
@@ -183,7 +248,7 @@ async def test_list_rules_paginated_should_include_schedule_summary(test_db):
 
 
 @pytest.mark.asyncio
-async def test_list_rules_by_data_source_should_include_schedule_and_backfill_last_run_cache(
+async def test_list_rules_by_data_source_should_include_schedule_and_last_run_without_persisting_cache(
     test_db,
 ):
     async with test_db() as session:
@@ -240,7 +305,10 @@ async def test_list_rules_by_data_source_should_include_schedule_and_backfill_la
         )
         await session.commit()
 
-        service = ScrapingRuleService(session=session)
+        service = ScrapingRuleService(
+            session=session,
+            data_source_lookup=DataSourceRepository(session).get_by_id,
+        )
         rules = await service.list_rules_by_data_source(
             data_source.id if data_source.id is not None else 0
         )
@@ -251,5 +319,21 @@ async def test_list_rules_by_data_source_should_include_schedule_and_backfill_la
         assert rules[0].last_executed_at.isoformat().startswith("2026-03-17T08:00:00")
         assert rules[0].last_execution_id == "exec-last-run-fallback"
         await session.refresh(rule)
-        assert rule.last_executed_at is not None
-        assert rule.last_execution_id == "exec-last-run-fallback"
+        assert rule.last_executed_at is None
+        assert rule.last_execution_id is None
+
+
+@pytest.mark.asyncio
+async def test_delete_rule_not_found_should_raise_business_exception():
+    session = AsyncMock()
+    service = ScrapingRuleService(
+        session=session,
+        data_source_lookup=AsyncMock(),
+    )
+    service.rule_repo = AsyncMock()
+    service.rule_repo.delete.return_value = False
+
+    with pytest.raises(BusinessException) as exc_info:
+        await service.delete_rule(1)
+
+    assert exc_info.value.code == ErrorCode.SCRAPING_RULE_NOT_FOUND

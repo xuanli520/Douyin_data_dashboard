@@ -4,7 +4,7 @@ import argparse
 import asyncio
 import logging
 import signal
-import time
+from collections.abc import Sequence
 from threading import Event, Thread
 from typing import Callable
 
@@ -44,20 +44,38 @@ def _queue_runners(etl_processes: int) -> dict[str, Callable[[], None]]:
     }
 
 
-def _wait_forever() -> None:
+def _start_runner_thread(queue_name: str, runner: Callable[[], None]) -> Thread:
+    thread = Thread(target=runner, name=f"worker-{queue_name}", daemon=True)
+    thread.start()
+    return thread
+
+
+def _wait_forever(
+    stop_event: Event | None = None, threads: Sequence[Thread] | None = None
+) -> None:
+    worker_stop_event = stop_event or Event()
     try:
-        while True:
-            time.sleep(5)
+        while not worker_stop_event.wait(5):
+            for thread in threads or ():
+                if not thread.is_alive():
+                    logger.error(
+                        "worker thread exited unexpectedly name=%s", thread.name
+                    )
+                    return
     except KeyboardInterrupt:
-        logger.info("Shutting down workers")
+        worker_stop_event.set()
+    logger.info("Shutting down workers")
 
 
-def run_all(etl_processes: int = 2) -> None:
+def run_all(etl_processes: int = 2, *, stop_event: Event | None = None) -> None:
+    threads: list[Thread] = []
     for queue_name, runner in _queue_runners(etl_processes).items():
-        thread = Thread(target=runner, name=f"worker-{queue_name}", daemon=True)
-        thread.start()
+        threads.append(_start_runner_thread(queue_name, runner))
 
-    _wait_forever()
+    if stop_event is None:
+        _wait_forever(threads=threads)
+    else:
+        _wait_forever(stop_event, threads)
 
 
 def run_queue(queue_name: str, etl_processes: int = 2) -> None:
@@ -122,10 +140,11 @@ def _close_worker_db() -> None:
 def main() -> None:
     args = _parse_args()
     loop, loop_thread = _start_worker_loop()
+    stop_event = Event()
 
     def _handle_signal(signum, _frame):
         logger.info("Received signal %s, shutting down", signum)
-        raise SystemExit(0)
+        stop_event.set()
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
@@ -133,9 +152,13 @@ def main() -> None:
     try:
         _init_worker_db()
         if args.queue:
-            run_queue(args.queue, etl_processes=args.etl_processes)
+            runner = _queue_runners(args.etl_processes).get(args.queue)
+            if runner is None:
+                raise ValueError(f"unsupported queue name: {args.queue}")
+            runner_thread = _start_runner_thread(args.queue, runner)
+            _wait_forever(stop_event, runner_thread)
         else:
-            run_all(etl_processes=args.etl_processes)
+            run_all(etl_processes=args.etl_processes, stop_event=stop_event)
     finally:
         try:
             _close_worker_db()

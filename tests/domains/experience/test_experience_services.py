@@ -1,8 +1,12 @@
 from datetime import date
 
+import pytest
+
 from src.cache.local import LocalCache
 from src.domains.experience.services import ExperienceQueryService
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
+from src.exceptions import BusinessException
+from src.shared.errors import ErrorCode
 from src.shared.redis_keys import redis_keys
 
 SEEDED_DATE_RANGE = "2026-03-01,2026-03-03"
@@ -209,6 +213,28 @@ async def test_get_dashboard_kpis_contains_trend_and_change(test_db):
         assert kpis.kpis[0].change.endswith("%")
 
 
+async def test_get_dashboard_kpis_reuses_resolved_range_for_nested_overview(test_db):
+    async with test_db() as session:
+        repo = ShopDashboardRepository(session)
+        await _seed_materials(repo)
+        await session.commit()
+
+        service = ExperienceQueryService(repo=repo)
+        original_get_latest_metric_date = repo.get_latest_metric_date
+        resolve_count = 0
+
+        async def counted_get_latest_metric_date(*, shop_id: str):
+            nonlocal resolve_count
+            resolve_count += 1
+            return await original_get_latest_metric_date(shop_id=shop_id)
+
+        repo.get_latest_metric_date = counted_get_latest_metric_date  # type: ignore[method-assign]
+
+        await service.get_dashboard_kpis(shop_id=1001, date_range="30d")
+
+        assert resolve_count == 1
+
+
 async def test_get_metric_detail_uses_cache_on_repeated_query(test_db):
     async with test_db() as session:
         repo = ShopDashboardRepository(session)
@@ -311,3 +337,10 @@ async def test_invalidate_shop_date_should_support_redis_set_index(test_db):
         assert deleted == 1
         assert await cache.exists(cache_key) is False
         assert await cache.exists(index_key) is False
+
+
+def test_parse_date_range_rejects_invalid_format():
+    with pytest.raises(BusinessException) as exc_info:
+        ExperienceQueryService._parse_date_range("2026-03-01,invalid")
+
+    assert exc_info.value.code == ErrorCode.DATA_VALIDATION_FAILED

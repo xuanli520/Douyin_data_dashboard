@@ -11,7 +11,12 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
     from src.tasks import worker as module
 
     calls = []
-    monkeypatch.setattr(module, "_wait_forever", lambda: None)
+    waited_threads = []
+
+    def _fake_wait_forever(*_args, **kwargs):
+        waited_threads.extend(kwargs.get("threads") or [])
+
+    monkeypatch.setattr(module, "_wait_forever", _fake_wait_forever)
     monkeypatch.setattr(
         module.douyin_shop_dashboard.sync_shop_dashboard,
         "consume",
@@ -81,6 +86,7 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
 
     module.run_all(etl_processes=2)
     assert len(calls) == 8
+    assert len(waited_threads) == 8
     assert {
         "collection_shop_dashboard",
         "collection_shop_dashboard_agent",
@@ -121,7 +127,9 @@ def test_worker_run_all_waits_for_non_blocking_consumers(monkeypatch):
             return False
 
     monkeypatch.setattr(module, "Thread", _FakeThread)
-    monkeypatch.setattr(module, "_wait_forever", lambda: calls.append("wait_forever"))
+    monkeypatch.setattr(
+        module, "_wait_forever", lambda *_args, **_kwargs: calls.append("wait_forever")
+    )
 
     module.run_all(etl_processes=2)
 
@@ -156,7 +164,9 @@ def test_worker_run_all_keeps_parent_alive_when_multiprocess_runner_returns(
             return False
 
     monkeypatch.setattr(module, "Thread", _FakeThread)
-    monkeypatch.setattr(module, "_wait_forever", lambda: calls.append("wait_forever"))
+    monkeypatch.setattr(
+        module, "_wait_forever", lambda *_args, **_kwargs: calls.append("wait_forever")
+    )
 
     module.run_all(etl_processes=2)
 

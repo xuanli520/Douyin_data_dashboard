@@ -152,11 +152,10 @@ class TestDataSourceRepositoryIntegration:
     async def test_update_not_found_raises_error(self, test_db):
         async with test_db() as session:
             repo = DataSourceRepository(session)
-            with pytest.raises(BusinessException) as exc_info:
-                await repo.update(9999, {"name": "New Name"})
-            assert exc_info.value.code == ErrorCode.DATASOURCE_NOT_FOUND
+            updated = await repo.update(9999, {"name": "New Name"})
+            assert updated is None
 
-    async def test_update_with_none_value_skips_field(self, test_db):
+    async def test_update_with_none_value_clears_field(self, test_db):
         async with test_db() as session:
             repo = DataSourceRepository(session)
             data = {
@@ -170,7 +169,7 @@ class TestDataSourceRepositoryIntegration:
                 created.id, {"name": "New Name", "description": None}
             )
             assert updated.name == "New Name"
-            assert updated.description == "Original Desc"
+            assert updated.description is None
 
     async def test_delete_data_source(self, test_db):
         async with test_db() as session:
@@ -186,9 +185,8 @@ class TestDataSourceRepositoryIntegration:
     async def test_delete_not_found_raises_error(self, test_db):
         async with test_db() as session:
             repo = DataSourceRepository(session)
-            with pytest.raises(BusinessException) as exc_info:
-                await repo.delete(9999)
-            assert exc_info.value.code == ErrorCode.DATASOURCE_NOT_FOUND
+            deleted = await repo.delete(9999)
+            assert deleted is False
 
     async def test_get_paginated(self, test_db):
         async with test_db() as session:
@@ -248,6 +246,28 @@ class TestDataSourceRepositoryIntegration:
             items, total = await repo.get_paginated(page=1, size=10, name="Special")
             assert len(items) == 1
             assert items[0].name == "Special Name"
+
+    async def test_get_paginated_with_name_filter_escapes_wildcards(self, test_db):
+        async with test_db() as session:
+            repo = DataSourceRepository(session)
+            await repo.create(
+                {
+                    "name": "100% Real",
+                    "source_type": DataSourceType.DOUYIN_SHOP,
+                }
+            )
+            await repo.create(
+                {
+                    "name": "1000 Real",
+                    "source_type": DataSourceType.DOUYIN_SHOP,
+                }
+            )
+
+            items, total = await repo.get_paginated(page=1, size=10, name="100%")
+
+            assert total == 1
+            assert len(items) == 1
+            assert items[0].name == "100% Real"
 
     async def test_get_by_status(self, test_db):
         async with test_db() as session:
@@ -451,12 +471,67 @@ class TestScrapingRuleRepositoryIntegration:
             updated = await rule_repo.update(created.id, {"name": "Updated Rule Name"})
             assert updated.name == "Updated Rule Name"
 
+    async def test_update_scraping_rule_with_none_value_clears_field(self, test_db):
+        async with test_db() as session:
+            ds_repo = DataSourceRepository(session)
+            ds = await ds_repo.create(
+                {
+                    "name": "Test DS",
+                    "source_type": DataSourceType.DOUYIN_SHOP,
+                }
+            )
+
+            rule_repo = ScrapingRuleRepository(session)
+            created = await rule_repo.create(
+                {
+                    "name": "Rule With Description",
+                    "description": "Original Desc",
+                    "data_source_id": ds.id,
+                }
+            )
+
+            updated = await rule_repo.update(created.id, {"description": None})
+            assert updated.description is None
+
+    async def test_get_paginated_scraping_rule_escapes_wildcards(self, test_db):
+        async with test_db() as session:
+            ds_repo = DataSourceRepository(session)
+            ds = await ds_repo.create(
+                {
+                    "name": "Test DS",
+                    "source_type": DataSourceType.DOUYIN_SHOP,
+                }
+            )
+
+            rule_repo = ScrapingRuleRepository(session)
+            await rule_repo.create(
+                {
+                    "name": "rule_1",
+                    "data_source_id": ds.id,
+                }
+            )
+            await rule_repo.create(
+                {
+                    "name": "ruleA1",
+                    "data_source_id": ds.id,
+                }
+            )
+
+            items, total = await rule_repo.get_paginated(
+                page=1,
+                size=10,
+                name="rule_1",
+            )
+
+            assert total == 1
+            assert len(items) == 1
+            assert items[0].name == "rule_1"
+
     async def test_update_not_found_raises_error(self, test_db):
         async with test_db() as session:
             rule_repo = ScrapingRuleRepository(session)
-            with pytest.raises(BusinessException) as exc_info:
-                await rule_repo.update(9999, {"name": "New Name"})
-            assert exc_info.value.code == ErrorCode.SCRAPING_RULE_NOT_FOUND
+            updated = await rule_repo.update(9999, {"name": "New Name"})
+            assert updated is None
 
     async def test_delete_scraping_rule(self, test_db):
         async with test_db() as session:
@@ -484,6 +559,5 @@ class TestScrapingRuleRepositoryIntegration:
     async def test_delete_not_found_raises_error(self, test_db):
         async with test_db() as session:
             rule_repo = ScrapingRuleRepository(session)
-            with pytest.raises(BusinessException) as exc_info:
-                await rule_repo.delete(9999)
-            assert exc_info.value.code == ErrorCode.SCRAPING_RULE_NOT_FOUND
+            deleted = await rule_repo.delete(9999)
+            assert deleted is False

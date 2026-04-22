@@ -34,16 +34,23 @@ def resolve_status_redis_client(owner: Any) -> Any:
     )
 
 
-def _hset_field_compat(redis_client: Any, key: str, field: str, value: Any) -> None:
-    try:
-        redis_client.hset(key, field, value)
-    except TypeError:
-        redis_client.hset(key, {field: value})
-
-
-def _hset_mapping_compat(redis_client: Any, key: str, mapping: dict[str, Any]) -> None:
-    for field, value in mapping.items():
-        _hset_field_compat(redis_client, key, str(field), value)
+def _write_status_mapping(redis_client: Any, key: str, mapping: dict[str, Any]) -> None:
+    normalized_mapping = {str(field): value for field, value in mapping.items()}
+    ttl_seconds = get_settings().funboost.status_ttl_seconds
+    pipeline_factory = getattr(redis_client, "pipeline", None)
+    if callable(pipeline_factory):
+        pipeline = pipeline_factory(transaction=True)
+        try:
+            pipeline.hset(key, mapping=normalized_mapping)
+            pipeline.expire(key, ttl_seconds)
+            pipeline.execute()
+        finally:
+            close = getattr(pipeline, "close", None)
+            if callable(close):
+                close()
+        return
+    redis_client.hset(key, mapping=normalized_mapping)
+    redis_client.expire(key, ttl_seconds)
 
 
 def write_started_task_status(
@@ -57,7 +64,7 @@ def write_started_task_status(
     key = f"douyin:task:status:{task_id}"
     started_at = time.time()
     started_at_datetime = _from_timestamp(started_at) or datetime.now(tz=UTC)
-    _hset_mapping_compat(
+    _write_status_mapping(
         redis_client,
         key,
         {
@@ -68,7 +75,6 @@ def write_started_task_status(
             "execution_id": execution_id if execution_id is not None else "",
         },
     )
-    redis_client.expire(key, get_settings().funboost.status_ttl_seconds)
     _sync_execution_status(
         queue_task_id=task_id,
         status=TaskExecutionStatus.RUNNING,
@@ -90,7 +96,7 @@ def write_finished_task_status(
 ) -> None:
     redis_client = resolve_status_redis_client(owner)
     key = f"douyin:task:status:{task_id}"
-    _hset_mapping_compat(
+    _write_status_mapping(
         redis_client,
         key,
         {
@@ -102,7 +108,6 @@ def write_finished_task_status(
             "error_message": error_message or "",
         },
     )
-    redis_client.expire(key, get_settings().funboost.status_ttl_seconds)
     _sync_execution_status(
         queue_task_id=task_id,
         status=TaskExecutionStatus.SUCCESS if success else TaskExecutionStatus.FAILED,

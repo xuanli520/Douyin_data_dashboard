@@ -226,13 +226,22 @@ class CollectionUseCase:
             return result
         except Exception as exc:
             mapped = self._map_scraper_exception(exc)
-            await self._mark_failed(
-                execution_id=execution.id if execution.id is not None else 0,
-                rule_id=rule_id,
-                rule_execution_id=execution_id,
-                error_message=str(mapped),
-            )
-            raise mapped
+            try:
+                await self._mark_failed(
+                    execution_id=execution.id if execution.id is not None else 0,
+                    rule_id=rule_id,
+                    rule_execution_id=execution_id,
+                    error_message=str(mapped),
+                )
+            except Exception:
+                logger.exception(
+                    "failed to persist collection failure execution_id=%s rule_id=%s",
+                    execution.id if execution.id is not None else 0,
+                    rule_id,
+                )
+            if mapped is exc:
+                raise
+            raise mapped from exc
 
     async def _create_or_get_execution(
         self,
@@ -284,13 +293,21 @@ class CollectionUseCase:
             task_repo = TaskDefinitionRepository(db_session)
             task = await task_repo.get_by_task_type(TaskType.SHOP_DASHBOARD_COLLECTION)
             if task is None:
-                task = await task_repo.create(
-                    {
-                        "name": "shop_dashboard_collection",
-                        "task_type": TaskType.SHOP_DASHBOARD_COLLECTION,
-                    }
-                )
-                await db_session.commit()
+                try:
+                    task = await task_repo.create(
+                        {
+                            "name": "shop_dashboard_collection",
+                            "task_type": TaskType.SHOP_DASHBOARD_COLLECTION,
+                        }
+                    )
+                    await db_session.commit()
+                except IntegrityError:
+                    await db_session.rollback()
+                    task = await task_repo.get_by_task_type(
+                        TaskType.SHOP_DASHBOARD_COLLECTION
+                    )
+                    if task is None:
+                        raise
 
             trigger_mode = (
                 TaskTriggerMode.SYSTEM

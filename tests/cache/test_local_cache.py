@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 
 async def test_set_get(local_cache):
     await local_cache.set("key1", "value1")
@@ -18,6 +20,11 @@ async def test_set_with_ttl(local_cache):
     await asyncio.sleep(0.11)
     assert not await local_cache.exists("key_ttl")
     assert await local_cache.get("key_ttl") is None
+
+
+async def test_set_with_zero_ttl_raises(local_cache):
+    with pytest.raises(ValueError, match="ttl must be greater than 0"):
+        await local_cache.set("key_ttl_zero", "value", ttl=0)
 
 
 async def test_delete(local_cache):

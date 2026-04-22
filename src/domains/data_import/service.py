@@ -1,3 +1,4 @@
+import asyncio
 import json
 from typing import Any
 
@@ -102,7 +103,7 @@ class ImportService:
 
         try:
             parser = FileParser(record.file_path)
-            rows = list(parser.parse())
+            rows = await asyncio.to_thread(lambda: list(parser.parse()))
 
             total_rows = len(rows)
 
@@ -316,6 +317,17 @@ class ImportService:
         if batch_details:
             await self.detail_repo.bulk_create(batch_details)
 
+        if await self._is_cancelled(import_id):
+            await self.repo.update_counts(
+                import_id,
+                total_rows=processed,
+                success_rows=success,
+                failed_rows=failed,
+            )
+            await self.repo.update_status(import_id, ImportStatus.CANCELLED)
+            await self.session.commit()
+            return {"cancelled": True}
+
         await self.repo.update_counts(
             import_id,
             total_rows=processed,
@@ -384,11 +396,13 @@ class ImportService:
             pass
         record = await self.repo.get_by_id(import_id)
         if record:
+            success_rows = record.success_rows or 0
+            failed_rows = record.failed_rows or 0
             return {
                 "stage": record.status,
                 "total": record.total_rows,
-                "processed": record.success_rows + record.failed_rows,
-                "success": record.success_rows,
-                "failed": record.failed_rows,
+                "processed": success_rows + failed_rows,
+                "success": success_rows,
+                "failed": failed_rows,
             }
         return None

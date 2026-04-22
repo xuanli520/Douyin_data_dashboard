@@ -1,13 +1,15 @@
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.exc import DataError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.domains.data_source.enums import ScrapingRuleStatus, TargetType
 from src.domains.scraping_rule.models import ScrapingRule
-from src.exceptions import BusinessException
-from src.shared.errors import ErrorCode
-from src.shared.repository import BaseRepository
+from src.shared.repository import BaseRepository, UNSET
+
+
+def _escape_ilike(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 class ScrapingRuleRepository(BaseRepository):
@@ -46,28 +48,24 @@ class ScrapingRuleRepository(BaseRepository):
         )
         return list((await self.session.execute(stmt)).scalars().all())
 
-    async def update(self, rule_id: int, data: dict) -> ScrapingRule:
+    async def update(self, rule_id: int, data: dict) -> ScrapingRule | None:
         rule = await self.get_by_id(rule_id)
         if not rule:
-            raise BusinessException(
-                ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
-            )
+            return None
 
         for key, value in data.items():
-            if value is not None:
+            if value is not UNSET:
                 setattr(rule, key, value)
 
         await self._flush()
         return rule
 
-    async def delete(self, rule_id: int) -> None:
-        rule = await self.get_by_id(rule_id)
-        if not rule:
-            raise BusinessException(
-                ErrorCode.SCRAPING_RULE_NOT_FOUND, "ScrapingRule not found"
-            )
-        await self._delete(rule)
+    async def delete(self, rule_id: int) -> bool:
+        result = await self.session.execute(
+            delete(ScrapingRule).where(ScrapingRule.id == rule_id)
+        )
         await self.session.flush()
+        return bool(result.rowcount)
 
     async def get_paginated(
         self,
@@ -80,7 +78,12 @@ class ScrapingRuleRepository(BaseRepository):
     ) -> tuple[list[ScrapingRule], int]:
         conds = []
         if name:
-            conds.append(ScrapingRule.name.ilike(f"%{name}%"))
+            conds.append(
+                ScrapingRule.name.ilike(
+                    f"%{_escape_ilike(name)}%",
+                    escape="\\",
+                )
+            )
         if rule_type:
             conds.append(ScrapingRule.target_type == rule_type)
         if status:

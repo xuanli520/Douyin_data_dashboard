@@ -16,8 +16,6 @@ from src.domains.data_source.services import DataSourceService
 from src.exceptions import BusinessException
 from src.shared.errors import ErrorCode
 
-mock_session = AsyncMock()
-
 
 class MockDataSource:
     def __init__(self, **kwargs):
@@ -43,9 +41,14 @@ class MockDataSource:
         self.updated_at = kwargs.get("updated_at", now)
 
 
+@pytest.fixture
+def mock_session():
+    return AsyncMock()
+
+
 @pytest.mark.asyncio
 class TestDataSourceServiceUnit:
-    async def test_create_data_source_success(self):
+    async def test_create_data_source_success(self, mock_session):
         mock_ds_repo = AsyncMock()
         mock_ds_repo.create.return_value = MockDataSource(
             id=1,
@@ -69,7 +72,7 @@ class TestDataSourceServiceUnit:
         assert result.name == "Test DS"
         mock_ds_repo.create.assert_called_once()
 
-    async def test_create_data_source_without_api_credentials(self):
+    async def test_create_data_source_without_api_credentials(self, mock_session):
         mock_ds_repo = AsyncMock()
         service = DataSourceService(mock_ds_repo, mock_session)
 
@@ -93,7 +96,7 @@ class TestDataSourceServiceUnit:
         assert result.name == "Test DS"
         mock_ds_repo.create.assert_called_once()
 
-    async def test_get_by_id_success(self):
+    async def test_get_by_id_success(self, mock_session):
         mock_ds_repo = AsyncMock()
         mock_ds_repo.get_by_id.return_value = MockDataSource(
             id=1,
@@ -106,7 +109,7 @@ class TestDataSourceServiceUnit:
         assert result.id == 1
         assert result.name == "Test DS"
 
-    async def test_get_by_id_not_found(self):
+    async def test_get_by_id_not_found(self, mock_session):
         mock_ds_repo = AsyncMock()
         mock_ds_repo.get_by_id.return_value = None
 
@@ -116,7 +119,7 @@ class TestDataSourceServiceUnit:
             await service.get_by_id(999)
         assert exc_info.value.code == ErrorCode.DATASOURCE_NOT_FOUND
 
-    async def test_list_paginated(self):
+    async def test_list_paginated(self, mock_session):
         mock_ds_repo = AsyncMock()
         mock_ds_repo.get_paginated.return_value = (
             [MockDataSource(id=1, name="Test DS")],
@@ -130,7 +133,7 @@ class TestDataSourceServiceUnit:
         assert total == 1
         mock_ds_repo.get_paginated.assert_called_once()
 
-    async def test_update_success(self):
+    async def test_update_success(self, mock_session):
         mock_ds_repo = AsyncMock()
         mock_ds_repo.get_by_id.return_value = MockDataSource(
             id=1,
@@ -149,7 +152,27 @@ class TestDataSourceServiceUnit:
 
         assert result.name == "Updated Name"
 
-    async def test_update_not_found(self):
+    async def test_update_description_can_be_cleared(self, mock_session):
+        mock_ds_repo = AsyncMock()
+        mock_ds_repo.get_by_id.return_value = MockDataSource(
+            id=1,
+            name="Original Name",
+            description="Original Desc",
+        )
+        mock_ds_repo.update.return_value = MockDataSource(
+            id=1,
+            name="Original Name",
+            description=None,
+        )
+
+        service = DataSourceService(mock_ds_repo, mock_session)
+        result = await service.update(1, DataSourceUpdate(description=None), user_id=1)
+
+        assert result.description is None
+        update_payload = mock_ds_repo.update.await_args.args[1]
+        assert update_payload["description"] is None
+
+    async def test_update_not_found(self, mock_session):
         mock_ds_repo = AsyncMock()
         mock_ds_repo.get_by_id.return_value = None
 
@@ -159,7 +182,9 @@ class TestDataSourceServiceUnit:
             await service.update(999, DataSourceUpdate(name="New Name"), user_id=1)
         assert exc_info.value.code == ErrorCode.DATASOURCE_NOT_FOUND
 
-    async def test_update_shop_dashboard_login_state_returns_masked_response(self):
+    async def test_update_shop_dashboard_login_state_returns_masked_response(
+        self, mock_session
+    ):
         mock_ds_repo = AsyncMock()
 
         mock_ds_repo.get_by_id.return_value = MockDataSource(
@@ -217,7 +242,9 @@ class TestDataSourceServiceUnit:
         assert saved_login_state["storage_state"]["cookies"][0]["name"] == "sid"
         assert "cookies" not in saved_login_state
 
-    async def test_clear_shop_dashboard_login_state_removes_raw_and_meta(self):
+    async def test_clear_shop_dashboard_login_state_removes_raw_and_meta(
+        self, mock_session
+    ):
         mock_ds_repo = AsyncMock()
 
         mock_ds_repo.get_by_id.return_value = MockDataSource(
@@ -244,7 +271,9 @@ class TestDataSourceServiceUnit:
         assert "shop_dashboard_login_state" not in result.config
         assert "shop_dashboard_login_state_meta" not in result.config
 
-    async def test_update_shop_dashboard_login_state_rejects_non_shop_source(self):
+    async def test_update_shop_dashboard_login_state_rejects_non_shop_source(
+        self, mock_session
+    ):
         mock_ds_repo = AsyncMock()
         mock_ds_repo.get_by_id.return_value = MockDataSource(
             id=1,
@@ -264,7 +293,9 @@ class TestDataSourceServiceUnit:
 
         assert exc_info.value.code == ErrorCode.DATASOURCE_UNSUPPORTED_TYPE
 
-    async def test_clear_shop_dashboard_login_state_rejects_non_shop_source(self):
+    async def test_clear_shop_dashboard_login_state_rejects_non_shop_source(
+        self, mock_session
+    ):
         mock_ds_repo = AsyncMock()
         mock_ds_repo.get_by_id.return_value = MockDataSource(
             id=1,
@@ -279,14 +310,25 @@ class TestDataSourceServiceUnit:
 
         assert exc_info.value.code == ErrorCode.DATASOURCE_UNSUPPORTED_TYPE
 
-    async def test_delete_success(self):
+    async def test_delete_success(self, mock_session):
         mock_ds_repo = AsyncMock()
+        mock_ds_repo.delete.return_value = True
         service = DataSourceService(mock_ds_repo, mock_session)
         await service.delete(1)
 
         mock_ds_repo.delete.assert_called_once_with(1)
 
-    async def test_activate_success(self):
+    async def test_delete_not_found(self, mock_session):
+        mock_ds_repo = AsyncMock()
+        mock_ds_repo.delete.return_value = False
+        service = DataSourceService(mock_ds_repo, mock_session)
+
+        with pytest.raises(BusinessException) as exc_info:
+            await service.delete(1)
+
+        assert exc_info.value.code == ErrorCode.DATASOURCE_NOT_FOUND
+
+    async def test_activate_success(self, mock_session):
         mock_ds_repo = AsyncMock()
 
         mock_ds_repo.get_by_id.return_value = MockDataSource(
@@ -303,8 +345,11 @@ class TestDataSourceServiceUnit:
         result = await service.activate(1, user_id=1)
 
         assert result.status == DataSourceStatus.ACTIVE
+        update_payload = mock_ds_repo.update.await_args.args[1]
+        assert "last_error_msg" in update_payload
+        assert update_payload["last_error_msg"] is None
 
-    async def test_activate_already_active(self):
+    async def test_activate_already_active(self, mock_session):
         mock_ds_repo = AsyncMock()
 
         mock_ds_repo.get_by_id.return_value = MockDataSource(
@@ -317,7 +362,7 @@ class TestDataSourceServiceUnit:
             await service.activate(1, user_id=1)
         assert exc_info.value.code == ErrorCode.DATASOURCE_ALREADY_ACTIVE
 
-    async def test_deactivate_success(self):
+    async def test_deactivate_success(self, mock_session):
         mock_ds_repo = AsyncMock()
 
         mock_ds_repo.get_by_id.return_value = MockDataSource(
@@ -335,7 +380,7 @@ class TestDataSourceServiceUnit:
 
         assert result.status == DataSourceStatus.INACTIVE
 
-    async def test_deactivate_already_inactive(self):
+    async def test_deactivate_already_inactive(self, mock_session):
         mock_ds_repo = AsyncMock()
 
         mock_ds_repo.get_by_id.return_value = MockDataSource(
@@ -348,7 +393,7 @@ class TestDataSourceServiceUnit:
             await service.deactivate(1, user_id=1)
         assert exc_info.value.code == ErrorCode.DATASOURCE_ALREADY_INACTIVE
 
-    async def test_validate_connection_success(self):
+    async def test_validate_connection_success(self, mock_session):
         mock_ds_repo = AsyncMock()
 
         mock_ds_repo.get_by_id.return_value = MockDataSource(
@@ -370,7 +415,7 @@ class TestDataSourceServiceUnit:
         assert result["valid"] is True
         mock_ds_repo.update_last_used.assert_called_once_with(1)
 
-    async def test_validate_connection_failure(self):
+    async def test_validate_connection_failure(self, mock_session):
         mock_ds_repo = AsyncMock()
 
         mock_ds_repo.get_by_id.return_value = MockDataSource(

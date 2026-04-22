@@ -187,6 +187,18 @@ def _has_valid_cookie_mapping(value: Any) -> bool:
     return False
 
 
+def _validate_file_upload_source_config(config: dict[str, Any]) -> None:
+    if (
+        not config.get("file_path")
+        and not config.get("upload_endpoint")
+        and not config.get("path")
+    ):
+        raise BusinessException(
+            ErrorCode.DATA_VALIDATION_FAILED,
+            "File upload source requires 'file_path', 'upload_endpoint', or 'path'",
+        )
+
+
 @DataSourceTypeRegistry.register_validator(DataSourceType.DOUYIN_SHOP)
 def _validate_douyin_api_config(config: dict[str, Any]) -> None:
     _ = config
@@ -194,28 +206,12 @@ def _validate_douyin_api_config(config: dict[str, Any]) -> None:
 
 @DataSourceTypeRegistry.register_validator(DataSourceType.FILE_IMPORT)
 def _validate_file_upload_config(config: dict[str, Any]) -> None:
-    if (
-        not config.get("file_path")
-        and not config.get("upload_endpoint")
-        and not config.get("path")
-    ):
-        raise BusinessException(
-            ErrorCode.DATA_VALIDATION_FAILED,
-            "File upload source requires 'file_path', 'upload_endpoint', or 'path'",
-        )
+    _validate_file_upload_source_config(config)
 
 
 @DataSourceTypeRegistry.register_validator(DataSourceType.FILE_UPLOAD)
 def _validate_file_upload_config_v2(config: dict[str, Any]) -> None:
-    if (
-        not config.get("file_path")
-        and not config.get("upload_endpoint")
-        and not config.get("path")
-    ):
-        raise BusinessException(
-            ErrorCode.DATA_VALIDATION_FAILED,
-            "File upload source requires 'file_path', 'upload_endpoint', or 'path'",
-        )
+    _validate_file_upload_source_config(config)
 
 
 @DataSourceTypeRegistry.register_validator(DataSourceType.SELF_HOSTED)
@@ -331,6 +327,20 @@ class DataSourceService:
         self.ds_repo = ds_repo
         self.session = session
 
+    async def _commit(self) -> None:
+        try:
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
+
+    def _require_data_source(self, ds: DataSource | None) -> DataSource:
+        if ds is None:
+            raise BusinessException(
+                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
+            )
+        return ds
+
     async def create(self, data: DataSourceCreate, user_id: int) -> DataSourceResponse:
         DataSourceTypeRegistry.validate(data.type, data.config)
 
@@ -345,11 +355,7 @@ class DataSourceService:
         }
 
         ds = await self.ds_repo.create(ds_data)
-        try:
-            await self.session.commit()
-        except Exception:
-            await self.session.rollback()
-            raise
+        await self._commit()
         return self._build_data_source_response(ds)
 
     async def get_by_id(self, ds_id: int) -> DataSourceResponse:
@@ -389,30 +395,27 @@ class DataSourceService:
                 ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
             )
 
-        if data.config:
+        provided_fields = data.model_fields_set
+        if "config" in provided_fields and data.config is not None:
             type_enum = self._map_model_type_to_schema_type(ds.source_type)
             DataSourceTypeRegistry.validate(type_enum, data.config)
 
         update_data: dict[str, Any] = {"updated_by_id": user_id}
-        if data.name is not None:
+        if "name" in provided_fields and data.name is not None:
             update_data["name"] = data.name
-        if data.description is not None:
+        if "description" in provided_fields:
             update_data["description"] = data.description
-        if data.status is not None:
+        if "status" in provided_fields and data.status is not None:
             update_data["status"] = ModelDataSourceStatus(data.status.value)
-        if data.config is not None:
+        if "config" in provided_fields and data.config is not None:
             update_data.update(
                 DataSourceTypeRegistry.extract_config(
                     self._map_model_type_to_schema_type(ds.source_type), data.config
                 )
             )
 
-        ds = await self.ds_repo.update(ds_id, update_data)
-        try:
-            await self.session.commit()
-        except Exception:
-            await self.session.rollback()
-            raise
+        ds = self._require_data_source(await self.ds_repo.update(ds_id, update_data))
+        await self._commit()
         return self._build_data_source_response(ds)
 
     async def update_shop_dashboard_login_state(
@@ -454,18 +457,16 @@ class DataSourceService:
             account_id=account_id,
         )
 
-        ds = await self.ds_repo.update(
-            ds_id,
-            {
-                "extra_config": extra_config,
-                "updated_by_id": user_id,
-            },
+        ds = self._require_data_source(
+            await self.ds_repo.update(
+                ds_id,
+                {
+                    "extra_config": extra_config,
+                    "updated_by_id": user_id,
+                },
+            )
         )
-        try:
-            await self.session.commit()
-        except Exception:
-            await self.session.rollback()
-            raise
+        await self._commit()
         return self._build_data_source_response(ds)
 
     async def clear_shop_dashboard_login_state(
@@ -485,27 +486,25 @@ class DataSourceService:
         extra_config.pop("shop_dashboard_login_state", None)
         extra_config.pop("shop_dashboard_login_state_meta", None)
 
-        ds = await self.ds_repo.update(
-            ds_id,
-            {
-                "extra_config": extra_config,
-                "updated_by_id": user_id,
-            },
+        ds = self._require_data_source(
+            await self.ds_repo.update(
+                ds_id,
+                {
+                    "extra_config": extra_config,
+                    "updated_by_id": user_id,
+                },
+            )
         )
-        try:
-            await self.session.commit()
-        except Exception:
-            await self.session.rollback()
-            raise
+        await self._commit()
         return self._build_data_source_response(ds)
 
     async def delete(self, ds_id: int) -> None:
-        await self.ds_repo.delete(ds_id)
-        try:
-            await self.session.commit()
-        except Exception:
-            await self.session.rollback()
-            raise
+        deleted = await self.ds_repo.delete(ds_id)
+        if not deleted:
+            raise BusinessException(
+                ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
+            )
+        await self._commit()
 
     async def activate(self, ds_id: int, user_id: int) -> DataSourceResponse:
         ds = await self.ds_repo.get_by_id(ds_id)
@@ -519,19 +518,17 @@ class DataSourceService:
                 ErrorCode.DATASOURCE_ALREADY_ACTIVE, "DataSource is already active"
             )
 
-        ds = await self.ds_repo.update(
-            ds_id,
-            {
-                "status": ModelDataSourceStatus.ACTIVE,
-                "updated_by_id": user_id,
-                "last_error_msg": None,
-            },
+        ds = self._require_data_source(
+            await self.ds_repo.update(
+                ds_id,
+                {
+                    "status": ModelDataSourceStatus.ACTIVE,
+                    "updated_by_id": user_id,
+                    "last_error_msg": None,
+                },
+            )
         )
-        try:
-            await self.session.commit()
-        except Exception:
-            await self.session.rollback()
-            raise
+        await self._commit()
         return self._build_data_source_response(ds)
 
     async def deactivate(self, ds_id: int, user_id: int) -> DataSourceResponse:
@@ -546,18 +543,16 @@ class DataSourceService:
                 ErrorCode.DATASOURCE_ALREADY_INACTIVE, "DataSource is already inactive"
             )
 
-        ds = await self.ds_repo.update(
-            ds_id,
-            {
-                "status": ModelDataSourceStatus.INACTIVE,
-                "updated_by_id": user_id,
-            },
+        ds = self._require_data_source(
+            await self.ds_repo.update(
+                ds_id,
+                {
+                    "status": ModelDataSourceStatus.INACTIVE,
+                    "updated_by_id": user_id,
+                },
+            )
         )
-        try:
-            await self.session.commit()
-        except Exception:
-            await self.session.rollback()
-            raise
+        await self._commit()
         return self._build_data_source_response(ds)
 
     async def validate_connection(self, ds_id: int) -> dict[str, Any]:
@@ -571,19 +566,11 @@ class DataSourceService:
 
         if is_valid:
             await self.ds_repo.update_last_used(ds_id)
-            try:
-                await self.session.commit()
-            except Exception:
-                await self.session.rollback()
-                raise
+            await self._commit()
             return {"valid": True, "message": message}
         else:
             await self.ds_repo.record_error(ds_id, message)
-            try:
-                await self.session.commit()
-            except Exception:
-                await self.session.rollback()
-                raise
+            await self._commit()
             return {"valid": False, "message": message}
 
     def _ensure_shop_dashboard_source_type(self, ds: DataSource) -> None:

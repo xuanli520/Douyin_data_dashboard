@@ -71,10 +71,11 @@ async def test_pubsub(redis_cache):
     messages = []
 
     async def subscriber():
-        async for channel, message in redis_cache.subscribe("test_channel"):
-            messages.append((channel, message))
-            if len(messages) >= 2:
-                break
+        async with redis_cache.subscribe("test_channel") as stream:
+            async for channel, message in stream:
+                messages.append((channel, message))
+                if len(messages) >= 2:
+                    break
 
     task = asyncio.create_task(subscriber())
     await asyncio.sleep(0.1)
