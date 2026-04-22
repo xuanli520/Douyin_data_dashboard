@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncGenerator
 from datetime import date, datetime, timedelta
+from typing import NoReturn
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -585,6 +586,8 @@ class ExperienceQueryService:
             return today - timedelta(days=29), today, "30d"
 
         clean = date_range.strip()
+        if not clean:
+            return today - timedelta(days=29), today, "30d"
         if "," in clean:
             start_raw, end_raw = [part.strip() for part in clean.split(",", 1)]
             try:
@@ -594,7 +597,8 @@ class ExperienceQueryService:
                     ExperienceQueryService._ensure_date_range_limit(start, end)
                     return start, end, f"{start.isoformat()},{end.isoformat()}"
             except ValueError:
-                pass
+                ExperienceQueryService._raise_invalid_date_range(clean)
+            ExperienceQueryService._raise_invalid_date_range(clean)
 
         if clean.endswith("d") and clean[:-1].isdigit():
             days = max(int(clean[:-1]), 1)
@@ -609,7 +613,7 @@ class ExperienceQueryService:
                 )
             return today - timedelta(days=days - 1), today, f"{days}d"
 
-        return today - timedelta(days=29), today, "30d"
+        ExperienceQueryService._raise_invalid_date_range(clean)
 
     @staticmethod
     def _ensure_date_range_limit(start: date, end: date) -> None:
@@ -628,6 +632,14 @@ class ExperienceQueryService:
                     "days": days,
                 },
             )
+
+    @staticmethod
+    def _raise_invalid_date_range(date_range: str) -> NoReturn:
+        raise BusinessException(
+            ErrorCode.DATA_VALIDATION_FAILED,
+            "invalid date_range format",
+            data={"date_range": date_range},
+        )
 
 
 async def get_experience_service(

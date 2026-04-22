@@ -42,8 +42,8 @@ def test_idempotency_refresh_lock_in_concurrent_context():
         ]
         results = [future.result() for future in futures]
 
-    assert True in results
-    assert False in results
+    assert results.count(True) == 1
+    assert results.count(False) == 1
     assert redis_client.ttl(lock_key) > 0
 
 
@@ -90,6 +90,11 @@ class _RegisterScriptRedis(_EvalFailRedis):
         return _runner
 
 
+class _SetFailRedis(_EvalFailRedis):
+    def set(self, *_args, **_kwargs):
+        raise RedisError("set failed")
+
+
 def test_idempotency_refresh_lock_retries_with_register_script():
     redis_client = _RegisterScriptRedis()
     helper = FunboostIdempotencyHelper(redis_client, "sync_shop_dashboard")
@@ -114,6 +119,16 @@ def test_idempotency_release_lock_does_not_fallback_to_non_atomic_delete(caplog)
 
     assert redis_client.delete_called is False
     assert "failed to release idempotency lock" in caplog.text
+
+
+def test_idempotency_cache_result_handles_redis_error(caplog):
+    redis_client = _SetFailRedis()
+    helper = FunboostIdempotencyHelper(redis_client, "sync_shop_dashboard")
+
+    with caplog.at_level(logging.WARNING):
+        helper.cache_result("shop-1:2026-03-03", {"status": "success"})
+
+    assert "failed to cache idempotency result" in caplog.text
 
 
 def test_build_business_key_supports_extended_dedupe_variables():

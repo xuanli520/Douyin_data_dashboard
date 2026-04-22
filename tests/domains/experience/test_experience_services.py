@@ -1,8 +1,12 @@
 from datetime import date
 
+import pytest
+
 from src.cache.local import LocalCache
 from src.domains.experience.services import ExperienceQueryService
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
+from src.exceptions import BusinessException
+from src.shared.errors import ErrorCode
 from src.shared.redis_keys import redis_keys
 
 SEEDED_DATE_RANGE = "2026-03-01,2026-03-03"
@@ -333,3 +337,10 @@ async def test_invalidate_shop_date_should_support_redis_set_index(test_db):
         assert deleted == 1
         assert await cache.exists(cache_key) is False
         assert await cache.exists(index_key) is False
+
+
+def test_parse_date_range_rejects_invalid_format():
+    with pytest.raises(BusinessException) as exc_info:
+        ExperienceQueryService._parse_date_range("2026-03-01,invalid")
+
+    assert exc_info.value.code == ErrorCode.DATA_VALIDATION_FAILED

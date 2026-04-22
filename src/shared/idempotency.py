@@ -83,7 +83,15 @@ class FunboostIdempotencyHelper:
             )
 
     def cache_result(self, key: str, result: dict, ttl: int = 86400) -> None:
-        self.redis.set(self._result_key(key), json.dumps(result), ex=ttl)
+        try:
+            self.redis.set(self._result_key(key), json.dumps(result), ex=ttl)
+        except RedisError:
+            logger.warning(
+                "failed to cache idempotency result task_name=%s key=%s",
+                self.task_name,
+                key,
+                exc_info=True,
+            )
 
     def get_cached_result(self, key: str) -> dict | None:
         cached = self.redis.get(self._result_key(key))

@@ -90,6 +90,24 @@ def test_csv_parser_parse_returns_generator_and_count():
         os.unlink(temp_path)
 
 
+def test_csv_parser_parse_with_start_row_returns_total_count():
+    from src.domains.data_import.parser.csv_reader import CSVParser
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        f.write("id,name\n1,Alice\n2,Bob\n")
+        temp_path = f.name
+
+    try:
+        parser = CSVParser(temp_path)
+        generator, count = parser.parse(start_row=2)
+
+        rows = list(generator)
+        assert count == 2
+        assert rows == [{"id": "2", "name": "Bob"}]
+    finally:
+        os.unlink(temp_path)
+
+
 def test_csv_parser_get_row_count_caches():
     from src.domains.data_import.parser.csv_reader import CSVParser
 

@@ -86,7 +86,7 @@ class CSVParser:
         start_row: int = 0,
     ) -> tuple[Generator[dict[str, str], None, None], int]:
         encoding = self._detect_encoding()
-        if start_row == 0:
+        if self._row_count is None:
             self._row_count = self._count_rows(encoding)
         return self._read_rows(encoding, start_row), self._row_count or 0
 

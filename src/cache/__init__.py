@@ -53,7 +53,10 @@ async def init_cache(
 
 
 async def close_cache() -> None:
-    await cache.close()
+    global cache
+    if cache is not None:
+        await cache.close()
+        cache = None
 
 
 async def get_cache() -> AsyncGenerator[CacheProtocol, None]:

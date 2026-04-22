@@ -5,7 +5,11 @@ from sqlalchemy.orm import selectinload
 
 from src.domains.data_source.enums import ScrapingRuleStatus, TargetType
 from src.domains.scraping_rule.models import ScrapingRule
-from src.shared.repository import BaseRepository
+from src.shared.repository import BaseRepository, UNSET
+
+
+def _escape_ilike(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 class ScrapingRuleRepository(BaseRepository):
@@ -50,7 +54,7 @@ class ScrapingRuleRepository(BaseRepository):
             return None
 
         for key, value in data.items():
-            if value is not None:
+            if value is not UNSET:
                 setattr(rule, key, value)
 
         await self._flush()
@@ -74,7 +78,12 @@ class ScrapingRuleRepository(BaseRepository):
     ) -> tuple[list[ScrapingRule], int]:
         conds = []
         if name:
-            conds.append(ScrapingRule.name.ilike(f"%{name}%"))
+            conds.append(
+                ScrapingRule.name.ilike(
+                    f"%{_escape_ilike(name)}%",
+                    escape="\\",
+                )
+            )
         if rule_type:
             conds.append(ScrapingRule.target_type == rule_type)
         if status:

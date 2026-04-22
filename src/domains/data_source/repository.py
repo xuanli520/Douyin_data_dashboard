@@ -14,6 +14,10 @@ from src.domains.data_source.models import DataSource
 from src.shared.repository import BaseRepository
 
 
+def _escape_ilike(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 class DataSourceRepository(BaseRepository):
     def __init__(self, session: AsyncSession):
         super().__init__(session)
@@ -30,7 +34,12 @@ class DataSourceRepository(BaseRepository):
         if source_type is not None:
             conds.append(DataSource.source_type == source_type)
         if name is not None:
-            conds.append(DataSource.name.ilike(f"%{name}%"))
+            conds.append(
+                DataSource.name.ilike(
+                    f"%{_escape_ilike(name)}%",
+                    escape="\\",
+                )
+            )
         return conds
 
     async def create(self, data: dict) -> DataSource:

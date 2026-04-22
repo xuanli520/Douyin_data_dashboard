@@ -215,17 +215,18 @@ class ScrapingRuleService:
             )
 
         update_data: dict[str, Any] = {}
-        if data.name is not None:
+        provided_fields = data.model_fields_set
+        if "name" in provided_fields and data.name is not None:
             update_data["name"] = data.name
-        if data.description is not None:
+        if "description" in provided_fields:
             update_data["description"] = data.description
-        if data.is_active is not None:
+        if "is_active" in provided_fields and data.is_active is not None:
             update_data["status"] = (
                 ScrapingRuleStatus.ACTIVE
                 if data.is_active
                 else ScrapingRuleStatus.INACTIVE
             )
-        if data.config is not None:
+        if "config" in provided_fields and data.config is not None:
             normalized_config = normalize_shop_selection_payload(data.config)
             if has_explicit_shop_selection(data.config):
                 try:

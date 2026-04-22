@@ -133,6 +133,59 @@ async def test_scraping_rule_service_update_rule_should_increment_version():
     assert update_payload["version"] == 2
 
 
+@pytest.mark.asyncio
+async def test_scraping_rule_service_update_rule_can_clear_description():
+    session = AsyncMock()
+    service = ScrapingRuleService(
+        session=session,
+        data_source_lookup=AsyncMock(),
+    )
+    service.rule_repo = AsyncMock()
+
+    rule = SimpleNamespace(
+        id=1,
+        data_source_id=1,
+        name="rule-a",
+        target_type=TargetType.SHOP_OVERVIEW,
+        description="Original Desc",
+        status=ScrapingRuleStatus.ACTIVE,
+        version=1,
+        granularity="DAY",
+        timezone="Asia/Shanghai",
+        time_range=None,
+        incremental_mode="BY_DATE",
+        backfill_last_n_days=3,
+        filters=None,
+        dimensions=None,
+        metrics=None,
+        dedupe_key=None,
+        rate_limit=None,
+        data_latency="T+1",
+        top_n=None,
+        sort_by=None,
+        include_long_tail=False,
+        session_level=False,
+        last_executed_at=None,
+        last_execution_id=None,
+        extra_config=None,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        data_source=None,
+    )
+    service.rule_repo.get_by_id.return_value = rule
+    updated_rule_data = dict(rule.__dict__)
+    updated_rule_data["description"] = None
+    updated_rule_data["version"] = 2
+    service.rule_repo.update.return_value = SimpleNamespace(**updated_rule_data)
+
+    result = await service.update_rule(1, ScrapingRuleUpdate(description=None))
+
+    assert result.description is None
+    update_payload = service.rule_repo.update.await_args.args[1]
+    assert update_payload["description"] is None
+    assert update_payload["version"] == 2
+
+
 def test_scraping_rule_service_should_not_expose_trigger_collection():
     assert not hasattr(ScrapingRuleService, "trigger_collection")
 

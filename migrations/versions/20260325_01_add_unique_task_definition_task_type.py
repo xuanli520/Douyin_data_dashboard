@@ -17,6 +17,9 @@ down_revision: Union[str, Sequence[str], None] = "20260317_01"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+LEGACY_TASK_TYPE_INDEX = "ix_task_definitions_task_type"
+UNIQUE_TASK_TYPE_INDEX = "ux_task_definitions_task_type"
+
 
 def upgrade() -> None:
     conn = op.get_bind()
@@ -55,14 +58,14 @@ def upgrade() -> None:
             f"manual cleanup required before upgrade: {duplicates}"
         )
 
-    if op.f("ix_task_definitions_task_type") in task_definition_indexes:
+    if LEGACY_TASK_TYPE_INDEX in task_definition_indexes:
         op.drop_index(
-            op.f("ix_task_definitions_task_type"),
+            LEGACY_TASK_TYPE_INDEX,
             table_name="task_definitions",
         )
-    if "ux_task_definitions_task_type" not in task_definition_indexes:
+    if UNIQUE_TASK_TYPE_INDEX not in task_definition_indexes:
         op.create_index(
-            "ux_task_definitions_task_type",
+            UNIQUE_TASK_TYPE_INDEX,
             "task_definitions",
             ["task_type"],
             unique=True,
@@ -82,11 +85,11 @@ def downgrade() -> None:
     task_definition_indexes = {
         item["name"] for item in inspector.get_indexes("task_definitions")
     }
-    if "ux_task_definitions_task_type" in task_definition_indexes:
-        op.drop_index("ux_task_definitions_task_type", table_name="task_definitions")
-    if op.f("ix_task_definitions_task_type") not in task_definition_indexes:
+    if UNIQUE_TASK_TYPE_INDEX in task_definition_indexes:
+        op.drop_index(UNIQUE_TASK_TYPE_INDEX, table_name="task_definitions")
+    if LEGACY_TASK_TYPE_INDEX not in task_definition_indexes:
         op.create_index(
-            op.f("ix_task_definitions_task_type"),
+            LEGACY_TASK_TYPE_INDEX,
             "task_definitions",
             ["task_type"],
             unique=False,

@@ -395,18 +395,19 @@ class DataSourceService:
                 ErrorCode.DATASOURCE_NOT_FOUND, "DataSource not found"
             )
 
-        if data.config:
+        provided_fields = data.model_fields_set
+        if "config" in provided_fields and data.config is not None:
             type_enum = self._map_model_type_to_schema_type(ds.source_type)
             DataSourceTypeRegistry.validate(type_enum, data.config)
 
         update_data: dict[str, Any] = {"updated_by_id": user_id}
-        if data.name is not None:
+        if "name" in provided_fields and data.name is not None:
             update_data["name"] = data.name
-        if data.description is not None:
+        if "description" in provided_fields:
             update_data["description"] = data.description
-        if data.status is not None:
+        if "status" in provided_fields and data.status is not None:
             update_data["status"] = ModelDataSourceStatus(data.status.value)
-        if data.config is not None:
+        if "config" in provided_fields and data.config is not None:
             update_data.update(
                 DataSourceTypeRegistry.extract_config(
                     self._map_model_type_to_schema_type(ds.source_type), data.config
