@@ -15,10 +15,10 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
     from src.tasks import worker as module
 
     calls = []
-    waited_threads = []
+    waited_runtimes = []
 
     def _fake_wait_forever(*_args, **kwargs):
-        waited_threads.extend(kwargs.get("threads") or [])
+        waited_runtimes.extend(kwargs.get("runtimes") or [])
 
     monkeypatch.setattr(module, "_wait_forever", _fake_wait_forever)
     monkeypatch.setattr(
@@ -90,14 +90,14 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
 
     module.run_all(etl_processes=2)
     assert len(calls) == 8
-    assert len(waited_threads) == 6
-    assert {thread.name for thread in waited_threads} == {
-        "worker-collection_shop_dashboard",
-        "worker-collection_shop_dashboard_agent",
-        "worker-collection_shop_dashboard_dlx",
-        "worker-collection_shop_dashboard_agent_dlx",
-        "worker-etl_orders_dlx",
-        "worker-etl_products_dlx",
+    assert len(waited_runtimes) == 6
+    assert {runtime.queue_name for runtime in waited_runtimes} == {
+        "collection_shop_dashboard",
+        "collection_shop_dashboard_agent",
+        "collection_shop_dashboard_dlx",
+        "collection_shop_dashboard_agent_dlx",
+        "etl_orders_dlx",
+        "etl_products_dlx",
     }
     assert {
         "collection_shop_dashboard",
@@ -209,6 +209,46 @@ def test_worker_run_all_raises_when_multiprocess_runner_fails_to_start(monkeypat
     assert calls == ["runner"]
 
 
+def test_worker_run_all_raises_when_threaded_runner_fails_to_start(monkeypatch):
+    from src.tasks import worker as module
+
+    calls = []
+
+    def _raise() -> None:
+        calls.append("runner")
+        raise RuntimeError("startup failed")
+
+    monkeypatch.setattr(
+        module,
+        "_queue_runners",
+        lambda _etl_processes: {"collection_shop_dashboard": _raise},
+    )
+    monkeypatch.setattr(
+        module, "_wait_forever", lambda *_args, **_kwargs: calls.append("wait_forever")
+    )
+
+    class _FakeThread:
+        def __init__(self, target, name, daemon=False):
+            self._target = target
+            self.name = name
+
+        def start(self):
+            self._target()
+
+        def join(self, timeout=None):
+            return None
+
+        def is_alive(self):
+            return False
+
+    monkeypatch.setattr(module, "Thread", _FakeThread)
+
+    with pytest.raises(RuntimeError, match="worker queue failed to start"):
+        module.run_all(etl_processes=2)
+
+    assert calls == ["runner"]
+
+
 def test_worker_run_queue_supports_dead_letter_queue(monkeypatch):
     from src.tasks import worker as module
 
@@ -242,6 +282,11 @@ def test_worker_main_keeps_etl_queue_alive_when_multiprocess_runner_returns(
         lambda _etl_processes: {"etl_orders": lambda: calls.append("runner")},
     )
     monkeypatch.setattr(module, "_init_worker_db", lambda: calls.append("init_db"))
+    monkeypatch.setattr(
+        module,
+        "_reconcile_worker_task_statuses",
+        lambda: calls.append("reconcile"),
+    )
     monkeypatch.setattr(module, "_close_worker_db", lambda: calls.append("close_db"))
     monkeypatch.setattr(
         module,
@@ -275,7 +320,7 @@ def test_worker_main_keeps_etl_queue_alive_when_multiprocess_runner_returns(
 
     module.main()
 
-    assert calls[0:2] == ["init_db", "runner"]
+    assert calls[0:3] == ["init_db", "reconcile", "runner"]
     assert ("wait", None) in calls
     assert calls[-2:] == ["close_db", "stop_loop"]
 
@@ -300,6 +345,11 @@ def test_worker_main_raises_when_etl_queue_startup_fails(monkeypatch):
         lambda _etl_processes: {"etl_orders": _raise},
     )
     monkeypatch.setattr(module, "_init_worker_db", lambda: calls.append("init_db"))
+    monkeypatch.setattr(
+        module,
+        "_reconcile_worker_task_statuses",
+        lambda: calls.append("reconcile"),
+    )
     monkeypatch.setattr(module, "_close_worker_db", lambda: calls.append("close_db"))
     monkeypatch.setattr(
         module,
@@ -319,4 +369,4 @@ def test_worker_main_raises_when_etl_queue_startup_fails(monkeypatch):
     with pytest.raises(RuntimeError, match="startup failed"):
         module.main()
 
-    assert calls == ["init_db", "runner", "close_db", "stop_loop"]
+    assert calls == ["init_db", "reconcile", "runner", "close_db", "stop_loop"]

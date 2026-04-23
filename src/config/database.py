@@ -16,7 +16,7 @@ class DatabaseSettings(BaseSettings):
     pool_size: int = Field(default=5, ge=1)
     max_overflow: int = Field(default=10, ge=0)
     pool_recycle: int = Field(default=1800, ge=0)
-    run_coro_timeout_seconds: int = 30
+    run_coro_timeout_seconds: int = 0
 
     @property
     def url(self) -> str:

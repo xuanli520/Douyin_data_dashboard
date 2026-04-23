@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import Integer, and_, cast, func, select
@@ -100,6 +101,29 @@ class TaskExecutionRepository(BaseRepository):
             TaskExecution.idempotency_key == idempotency_key
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def list_running_older_than(
+        self,
+        cutoff: datetime,
+        *,
+        limit: int = 100,
+    ) -> list[TaskExecution]:
+        age_expr = func.coalesce(
+            TaskExecution.started_at,
+            TaskExecution.updated_at,
+            TaskExecution.created_at,
+        )
+        stmt = (
+            select(TaskExecution)
+            .where(
+                TaskExecution.status == TaskExecutionStatus.RUNNING,
+                TaskExecution.queue_task_id.is_not(None),
+                age_expr <= cutoff,
+            )
+            .order_by(age_expr.asc(), TaskExecution.id.asc())
+            .limit(limit)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
 
     async def get_latest_completed_by_rule_ids(
         self,

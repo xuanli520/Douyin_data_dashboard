@@ -15,6 +15,11 @@ from src.domains.task.enums import TaskExecutionStatus
 from src.domains.task.repository import TaskExecutionRepository
 
 logger = logging.getLogger(__name__)
+TASK_STATUS_KEY_PREFIX = "douyin:task:status:"
+
+
+def build_task_status_key(task_id: str) -> str:
+    return f"{TASK_STATUS_KEY_PREFIX}{task_id}"
 
 
 def resolve_status_redis_client(owner: Any) -> Any:
@@ -61,7 +66,7 @@ def write_started_task_status(
     execution_id: int | None = None,
 ) -> datetime:
     redis_client = resolve_status_redis_client(owner)
-    key = f"douyin:task:status:{task_id}"
+    key = build_task_status_key(task_id)
     started_at = time.time()
     started_at_datetime = _from_timestamp(started_at) or datetime.now(tz=UTC)
     _write_status_mapping(
@@ -95,7 +100,7 @@ def write_finished_task_status(
     error_message: str | None = None,
 ) -> None:
     redis_client = resolve_status_redis_client(owner)
-    key = f"douyin:task:status:{task_id}"
+    key = build_task_status_key(task_id)
     _write_status_mapping(
         redis_client,
         key,

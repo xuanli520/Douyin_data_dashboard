@@ -5,6 +5,7 @@ import asyncio
 import logging
 import signal
 from collections.abc import Sequence
+from dataclasses import dataclass
 from threading import Event, Thread
 from typing import Callable
 
@@ -13,10 +14,20 @@ from src.config import get_settings
 from src.tasks.collection import douyin_shop_agent, douyin_shop_dashboard
 from src.tasks.etl import orders as etl_orders
 from src.tasks.etl import products as etl_products
+from src.tasks.status_recovery import recover_stale_running_task_executions
 
 logger = logging.getLogger(__name__)
 
 _MULTIPROCESS_QUEUES = frozenset({"etl_orders", "etl_products"})
+_STARTUP_CHECK_SECONDS = 0.2
+
+
+@dataclass
+class WorkerRuntime:
+    queue_name: str
+    thread: Thread | None
+    finished: Event
+    exception: BaseException | None = None
 
 
 def _queue_runners(etl_processes: int) -> dict[str, Callable[[], None]]:
@@ -46,13 +57,38 @@ def _queue_runners(etl_processes: int) -> dict[str, Callable[[], None]]:
     }
 
 
-def _start_runner_thread(queue_name: str, runner: Callable[[], None]) -> Thread:
-    thread = Thread(target=runner, name=f"worker-{queue_name}", daemon=True)
+def _start_runner_thread(
+    queue_name: str,
+    runner: Callable[[], None],
+) -> WorkerRuntime:
+    finished = Event()
+    runtime = WorkerRuntime(
+        queue_name=queue_name,
+        thread=None,
+        finished=finished,
+    )
+
+    def _run() -> None:
+        try:
+            runner()
+        except Exception as exc:
+            runtime.exception = exc
+            logger.exception("worker runner failed queue=%s", queue_name)
+        finally:
+            finished.set()
+
+    thread = Thread(target=_run, name=f"worker-{queue_name}", daemon=True)
+    runtime.thread = thread
     thread.start()
-    return thread
+    finished.wait(_STARTUP_CHECK_SECONDS)
+    if runtime.exception is not None:
+        raise RuntimeError(f"worker queue failed to start: {queue_name}") from (
+            runtime.exception
+        )
+    return runtime
 
 
-def _start_queue(queue_name: str, runner: Callable[[], None]) -> Thread | None:
+def _start_queue(queue_name: str, runner: Callable[[], None]) -> WorkerRuntime | None:
     if queue_name in _MULTIPROCESS_QUEUES:
         runner()
         return None
@@ -61,20 +97,22 @@ def _start_queue(queue_name: str, runner: Callable[[], None]) -> Thread | None:
 
 def _wait_forever(
     stop_event: Event | None = None,
-    threads: Sequence[Thread] | Thread | None = None,
+    runtimes: Sequence[WorkerRuntime] | WorkerRuntime | None = None,
 ) -> None:
     worker_stop_event = stop_event or Event()
-    thread_list = (
-        list(threads)
-        if isinstance(threads, Sequence)
-        else ([threads] if threads is not None else [])
+    runtime_list = (
+        list(runtimes)
+        if isinstance(runtimes, Sequence)
+        else ([runtimes] if runtimes is not None else [])
     )
     try:
         while not worker_stop_event.wait(5):
-            for thread in thread_list:
-                if not thread.is_alive():
+            for runtime in runtime_list:
+                if runtime.exception is not None:
                     logger.error(
-                        "worker thread exited unexpectedly name=%s", thread.name
+                        "worker runtime failed queue=%s thread=%s",
+                        runtime.queue_name,
+                        runtime.thread.name if runtime.thread is not None else "",
                     )
                     return
     except KeyboardInterrupt:
@@ -83,16 +121,16 @@ def _wait_forever(
 
 
 def run_all(etl_processes: int = 2, *, stop_event: Event | None = None) -> None:
-    threads: list[Thread] = []
+    runtimes: list[WorkerRuntime] = []
     for queue_name, runner in _queue_runners(etl_processes).items():
-        thread = _start_queue(queue_name, runner)
-        if thread is not None:
-            threads.append(thread)
+        runtime = _start_queue(queue_name, runner)
+        if runtime is not None:
+            runtimes.append(runtime)
 
     if stop_event is None:
-        _wait_forever(threads=threads)
+        _wait_forever(runtimes=runtimes)
     else:
-        _wait_forever(stop_event, threads)
+        _wait_forever(stop_event, runtimes)
 
 
 def run_queue(queue_name: str, etl_processes: int = 2) -> None:
@@ -150,6 +188,21 @@ def _init_worker_db() -> None:
     session.run_coro(session.init_db(settings.db.url, settings.db.echo))
 
 
+def _reconcile_worker_task_statuses() -> None:
+    try:
+        result = recover_stale_running_task_executions()
+    except Exception:
+        logger.exception("failed to reconcile stale task execution statuses")
+        return
+    if result.recovered or result.failed:
+        logger.info(
+            "reconciled stale task execution statuses recovered=%s failed=%s skipped=%s",
+            result.recovered,
+            result.failed,
+            result.skipped,
+        )
+
+
 def _close_worker_db() -> None:
     session.run_coro(session.close_db())
 
@@ -168,12 +221,13 @@ def main() -> None:
 
     try:
         _init_worker_db()
+        _reconcile_worker_task_statuses()
         if args.queue:
             runner = _queue_runners(args.etl_processes).get(args.queue)
             if runner is None:
                 raise ValueError(f"unsupported queue name: {args.queue}")
-            runner_thread = _start_queue(args.queue, runner)
-            _wait_forever(stop_event, runner_thread)
+            runtime = _start_queue(args.queue, runner)
+            _wait_forever(stop_event, runtime)
         else:
             run_all(etl_processes=args.etl_processes, stop_event=stop_event)
     finally:

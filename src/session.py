@@ -55,7 +55,7 @@ def _get_engine_options(url: str, echo: bool) -> dict[str, Any]:
     return options
 
 
-def _get_run_coro_timeout_seconds() -> float:
+def _get_run_coro_timeout_seconds() -> float | None:
     try:
         from src.config import get_settings
 
@@ -64,8 +64,8 @@ def _get_run_coro_timeout_seconds() -> float:
         logger.warning(
             "Failed to load run_coro timeout setting, using default: %s", exc
         )
-        return 30.0
-    return timeout_seconds if timeout_seconds > 0 else 30.0
+        return None
+    return timeout_seconds if timeout_seconds > 0 else None
 
 
 def __getattr__(name: str) -> Any:
@@ -189,17 +189,18 @@ def run_coro(coro: Coroutine[Any, Any, T]) -> T:
 
     if loop is None or loop.is_closed():
         try:
-            return asyncio.run(coro)
+            asyncio.get_running_loop()
         except RuntimeError:
-            new_loop = asyncio.new_event_loop()
-            try:
-                return new_loop.run_until_complete(coro)
-            finally:
-                new_loop.close()
+            return asyncio.run(coro)
+        coro.close()
+        raise RuntimeError("session.run_coro cannot be called from an async context")
 
     future = asyncio.run_coroutine_threadsafe(coro, loop)
+    timeout_seconds = _get_run_coro_timeout_seconds()
     try:
-        return future.result(timeout=_get_run_coro_timeout_seconds())
+        if timeout_seconds is None:
+            return future.result()
+        return future.result(timeout=timeout_seconds)
     except TimeoutError:
         future.cancel()
         raise
