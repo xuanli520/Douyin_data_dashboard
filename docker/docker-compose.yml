@@ -97,8 +97,8 @@ services:
       - sh
       - -c
       - |
-        if [ -n "$CACHE__PASSWORD" ]; then
-          exec redis-server --save "" --appendonly no --requirepass "$CACHE__PASSWORD"
+        if [ -n "$$CACHE__PASSWORD" ]; then
+          exec redis-server --save "" --appendonly no --requirepass "$$CACHE__PASSWORD"
         fi
         exec redis-server --save "" --appendonly no
     ports:
@@ -109,7 +109,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - if [ -n "$CACHE__PASSWORD" ]; then redis-cli -a "$CACHE__PASSWORD" ping; else redis-cli ping; fi | grep PONG
+        - if [ -n "$$CACHE__PASSWORD" ]; then redis-cli -a "$$CACHE__PASSWORD" ping; else redis-cli ping; fi | grep PONG
       interval: 10s
       timeout: 5s
       retries: 5
