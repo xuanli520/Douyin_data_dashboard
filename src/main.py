@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from starlette.middleware import Middleware
 
 from src.api import (
@@ -27,7 +27,7 @@ from src.api import (
     permissions_router,
     audit_router,
 )
-from src.cache import close_cache, get_cache, init_cache
+from src.cache import close_cache, init_cache
 from src.config import get_settings
 from src.handlers import register_exception_handlers
 from src.loguru_setup import setup_logging
@@ -64,13 +64,6 @@ async def lifespan(app: FastAPI):
     await seed_permissions()
     await seed_admin_role_permissions()
     app.state.task_dispatcher_registry = build_task_dispatcher_registry()
-
-    async def add_redis_to_request(request: Request):
-        cache = get_cache()
-        request.state.redis = cache._client if hasattr(cache, "_client") else cache
-
-    app.middleware_stack = None
-    await app.router.startup()
 
     yield
 
