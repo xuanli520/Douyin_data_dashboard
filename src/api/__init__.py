@@ -17,6 +17,7 @@ from .v1.reports import router as reports_router
 from .v1.exports import router as exports_router
 from .v1.schedules import router as schedules_router
 from .v1.analysis import router as analysis_router
+from .v1.agent_discovery import router as agent_discovery_router
 from .v1.system import router as system_router
 from .v1 import permissions_router
 from .audit import router as audit_router
@@ -41,6 +42,7 @@ __all__ = [
     "exports_router",
     "schedules_router",
     "analysis_router",
+    "agent_discovery_router",
     "system_router",
     "permissions_router",
     "audit_router",

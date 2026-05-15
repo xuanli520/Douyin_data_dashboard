@@ -23,6 +23,7 @@ from src.api import (
     exports_router,
     schedules_router,
     analysis_router,
+    agent_discovery_router,
     system_router,
     permissions_router,
     audit_router,
@@ -110,6 +111,7 @@ def create_app() -> FastAPI:
     app.include_router(exports_router, prefix="/api/v1", tags=["exports"])
     app.include_router(schedules_router, prefix="/api/v1", tags=["schedules"])
     app.include_router(analysis_router, prefix="/api/v1", tags=["analysis"])
+    app.include_router(agent_discovery_router, prefix="/api/v1", tags=["agent-discovery"])
     app.include_router(system_router, prefix="/api/v1", tags=["system"])
     app.include_router(permissions_router, prefix="/api/v1", tags=["permissions"])
     app.include_router(audit_router, prefix="/api/v1", tags=["audit"])
