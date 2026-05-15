@@ -7,16 +7,16 @@ This document is a target design, not a description of code that already exists.
 Current repository facts:
 
 1. `src/extraction` and `src/domains/extraction_rule` do not exist.
-2. The current collection path still runs `HttpScraper` first and falls back to `agent` / `LLMDashboardAgent`.
+2. The current collection path runs `browser_agent`.
 3. `extraction_engine_enabled`, `extraction_engine_primary`, `playwright_cli_path`, `glm_model`, `extraction_url_allowlist`, and `extraction_explorer_enabled` are not current `ShopDashboardSettings` fields.
-4. Docker installs Python Playwright browsers with `python -m playwright install --with-deps chromium`; it does not install Node `@playwright/cli`.
+4. Docker installs Node `@playwright/cli` browsers with `playwright-cli install-browser --with-deps`.
 5. There are no `extraction_rules`, `rule_revisions`, `agent_recipes`, or related migrations.
-6. There is no `tests/extraction` directory. Existing tests still cover `LLMDashboardAgent`, HTTP scraper, task fallback, worker entries, and current persistence behavior.
+6. There is no `tests/extraction` directory. Existing tests cover browser-agent task fallback, worker entries, and current persistence behavior.
 7. Current persistence tests do not verify `source="extract"` or `raw.extraction.source="extraction_engine"`.
 
 ## Context
 
-当前抖店数据采集基于逆向工程 API（`HttpScraper` 维护 16 组内部端点）和 `LLMDashboardAgent` 冷数据补齐。抖店页面或接口更新时仍需人工适配，LLM fallback 又会产出非真实采集结果。目标方案是引入浏览器执行 + 规则驱动 + 受控自愈，逐步替代 `agent` stage：日常采集 0 token，仅在页面变更时触发 Explorer 自愈，最终在灰度验证完成后移除 `agent` fallback。
+当前抖店数据采集已转向浏览器执行 + 规则驱动 + 受控自愈，旧 LLM 冷数据补齐不再作为采集链路。
 
 ## Architecture
 
@@ -29,7 +29,7 @@ Python Orchestrator
   ├── ShopStateMaterializer / PlaywrightShopBootstrapper (账号态 + 店铺态隔离)
   ├── Rule Store (目标：PG JSONB: extraction_rules + rule_revisions, 绑定 data_source + scraping_rule)
   ├── GLM-5.1 Client (候选，仅在 Explorer 自愈时调用)
-  └── Browser Driver (目标实现可选 Python Playwright 或 playwright-cli subprocess)
+  └── Browser Driver (playwright-cli subprocess)
         ├── state-load/state-save → 读取账号登录态 + 临时店铺态
         ├── open/goto/click/eval → 页面导航与等待
         ├── eval → 用规则选择器提取数据 (0 token)
@@ -75,7 +75,7 @@ Executor(eval+规则提取+完整性校验) → 字段缺失/选择器失效 →
 | `src/tasks/collection/douyin_shop_dashboard.py` | 拟新增 `_collect_via_extraction_engine`；移除 agent fallback 只能在 Rollout 3 后执行 |
 | `src/application/collection/executor.py` | collector 透传 `plan_unit`，保证日期窗口/过滤器可用于页面导航 |
 | `src/application/collection/usecase.py` | 调用 collector 时传入 `plan_unit` |
-| `docker/Dockerfile` | 如果选择 CLI 路线，需安装 Node.js + `@playwright/cli`；如果选择 Python Playwright 路线，可继续使用当前 `python -m playwright install --with-deps chromium` |
+| `docker/Dockerfile` | 安装 Node.js + `@playwright/cli` 并执行 `playwright-cli install-browser --with-deps` |
 
 ### Eventual removal (Rollout 3, planned)
 
@@ -84,8 +84,8 @@ Executor(eval+规则提取+完整性校验) → 字段缺失/选择器失效 →
 | File | Reason |
 |---|---|
 | `src/agents/llm_dashboard_agent.py` | 被 extraction_engine 自愈采集替代 |
-| `src/tasks/collection/douyin_shop_agent.py` | 独立 agent 队列被移除 |
-| `src/tasks/worker.py` | 移除 `collection_shop_dashboard_agent*` 队列注册 |
+| `src/tasks/collection/` | 独立 agent 队列被移除 |
+| `src/tasks/worker.py` | 移除旧 agent 队列注册 |
 | `src/tasks/collection/__init__.py` / `src/tasks/__init__.py` | 移除 agent task 导出 |
 | `src/scrapers/shop_dashboard/http_scraper.py` | 仅在 `SessionBootstrapper` 不再依赖其常量/校验逻辑后删除 |
 
@@ -105,7 +105,7 @@ Executor(eval+规则提取+完整性校验) → 字段缺失/选择器失效 →
 目标是在 `src/config/shop_dashboard.py` 新增。当前这些字段尚不存在。为减少配置分散，拟新增的 `src/extraction/config.py` 不再定义独立 Settings，只提供从 `get_settings().shop_dashboard` 读取并校验 extraction 配置的 helper。
 ```python
 # browser driver
-browser_driver: str = "playwright_python"
+browser_driver: str = "playwright_cli"
 playwright_cli_path: str = "playwright-cli"  # only required if browser_driver == "playwright_cli"
 browser_driver_timeout_seconds: int = 60
 browser_driver_artifact_dir: str = ".runtime/playwright_driver"
@@ -129,7 +129,7 @@ glm_max_retries: int = 3
 explorer_confidence_threshold: float = 0.6
 ```
 
-配置默认不改变现网采集行为：`extraction_engine_enabled=False` 时 resolver 不得把默认 fallback 解析为 `extraction_engine`。当前默认仍是 `http->llm` 并归一为 `agent`。启用 extraction engine 的发布步骤必须同时打开配置和更新 fallback 默认值，否则 HTTP 失败后会跳过 disabled stage 并直接失败。`extraction_explorer_enabled=False` 时只执行规则提取，不调用 GLM；selector 失败直接返回 `ExtractionFailed("selector_failed")`。
+配置默认不改变现网采集行为：`extraction_engine_enabled=False` 时 resolver 不得把默认 fallback 解析为 `extraction_engine`。当前默认采集链路由 `browser_agent` 执行。`extraction_explorer_enabled=False` 时只执行规则提取，不调用 GLM；selector 失败直接返回 `ExtractionFailed("selector_failed")`。
 
 ### 1.2 Rule Store (`src/domains/extraction_rule/models.py`)
 
@@ -209,7 +209,7 @@ mark_degraded(rule_id: int, expected_version: int, reason: str) -> bool
 
 ### 1.3 Playwright CLI Wrapper (`src/extraction/playwright_cli.py`)
 
-这是 CLI 路线的候选实现。当前仓库实际使用 Python Playwright；若首版继续走 Python Playwright，应把本节替换为 `PlaywrightPythonDriver`。
+这是当前 CLI 路线实现，仓库通过 Node `@playwright/cli` 提供 `playwright-cli`。
 
 ```python
 class PlaywrightCLI:
@@ -238,7 +238,7 @@ class PlaywrightCLI:
 - `session` 必须由 `account_id + shop_id + rule_id + execution_id + metric_date + plan_index` 生成，保证并发隔离
 - stderr 非空且退出码非 0 时抛 `PlaywrightCLIError`，错误信息写入 `raw.extraction.failure_reasons`，不把 stdout/stderr 中的 cookie/localStorage 内容写日志
 
-如果选择 CLI 路线，Docker 安装必须显式安装 CLI。当前 Dockerfile 尚未这样做：
+Docker 安装必须显式安装 CLI：
 ```dockerfile
 RUN apt-get update \
     && apt-get install -y --no-install-recommends gcc libpq-dev build-essential postgresql-client nodejs npm \
@@ -552,9 +552,9 @@ bootstrap 必须 seed-first：优先从 `scraping_rule.extra_config["extraction_
 
 ### Rollout 3 Cleanup Boundary
 
-目标态移除 `agent` 不是只删 `LLMDashboardAgent`。同一阶段必须清理：
-- `src/tasks/collection/douyin_shop_agent.py`
-- `src/tasks/worker.py` 中 `collection_shop_dashboard_agent` / `collection_shop_dashboard_agent_dlx` 注册
+目标态移除旧 `agent` stage 不是只删模型调用。同一阶段必须清理：
+- 独立 agent 队列模块
+- `src/tasks/worker.py` 中旧 agent 队列注册
 - `src/tasks/collection/__init__.py`、`src/tasks/__init__.py`、`src/agents/__init__.py` 的导出
 - 依赖 agent fallback 的测试用例
 
@@ -566,7 +566,7 @@ bootstrap 必须 seed-first：优先从 `scraping_rule.extra_config["extraction_
 
 ### 4.1 修改 `src/tasks/collection/douyin_shop_dashboard.py`
 
-目标态取消 agent stage，`fallback_chain` 只允许 `http` 与 `extraction_engine`。当前代码仍允许 `agent`，且默认字符串是 `http->llm` 并归一为 `agent`。引入 `extraction_engine` 时应先新增 stage，稳定后再移除 agent。`extraction_engine_enabled=False` 时目标默认 fallback 为 `("http",)`；打开开关后默认 fallback 才变为 `("http", "extraction_engine")`：
+目标态取消旧 agent stage，`fallback_chain` 只允许目标采集 stage。当前实现使用 `browser_agent`。引入 `extraction_engine` 时应先新增 stage，稳定后再切换默认值：
 
 ```python
 def _collect_one_day(runtime, metric_date, *, plan_unit=None, **helpers):
@@ -614,7 +614,7 @@ DEFAULT_FALLBACK_CHAIN = (
 )
 ```
 
-输入含 `agent` / `llm` 时直接丢弃；`extraction_engine_enabled=False` 时也丢弃 `extraction_engine`；归一化后为空则使用 `DEFAULT_FALLBACK_CHAIN`。Rollout 3 后，`src/tasks/collection/douyin_shop_dashboard.py` 才移除 `LLMDashboardAgent` import、`_build_agent_fallback_result()` 与 `_resolve_agent_reason()`。
+输入含旧 stage 时直接丢弃；`extraction_engine_enabled=False` 时也丢弃 `extraction_engine`；归一化后为空则使用 `DEFAULT_FALLBACK_CHAIN`。
 
 `extraction_engine_primary=True` 只影响默认 fallback；用户显式配置了有效 `fallback_chain` 时尊重显式顺序，但 disabled engine 仍会被过滤。
 
@@ -712,7 +712,7 @@ fallback_chain = ("extraction_engine",)
 
 ### Phase 1 验证
 
-以下命令只适用于选择 CLI 路线并完成安装后。当前 Dockerfile 安装的是 Python Playwright，不提供 `playwright-cli`。
+以下命令适用于当前 CLI 路线。
 
 ```bash
 playwright-cli --version                 # @playwright/cli 可用

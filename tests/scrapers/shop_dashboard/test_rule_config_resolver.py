@@ -182,7 +182,7 @@ def test_resolve_rule_config_drops_legacy_fallback_stages():
     data_source = _build_data_source()
     rule = _build_rule(
         filters={"shop_id": ["shop-1"]},
-        extra_config={"fallback_chain": "http->llm->browser"},
+        extra_config={"fallback_chain": "http->browser"},
     )
 
     config = resolve_rule_config(

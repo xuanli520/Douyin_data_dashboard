@@ -6,10 +6,10 @@
 
 当前仓库事实：
 
-1. 当前 HTTP Scraper 仍是主链路，没有“完全失效”或被删除。`sync_shop_dashboard` 仍先执行 `HttpScraper`，失败后进入 `agent`。
-2. 当前没有 `src/core/agent`、`ReActDiscoveryAgent`、`AgentCrawler`、`PlaywrightCLI`、`browser_agent` stage、`agent_recipes` 表或 WebSocket 观察同步实现。
-3. 当前规则解析仍围绕 `api_groups`、`fallback_chain`、`common_query`、`token_keys`；`ScrapingRule.extra_config.agent_recipe` 还没有驱动采集。
-4. 当前 Playwright 能力来自 Python `playwright` 依赖和登录 bootstrap；Docker 没有安装 `@playwright/cli`。
+1. 当前采集主链路是 `browser_agent`。`sync_shop_dashboard` 不再执行旧 HTTP/LLM fallback。
+2. 当前已有 `src/core/agent`、`AgentCrawler`、`PlaywrightCLIDriver`、`browser_agent` stage、`agent_recipes` 表和 WebSocket 观察入口。
+3. 当前规则解析可通过 `ScrapingRule.extra_config.agent_recipe` 引用 recipe。
+4. 当前 Playwright 能力来自 Node `@playwright/cli` / `playwright-cli`；Docker 已安装 CLI 浏览器。
 5. 当前登录 `storage_state` 存在 `DataSource.extra_config.shop_dashboard_login_state`，执行期会物化到本地；店铺 bundle 不是完整 Playwright state。
 6. 当前模型配置是通用 `llm_provider` / `llm_endpoint` / `llm_model`，没有 Qwen 专用配置类或 DashScope 客户端。
 
@@ -172,7 +172,7 @@ Replay 验证
 
 ## Playwright CLI Wrapper
 
-候选实现之一是使用 subprocess 调用 `playwright-cli`，通过进程隔离简化 session 管理。当前仓库实际依赖 Python `playwright`，Docker 执行的是 `python -m playwright install --with-deps chromium`；若选择 CLI 路线，需要新增 Node CLI 依赖、镜像安装和测试。
+实现使用 subprocess 调用 `playwright-cli`，通过进程隔离简化 session 管理。仓库依赖 Node `@playwright/cli`，Docker 执行 `playwright-cli install-browser --with-deps`。
 
 ```python
 class PlaywrightCLI:

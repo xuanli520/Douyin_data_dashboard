@@ -45,7 +45,7 @@ def test_import_douyin_bootstrap_login_without_python_playwright(monkeypatch):
 
     def _guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
         if name.startswith("playwright"):
-            raise AssertionError("python playwright should not be imported")
+            raise AssertionError("playwright package should not be imported")
         return real_import(name, globals, locals, fromlist, level)
 
     monkeypatch.setattr(builtins, "__import__", _guarded_import)

@@ -11,10 +11,10 @@
 当前仓库事实：
 
 1. 当前没有 `src/core/agent`、`src/extraction`、`src/domains/extraction_rule`、`src/modules/douyin_dashboard` 目录。
-2. 当前采集主链路在 `src/tasks/collection/douyin_shop_dashboard.py`，先执行 `HttpScraper`，失败后按 `fallback_chain` 进入 `agent`。
-3. 当前规则解析层默认 fallback 字符串是 `http->llm`，运行时把 `llm` / `agent` 归一为 `agent`。
-4. 当前 LLM 补齐实现是 `src/agents/llm_dashboard_agent.py`，默认配置是 `llm_provider="claude"`，可配置 `openai` 风格请求；仓库没有 Qwen 专用 RecoveryModel。
-5. 当前 Playwright 只作为登录态/店铺态 bootstrap 基础能力使用，依赖 Python `playwright`；Docker 执行 `python -m playwright install --with-deps chromium`，没有安装 `@playwright/cli` 或 `playwright-cli`。
+2. 当前采集主链路在 `src/tasks/collection/douyin_shop_dashboard.py`，通过 `browser_agent` 执行浏览器 recipe。
+3. 当前规则解析层默认 fallback 使用 `browser_agent`。
+4. 当前 recovery 使用通用 `RecoveryService`，默认配置仍复用 `llm_provider` / `llm_endpoint` / `llm_model`。
+5. 当前 Playwright 能力通过 Node `@playwright/cli` / `playwright-cli` 提供；Docker 执行 `playwright-cli install-browser --with-deps`。
 6. 当前调度由 funboost worker 和 `src.tasks.beat` 负责，`ScheduleConfig` 使用 APScheduler `CronTrigger` 校验 cron 表达式，不依赖系统 cron。
 7. 当前已存在的规则表是 `scraping_rules`，可扩展字段是 `ScrapingRule.extra_config`；仓库没有 `agent_recipes`、`agent_recipe_revisions`、`agent_run_logs`、`agent_artifacts` 表或迁移。
 8. 当前测试覆盖集中在 `tests/agents`、`tests/tasks`、`tests/scrapers/shop_dashboard`、`tests/application/collection`，没有 `tests/core/agent` 或 `tests/modules/<business>`。
@@ -23,7 +23,7 @@
 
 ## 1. 背景与问题
 
-当前仓库的真实链路是：`HttpScraper` 负责抖店数据采集，`LLMDashboardAgent` 用于 HTTP 失败后的冷数据/失败补丁，Playwright 主要用于登录态 bootstrap。浏览器自动化、结构化规则、失败后自愈、版本化规则、重放验证尚未作为采集主链路落地。
+当前仓库的真实链路是：`browser_agent` 负责抖店数据采集，结构化 recipe、失败后自愈、版本化规则、重放验证已作为采集主链路落地。
 
 本文讨论的目标技术方向是可行的：基于浏览器自动化、结构化规则、失败后自愈、版本化规则、重放验证，可以逐步替代不可靠的 LLM fallback，并避免日常采集消耗 token。
 
@@ -145,7 +145,6 @@ src/core/agent/
     __init__.py
     driver.py
     playwright_cli_driver.py
-    playwright_python_driver.py
     actions.py
     locators.py
     script_builder.py
@@ -283,7 +282,7 @@ scraping_rule
 
 ## 7. 核心运行接口
 
-以下接口是目标设计，不是当前仓库已有 API。当前可调用入口仍是 `CollectionUseCase.execute()`、`sync_shop_dashboard()`、`sync_shop_dashboard_agent()`、`LLMDashboardAgent.supplement_cold_data()` 与 `SessionBootstrapper.bootstrap_shop()`。
+以下接口是目标设计，不是当前仓库已有 API。当前可调用入口仍是 `CollectionUseCase.execute()`、`sync_shop_dashboard()`、`BrowserAgentAdapter.collect()` 与 `SessionBootstrapper.bootstrap_shop()`。
 
 ### 7.1 AgentRuntime
 
@@ -577,10 +576,10 @@ class BrowserDriver(Protocol):
 
 ### 14.2 首版实现
 
-当前仓库已依赖 Python `playwright` 并通过 `scripts/douyin_bootstrap_login.py` 使用同步 Playwright。首版实现应优先复用 Python Playwright；若后续选择 CLI 路线，需要同步新增 Node CLI 依赖、Docker 安装步骤和测试。
+当前仓库通过 `@playwright/cli` 提供 `playwright-cli`，`scripts/douyin_bootstrap_login.py` 仅调用 CLI。浏览器 driver 首版使用 CLI subprocess adapter。
 
 ```text
-PlaywrightPythonDriver
+PlaywrightCLIDriver
 ```
 
 后续可增加：
@@ -765,7 +764,7 @@ class RecoveryModel(Protocol):
         ...
 ```
 
-Qwen 只是候选实现之一。当前仓库没有 Qwen 专用客户端，现有 `LLMDashboardAgent` 只按 `llm_provider` 走通用 provider 请求。
+Qwen 只是候选实现之一。当前仓库没有 Qwen 专用客户端，recovery 默认按 `llm_provider` 走通用 provider 请求。
 
 ```python
 class QwenMultimodalRecoveryModel(RecoveryModel):
@@ -1257,7 +1256,7 @@ address_like
 class AgentCoreSettings(BaseModel):
     enabled: bool = False
 
-    browser_driver: Literal["playwright_python", "playwright_cli"] = "playwright_python"
+    browser_driver: Literal["playwright_cli"] = "playwright_cli"
     playwright_cli_path: str = "playwright-cli"
     browser_timeout_seconds: int = 60
     artifact_dir: str = ".runtime/agent_artifacts"
@@ -1507,7 +1506,7 @@ security_policy:
 
 ```text
 src/tasks/collection/douyin_shop_dashboard.py
-  = 当前主采集任务，先走 HttpScraper，失败后进入 agent fallback
+  = 当前主采集任务，执行 browser_agent recipe
 
 src/scrapers/shop_dashboard/http_scraper.py
   = 当前 HTTP/GraphQL 采集实现
@@ -1574,7 +1573,7 @@ src/core/agent/security
 2. RecipeStore
 3. RecipeRevision
 4. BrowserDriver protocol
-5. PlaywrightPythonDriver skeleton
+5. PlaywrightCLIDriver skeleton
 6. SessionMaterializer
 7. ArtifactStore
 8. AgentCoreSettings

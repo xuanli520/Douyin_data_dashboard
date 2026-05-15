@@ -7,7 +7,7 @@
 当前仓库事实：
 
 1. 当前没有 `src/core/agent`、`src/application/collection/browser_agent_adapter.py`、`src/agents/crawl_repair_agent.py`。
-2. 当前采集默认配置字符串仍是 `http->llm`，运行时把 `llm` / `agent` 归一为 `agent`；`browser_agent` stage 尚不存在。
+2. 当前采集默认使用 `browser_agent` stage。
 3. 当前登录态源头是 `DataSource.extra_config.shop_dashboard_login_state`，执行前由 resolver 解析并物化到 `SessionStateStore`。
 4. 当前账号级文件是完整 Playwright `storage_state`；店铺级 bundle 只是 `cookies + common_query + verify metadata`，不是可直接加载的 Playwright state。
 5. 当前 `ScrapingRule.extra_config` 会被 `ScrapingRuleConfigMapper` 平铺回 `ScrapingRuleResponse.config`，因此写入 `agent_recipe*` 会成为前后端可见配置面，不是私有存储。
@@ -27,11 +27,11 @@
 现有采集主链路已经比较完整：
 
 - `src/application/collection/usecase.py` 已负责计划拆分、幂等、锁、登录态校验、店铺 mismatch guard、结果持久化。
-- `src/tasks/collection/douyin_shop_dashboard.py` 当前按 `fallback_chain` 执行 `http` 后进入 `agent`；规则解析层默认字符串是 `http->llm`，内部会把 `llm` 归一为 `agent`。
+- `src/tasks/collection/douyin_shop_dashboard.py` 当前按 `fallback_chain` 执行 `browser_agent`。
 - `src/scrapers/shop_dashboard/http_scraper.py` 已有确定性 HTTP 采集、endpoint group、payload parser。
 - `src/scrapers/shop_dashboard/session_state_store.py` 已有账号级 `storage_state` 文件缓存和店铺 bundle 文件缓存；店铺 bundle 不是完整 Playwright state。
 - `src/domains/scraping_rule/models.py` 已有 `ScrapingRule.version` 和 `extra_config`，可承载业务 recipe。
-- `src/agents/llm_dashboard_agent.py` 目前是业务补数，不是通用自愈执行内核。
+- 通用自愈执行内核在 `src/core/agent`，业务接线在 `src/application/collection/browser_agent_adapter.py`。
 
 因此轻量 core 不应重复这些已有职责。
 
@@ -279,7 +279,7 @@ class CrawlOptions(BaseModel):
 
 ## 8. BrowserDriver
 
-首版只实现 Playwright Python Driver，因为项目已经依赖 `playwright`，且 `scripts/douyin_bootstrap_login.py` 已使用同步 Playwright。
+首版只实现 `PlaywrightCLIDriver`，通过 Node `@playwright/cli` / `playwright-cli` 执行浏览器命令。
 
 ```python
 class BrowserDriver(Protocol):
@@ -458,7 +458,7 @@ class ShopDashboardBrowserAgentAdapter:
 
 ## 12. Fallback Chain 调整
 
-当前规则解析会把 `browser` 丢弃，只允许 `http` 和 `agent`。配置层默认字符串仍是 `http->llm`，内部会把 `llm` 归一为 `agent`。
+当前规则解析使用 `browser_agent` 作为浏览器采集 stage。
 
 调整为：
 
@@ -557,7 +557,7 @@ scraping_rules.extra_config.agent_recipe_update_reason
 - `SessionBootstrapper`
 - `SessionStateStore`
 - `CollectionResultPersister`
-- `LLMDashboardAgent`
+- 旧 LLM 补齐链路
 
 新增 core 只作为 fallback stage 插入，不影响默认 HTTP 成功路径。
 

@@ -21,7 +21,7 @@
 - 当前登录态与店铺切换：`src/scrapers/shop_dashboard/session_bootstrapper.py`
 - 当前本地状态存储：`src/scrapers/shop_dashboard/session_state_store.py`
 - 当前 LLM fallback：`src/agents/llm_dashboard_agent.py`
-- 当前独立 agent 队列：`src/tasks/collection/douyin_shop_agent.py`
+- 旧独立 agent 队列已移除
 - 当前 worker 注册：`src/tasks/worker.py`
 - 当前配置：`src/config/shop_dashboard.py`
 - 当前数据库模型：`src/domains/scraping_rule/models.py`
@@ -34,18 +34,18 @@
 ## 子代理协作结论
 
 - 架构子代理结论：`src/core/agent` 必须保持通用内核，业务接入点应放在 `src/application/collection/browser_agent_adapter.py`；`CollectionUseCase`、`SessionBootstrapper`、`SessionStateStore`、`LockManager`、`CollectionResultPersister` 保持在 core 外侧。
-- 源码映射子代理结论：当前主链路仍是 `HttpScraper -> LLMDashboardAgent`；没有 `src/core/agent`、`AgentCrawler`、`ReActDiscoveryAgent`、`PlaywrightCLI`、`browser_agent` stage、`agent_recipes` 表或 WebSocket 观察同步。
+- 源码映射子代理结论：旧主链路是 HTTP fallback 加 LLM 补齐；目标实现已转向 `browser_agent`、`src/core/agent`、`AgentCrawler`、`PlaywrightCLIDriver`、`agent_recipes` 与 WebSocket 观察同步。
 - 测试策略子代理结论：新增能力应以 `tests/core/agent/*` 为核心单测区，业务接线测试放在 `tests/application/collection/`、`tests/tasks/`、`tests/integration/`、`tests/api/`；WebSocket 与 browser driver contract 是当前最大测试空白。
 
 ## 当前代码事实
 
 | 设计文档判断 | 当前证据 | 计划影响 |
 |---|---|---|
-| HTTP Scraper 仍是主链路 | `_collect_one_day()` 在 `src/tasks/collection/douyin_shop_dashboard.py` 内先创建 `HttpScraper`，按 `runtime.fallback_chain` 执行 `http`，失败后进入 `agent` | Phase 2 末尾才能删除 HTTP fallback；删除前必须先完成 browser agent 接线与验收 |
-| 当前没有 core agent 内核 | 仓库没有 `src/core/agent`，也没有 `tests/core/agent` | Phase 1 从零新建通用内核目录与测试目录 |
-| fallback 仍围绕 HTTP/agent | `_normalize_fallback_chain()` 只保留 `http` 与 `agent`，并把 `llm` 归一为 `agent` | Phase 2 修改 runtime 解析，新增 `browser_agent`，最终移除 `http/agent` |
+| browser_agent 是主链路 | `_collect_one_day()` 在 `src/tasks/collection/douyin_shop_dashboard.py` 内执行 `BrowserAgentAdapter` | Phase 2/4 清理旧 HTTP/LLM fallback |
+| core agent 内核已存在 | 仓库已有 `src/core/agent` 与 `tests/core/agent` | 后续变更保持 core 通用边界 |
+| fallback 使用 browser_agent | `_normalize_fallback_chain()` 保留 `browser_agent` | 旧 `http/agent/llm` 不再作为目标采集链路 |
 | `ScrapingRule.extra_config.agent_recipe` 未驱动采集 | `ScrapingRule.extra_config` 会被 `ScrapingRuleConfigMapper` 平铺回 API response `config` | Phase 3/4 优先新增独立 `agent_recipes` 存储，避免把完整 recipe 暴露到配置面 |
-| Playwright 当前是 Python 依赖 | `pyproject.toml` 已有 `playwright`；`docker/Dockerfile` 执行 `python -m playwright install --with-deps chromium`；无 Node CLI 安装 | Phase 1 先定义 `BrowserDriver` contract，首版用 Python Playwright driver；CLI wrapper 作为可替换 adapter 规划 |
+| Playwright 当前是 Node CLI 依赖 | `package.json` 依赖 `@playwright/cli`；`docker/Dockerfile` 执行 `playwright-cli install-browser --with-deps` | Phase 1 定义 `BrowserDriver` contract，首版使用 CLI adapter |
 | 登录态源自 DataSource.extra_config | `DataSource.extra_config.shop_dashboard_login_state` 经运行期物化到 `SessionStateStore` | Core 不接管登录态；业务 adapter 负责传入 storage state path |
 | 店铺 bundle 不是 Playwright state | `SessionStateStore.save_bundle/load_bundle` 规范化的是 cookies/common_query/verify metadata | Phase 2 需要新增 per-shop Playwright state 原始读写，不能复用 bundle 作为浏览器 state |
 | 当前没有 WebSocket 入口 | `src/main.py` 只 include HTTP routers，仓库没有 websocket router | Phase 3 新增观察同步 router 与测试 |
@@ -106,10 +106,10 @@ Core 接口只接受通用参数：
 ## 全局实施决策
 
 1. Core 先落地通用接口，再接业务。
-2. Browser driver 首版优先 Python Playwright，因为仓库已有依赖和 Docker 安装；`PlaywrightCLI` 以 contract adapter 形式规划，只有确认引入 Node CLI 后再启用。
+2. Browser driver 使用 `@playwright/cli` / `playwright-cli`，只保留 CLI driver。
 3. Recipe 存储目标采用独立 `agent_recipes` 表，不把完整 recipe 长期放在 `ScrapingRule.extra_config`。`ScrapingRule.extra_config.agent_recipe` 只保留 `{namespace, key}` 引用。
 4. `browser_agent` stage 先灰度接入，再删除 HTTP fallback。删除动作仍属于 Phase 2，但必须排在 browser agent 验收之后。
-5. `LLMDashboardAgent` 与 `douyin_shop_agent` 是旧冷数据补齐链路，不等同于 ReAct discovery/recovery；Phase 2/4 清理时必须同步 worker、测试、导出。
+5. 旧冷数据补齐链路不等同于 ReAct discovery/recovery；Phase 2/4 清理时必须同步 worker、测试、导出。
 6. Recovery 只允许修 recipe locator/observation，不允许直接修业务结果，不允许修改 entrypoint 和业务字段定义。
 7. Discovery 的 `done` 结果必须能被 deterministic `AgentCrawler` replay，一次 replay 通过后才允许持久化 recipe。
 8. WebSocket 观察同步只推管理员可见信息，Agent thought、snapshot YAML、工具结果只进入内部事件和日志，不推给管理员。
@@ -123,8 +123,8 @@ Core 接口只接受通用参数：
 ### 前置检查
 
 - 确认 `src/core/agent` 不存在。
-- 确认当前 Python Playwright 可用。
-- 确认 Docker 未安装 `@playwright/cli`。
+- 确认 `@playwright/cli` / `playwright-cli` 可用。
+- 确认 Docker 安装 `playwright-cli` 浏览器依赖。
 - 确认 `ShopDashboardSettings` 现有 browser/llm 配置字段。
 - 确认 `tests/core/agent` 不存在。
 
@@ -262,15 +262,14 @@ Core 接口只接受通用参数：
 
 首版 driver 实现顺序：
 
-1. `PlaywrightPythonDriver`：基于已有 Python `playwright` 依赖。
-2. `PlaywrightCLI`：仅在确认引入 Node CLI 后实现；否则保持接口规划，不修改 Docker。
+1. `PlaywrightCLIDriver`：基于 Node `@playwright/cli` / `playwright-cli`。
 
-如果实施 `PlaywrightCLI`，还必须同步：
+必须同步：
 
-- `pyproject.toml` 不新增 Python 包。
+- `pyproject.toml` 不新增浏览器自动化 Python 包。
 - `docker/Dockerfile` 安装 Node.js 和 `@playwright/cli`。
 - 新增 `playwright_cli_path` 配置。
-- contract tests 同时覆盖 Python driver fake 与 CLI subprocess fake。
+- contract tests 覆盖 CLI subprocess fake。
 
 ### 配置调整
 
@@ -280,7 +279,7 @@ Core 接口只接受通用参数：
 - `agent_artifact_ttl_seconds: int = 86400`
 - `agent_max_steps: int = 30`
 - `agent_allowed_origins: list[str] = ["https://fxg.jinritemai.com"]`
-- `agent_browser_driver: str = "playwright_python"`
+- `agent_browser_driver: str = "playwright_cli"`
 - `agent_browser_headed: bool = False`
 
 不在 Phase 1 增加 Qwen 专用配置；继续复用通用 `llm_provider/llm_endpoint/llm_model`。
@@ -349,8 +348,7 @@ just arch-check
 | `src/core/agent/observations.py` | observation 读取与类型规范化 |
 | `src/core/agent/assertions.py` | assertion evaluator |
 | `src/core/agent/parsers.py` | 通用 parser registry，不含业务字段 |
-| `src/core/agent/drivers/playwright_python.py` | Python Playwright driver |
-| `src/core/agent/drivers/playwright_cli.py` | 可选 CLI adapter，若不启用则只保留 contract |
+| `src/core/agent/drivers/playwright_cli.py` | CLI adapter |
 
 ### 新增业务文件
 
@@ -437,7 +435,7 @@ Phase 2B 硬切换：
 - 默认 fallback 变为 `("browser_agent",)`。
 - 输入中出现 `http`、`agent`、`llm` 时直接过滤或报配置错误。
 - 删除 `_build_agent_fallback_result()` 与 `_resolve_agent_reason()`。
-- 删除 `LLMDashboardAgent` 在主采集链路中的 import。
+- 删除旧 LLM 补齐在主采集链路中的 import。
 
 ### HTTP scraper 删除顺序
 
@@ -451,8 +449,8 @@ Phase 2B 硬切换：
 ### LLM agent 删除顺序
 
 1. 删除主链路 `_build_agent_fallback_result()`。
-2. 删除 `src/tasks/collection/douyin_shop_agent.py`。
-3. 删除 `src/tasks/worker.py` 中 `collection_shop_dashboard_agent` 与 `collection_shop_dashboard_agent_dlx` 注册。
+2. 删除旧独立 agent 队列模块。
+3. 删除 `src/tasks/worker.py` 中旧 agent 队列注册。
 4. 删除 `src/tasks/collection/__init__.py`、`src/tasks/__init__.py`、`src/agents/__init__.py` 相关导出。
 5. 删除或改写 `tests/agents/test_llm_dashboard_agent.py`。
 6. 删除或改写 `tests/tasks/test_shop_dashboard_agent_task.py`。
@@ -526,7 +524,7 @@ just arch-check
 - `browser_agent` 成功结果可被现有持久化链路写入。
 - 登录态失效仍抛 `LoginExpiredError` 并触发现有登录态过期标记。
 - 店铺不匹配仍走现有 mismatch/circuit 逻辑。
-- Phase 2B 后主采集链路不 import `HttpScraper` 或 `LLMDashboardAgent`。
+- Phase 2B 后主采集链路不 import 旧 HTTP/LLM fallback。
 - Phase 2B 后 worker 不注册旧 agent 队列。
 - 所有旧 HTTP/LLM fallback 测试已删除或改写为 browser agent 预期。
 
@@ -939,8 +937,8 @@ Recipe 写回必须满足：
 Phase 4 结束后确认：
 
 - 没有 `HttpScraper` import。
-- 没有 `LLMDashboardAgent` 主链路 import。
-- 没有 `collection_shop_dashboard_agent` 队列。
+- 没有旧 LLM 补齐主链路 import。
+- 没有旧 agent 队列。
 - 没有 `fallback_chain` 中的 `http`、`agent`、`llm`。
 - `ScrapingRule.extra_config` 不再承载旧 `api_groups/common_query/token_keys/graphql_query` 的采集必需配置。
 
@@ -1021,7 +1019,6 @@ just migration-ci
 涉及 Docker/Playwright CLI 路线时必须额外验证：
 
 ```bash
-python -m playwright install --with-deps chromium
 playwright-cli --version
 ```
 
@@ -1039,7 +1036,7 @@ playwright-cli --version
 | Recovery 越权 patch | Recipe 被污染 | ProposalValidator 只允许 observation locator replace |
 | Replay 假阳性 | 错误 recipe 写入 active | replay 使用 deterministic transcript 和真实 driver contract 测试 |
 | WebSocket 泄露内部 thought/snapshot | 敏感信息泄露 | 管理员事件过滤，内部事件与管理员事件分离 |
-| CLI 路线新增 Node 依赖 | Docker 与 CI 变复杂 | 默认 Python driver，CLI 只作为 adapter |
+| CLI 路线新增 Node 依赖 | Docker 与 CI 变复杂 | 只保留 CLI driver 与容器安装门禁 |
 
 ## 完成审计清单
 
