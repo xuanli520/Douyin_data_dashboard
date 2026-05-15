@@ -21,7 +21,7 @@ class ShopDashboardSettings(BaseSettings):
     agent_artifact_ttl_seconds: int = 86400
     agent_max_steps: int = 30
     agent_allowed_origins: list[str] = ["https://fxg.jinritemai.com"]
-    agent_browser_driver: str = "playwright_python"
+    agent_browser_driver: str = "playwright_cli"
     agent_browser_headed: bool = False
     browser_headless: bool = True
     browser_timeout_seconds: int = 45

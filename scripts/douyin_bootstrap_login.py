@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -31,23 +33,76 @@ def run_bootstrap(
     state_dir: str | Path,
     headless: bool = False,
     login_url: str = "https://fxg.jinritemai.com/login/common",
+    session_name: str | None = None,
+    timeout_seconds: float = 300.0,
+    poll_interval_seconds: float = 1.0,
+    runner: Any | None = None,
 ) -> Path:
-    from playwright.sync_api import sync_playwright
-
     store = SessionStateStore(base_dir=state_dir)
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=headless)
-        context = browser.new_context()
-        page = context.new_page()
-        saved_path = bootstrap_login(
-            page=page,
-            account_id=account_id,
-            state_store=store,
-            login_url=login_url,
-        )
-        context.close()
-        browser.close()
+    saved_path = store._path(account_id)
+    cli_runner = runner or _run_playwright_cli
+    session = str(session_name or f"bootstrap-{account_id}").replace("/", "_")
+    open_command = _session_command(session, "open", login_url)
+    if not headless:
+        open_command.append("--headed")
+    cli_runner(open_command)
+    _wait_for_login_success(
+        session=session,
+        timeout_seconds=timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
+        runner=cli_runner,
+    )
+    saved_path.parent.mkdir(parents=True, exist_ok=True)
+    cli_runner(_session_command(session, "state-save", str(saved_path)))
+    cli_runner(_session_command(session, "close"))
     return saved_path
+
+
+def _run_playwright_cli(command: list[str]) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        check=False,
+        text=True,
+        encoding="utf-8",
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip())
+    return result
+
+
+def _session_command(session: str, command: str, *args: str) -> list[str]:
+    return ["playwright-cli", f"-s={session}", command, *args]
+
+
+def _wait_for_login_success(
+    *,
+    session: str,
+    timeout_seconds: float,
+    poll_interval_seconds: float,
+    runner: Any,
+) -> None:
+    deadline = time.monotonic() + max(timeout_seconds, 0.0)
+    while time.monotonic() <= deadline:
+        result = runner(_session_command(session, "snapshot"))
+        current_url = _extract_page_url(result.stdout)
+        if current_url and not _is_login_url(current_url):
+            return
+        time.sleep(max(poll_interval_seconds, 0.1))
+    raise TimeoutError("login bootstrap timed out")
+
+
+def _extract_page_url(snapshot: str) -> str:
+    for line in snapshot.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- Page URL:"):
+            return stripped.split(":", 1)[1].strip()
+    return ""
+
+
+def _is_login_url(url: str) -> bool:
+    lowered = str(url or "").lower()
+    return any(token in lowered for token in ("login/common", "/login", "passport"))
 
 
 def main() -> None:

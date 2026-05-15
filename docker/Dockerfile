@@ -1,7 +1,11 @@
+FROM node:20-bookworm-slim AS node_runtime
+
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
+
+COPY --from=node_runtime /usr/local/ /usr/local/
 
 RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
@@ -16,7 +20,8 @@ COPY . .
 RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple \
     && python -m pip install --upgrade pip setuptools wheel \
     && pip install --no-cache-dir . \
-    && python -m playwright install --with-deps chromium
+    && npm ci \
+    && playwright-cli install-browser --with-deps
 
 EXPOSE 8000
 

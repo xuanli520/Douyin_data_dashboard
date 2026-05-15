@@ -45,7 +45,7 @@ def test_shop_dashboard_settings_defaults():
     assert settings.shop_dashboard.agent_allowed_origins == [
         "https://fxg.jinritemai.com"
     ]
-    assert settings.shop_dashboard.agent_browser_driver == "playwright_python"
+    assert settings.shop_dashboard.agent_browser_driver == "playwright_cli"
     assert settings.shop_dashboard.agent_browser_headed is False
 
 

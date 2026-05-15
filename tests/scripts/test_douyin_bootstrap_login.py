@@ -1,4 +1,5 @@
 import importlib
+import subprocess
 import sys
 from unittest import mock
 
@@ -23,61 +24,46 @@ def test_bootstrap_waits_for_login_success_and_saves_state(tmp_path):
 
 
 def test_run_bootstrap_returns_actual_saved_path(monkeypatch, tmp_path):
-    class _FakeContext:
-        def new_page(self):
-            return object()
+    commands: list[list[str]] = []
 
-        def close(self):
-            return None
+    def runner(command: list[str]) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        if command[2] == "snapshot":
+            stdout = "- Page URL: https://fxg.jinritemai.com/home\n"
+        else:
+            stdout = ""
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
-    class _FakeBrowser:
-        def new_context(self):
-            return _FakeContext()
-
-        def close(self):
-            return None
-
-    class _FakePlaywright:
-        class chromium:
-            @staticmethod
-            def launch(headless=False):  # noqa: ARG004
-                return _FakeBrowser()
-
-    class _FakePlaywrightContext:
-        def __enter__(self):
-            return _FakePlaywright()
-
-        def __exit__(self, exc_type, exc, tb):  # noqa: ARG002
-            return False
-
-    def _fake_bootstrap_login(*, account_id, state_store, **_kwargs):
-        return state_store.save(account_id, {"cookies": [], "origins": []})
-
-    monkeypatch.setitem(
-        sys.modules,
-        "playwright.sync_api",
-        type(
-            "_SyncApiModule",
-            (),
-            {"sync_playwright": staticmethod(lambda: _FakePlaywrightContext())},
-        )(),
+    saved = module.run_bootstrap(
+        account_id="acct/1",
+        state_dir=tmp_path,
+        headless=True,
+        runner=runner,
+        poll_interval_seconds=0.1,
     )
-    monkeypatch.setattr(module, "bootstrap_login", _fake_bootstrap_login)
-
-    saved = module.run_bootstrap(account_id="acct/1", state_dir=tmp_path, headless=True)
 
     assert saved == tmp_path / "acct_1.json"
-    assert saved.exists() is True
+    assert commands == [
+        [
+            "playwright-cli",
+            "-s=bootstrap-acct_1",
+            "open",
+            "https://fxg.jinritemai.com/login/common",
+        ],
+        ["playwright-cli", "-s=bootstrap-acct_1", "snapshot"],
+        ["playwright-cli", "-s=bootstrap-acct_1", "state-save", str(saved)],
+        ["playwright-cli", "-s=bootstrap-acct_1", "close"],
+    ]
 
 
-def test_import_douyin_bootstrap_login_without_playwright_sync_api(monkeypatch):
+def test_import_douyin_bootstrap_login_without_python_playwright(monkeypatch):
     import builtins
 
     real_import = builtins.__import__
 
     def _guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name == "playwright.sync_api":
-            raise AssertionError("playwright.sync_api should be lazily imported")
+        if name.startswith("playwright"):
+            raise AssertionError("python playwright should not be imported")
         return real_import(name, globals, locals, fromlist, level)
 
     monkeypatch.setattr(builtins, "__import__", _guarded_import)
