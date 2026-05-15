@@ -1,0 +1,50 @@
+from src.domains.agent_recipe.repository import AgentRecipeRepository
+from src.domains.agent_recipe.schemas import AgentRecipeCreate, AgentRecipeVersionCreate
+from src.domains.agent_recipe.services import AgentRecipeService
+
+
+def _recipe_payload() -> dict:
+    return {
+        "entrypoint": {"url": "https://example.com"},
+        "steps": [{"action": "goto", "target": "dashboard"}],
+        "observations": {"shop_name": {"locator": "#shop-name"}},
+        "assertions": [{"type": "exists", "observation": "shop_name"}],
+        "recovery_policy": {"max_attempts": 1},
+        "security_policy": {"allowed_domains": ["example.com"]},
+    }
+
+
+async def test_agent_recipe_version_rows_are_append_only(test_db):
+    async with test_db() as session:
+        service = AgentRecipeService(session=session)
+        created = await service.create(
+            AgentRecipeCreate(
+                namespace="shop_dashboard",
+                key="overview",
+                **_recipe_payload(),
+            )
+        )
+
+        second = await service.create_next_version(
+            AgentRecipeVersionCreate(
+                namespace="shop_dashboard",
+                key="overview",
+                expected_version=1,
+                entrypoint={"url": "https://example.com/v2"},
+                steps=[{"action": "goto", "target": "summary"}],
+                observations={"summary": {"locator": "#summary"}},
+                assertions=[{"type": "exists", "observation": "summary"}],
+                recovery_policy={"max_attempts": 2},
+                security_policy={"allowed_domains": ["example.com"]},
+            )
+        )
+
+        repo = AgentRecipeRepository(session)
+        versions = await repo.list_versions("shop_dashboard", "overview")
+
+        assert created.version == 1
+        assert second is not None
+        assert second.version == 2
+        assert len(versions) == 2
+        assert {item.version for item in versions} == {1, 2}
+
