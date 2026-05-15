@@ -40,6 +40,15 @@ class LocatorSpec(BaseModel):
     kind: Literal["css", "xpath", "text", "role"]
     value: str
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_kind(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "type" in value and "kind" not in value:
+            normalized = dict(value)
+            normalized["kind"] = normalized.pop("type")
+            return normalized
+        return value
+
     @field_validator("value")
     @classmethod
     def validate_value(cls, value: str) -> str:

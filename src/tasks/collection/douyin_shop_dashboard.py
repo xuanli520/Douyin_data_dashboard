@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-import logging
 import threading
 import time
+import logging
 from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from src.agents import LLMDashboardAgent
 from src.cache import resolve_sync_redis_client
 from src.config import get_settings
+from src.application.collection.browser_agent_adapter import BrowserAgentAdapter
 from src.scrapers.shop_dashboard.exceptions import LoginExpiredError
-from src.scrapers.shop_dashboard.http_scraper import HttpScraper
 from src.scrapers.shop_dashboard.lock_manager import LockManager
 from src.scrapers.shop_dashboard.login_state_manager import LoginStateManager
 from src.scrapers.shop_dashboard.exceptions import ShopDashboardScraperError
@@ -223,8 +222,8 @@ def _acquire_shop_lock(
 
 def _normalize_fallback_stage(stage: Any) -> str:
     stage_name = str(stage).strip().lower()
-    if stage_name in {"agent", "llm"}:
-        return "agent"
+    if stage_name in {"browser", "browser_agent"}:
+        return "browser_agent"
     return stage_name
 
 
@@ -245,6 +244,7 @@ def _collect_one_day(
     runtime: ShopDashboardRuntimeConfig,
     metric_date: str,
     *,
+    plan_unit: Any | None = None,
     lock_manager: LockManager | None = None,
     state_store: SessionStateStore | None = None,
     login_state_manager: LoginStateManager | None = None,
@@ -255,7 +255,6 @@ def _collect_one_day(
     _ensure_login_state_active(account_id, login_state_manager)
     shop_lock_id = _resolve_shop_lock_id(runtime.shop_id, account_id)
     last_error: Exception | None = None
-    http_error: Exception | None = None
     retry_count = 0
     fallback_trace: list[dict[str, Any]] = []
     with _acquire_shop_lock(
@@ -269,69 +268,59 @@ def _collect_one_day(
                 metric_date,
                 reason="shop_locked",
             )
-        with HttpScraper(
-            base_url=settings.base_url,
-            timeout=float(runtime.timeout),
-            graphql_query=runtime.graphql_query,
-        ) as scraper:
-            for stage in runtime.fallback_chain:
-                stage_name = _normalize_fallback_stage(stage)
-                if stage_name == "http":
-                    try:
-                        payload = scraper.fetch_dashboard_with_context(
-                            runtime, metric_date
-                        )
-                        payload["source"] = "script"
-                        _append_fallback_trace(
-                            fallback_trace,
-                            stage="http",
-                            status="success",
-                        )
-                        return _normalize_task_result(
-                            runtime,
-                            metric_date,
-                            payload,
-                            retry_count=retry_count,
-                            fallback_trace=fallback_trace,
-                        )
-                    except LoginExpiredError as exc:
-                        _mark_login_state_expired(
-                            account_id=account_id,
-                            login_state_manager=login_state_manager,
-                            reason=str(exc).strip() or "login_expired",
-                        )
-                        raise
-                    except (ScrapingFailedException, ShopDashboardScraperError) as exc:
-                        retry_count += 1
-                        last_error = exc
-                        http_error = exc
-                        _append_fallback_trace(
-                            fallback_trace,
-                            stage="http",
-                            status="failed",
-                            error=exc,
-                        )
-                        continue
-                if stage_name == "agent":
-                    return _build_agent_fallback_result(
+        for stage in runtime.fallback_chain:
+            stage_name = _normalize_fallback_stage(stage)
+            if stage_name == "browser_agent":
+                try:
+                    payload = BrowserAgentAdapter(settings=settings).collect(
+                        runtime=runtime,
+                        metric_date=metric_date,
+                        state_store=state_store or SessionStateStore(
+                            base_dir=settings.runtime_state_dir
+                        ),
+                        plan_unit=plan_unit,
+                    )
+                    _append_fallback_trace(
+                        fallback_trace,
+                        stage="browser_agent",
+                        status="success",
+                    )
+                    return _normalize_task_result(
                         runtime,
                         metric_date,
-                        http_error=http_error,
+                        payload,
                         retry_count=retry_count,
                         fallback_trace=fallback_trace,
                     )
+                except LoginExpiredError as exc:
+                    _mark_login_state_expired(
+                        account_id=account_id,
+                        login_state_manager=login_state_manager,
+                        reason=str(exc).strip() or "login_expired",
+                    )
+                    raise
+                except (ScrapingFailedException, ShopDashboardScraperError) as exc:
+                    retry_count += 1
+                    last_error = exc
+                    _append_fallback_trace(
+                        fallback_trace,
+                        stage="browser_agent",
+                        status="failed",
+                        error=exc,
+                    )
+                    continue
 
-            if last_error is not None:
-                raise last_error
-            raise ScrapingFailedException(
-                "Unsupported fallback chain",
-                error_data={
-                    "fallback_chain": [
-                        _normalize_fallback_stage(stage)
-                        for stage in runtime.fallback_chain
-                    ]
-                },
-            )
+        if last_error is not None:
+            raise last_error
+        raise ScrapingFailedException(
+            "Unsupported fallback chain",
+            error_data={
+                "fallback_chain": [
+                    _normalize_fallback_stage(stage)
+                    for stage in runtime.fallback_chain
+                ]
+            },
+        )
 
 
 def _ensure_login_state_active(
@@ -441,96 +430,6 @@ def _normalize_task_result(
     if not isinstance(result["raw"], dict):
         result["raw"] = {}
     return result
-
-
-def _resolve_agent_reason(http_error: Exception | None) -> str:
-    if http_error is not None:
-        return "http_failed"
-    return "fallback"
-
-
-def _build_agent_fallback_result(
-    runtime: ShopDashboardRuntimeConfig,
-    metric_date: str,
-    *,
-    http_error: Exception | None = None,
-    retry_count: int = 0,
-    fallback_trace: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
-    reason = _resolve_agent_reason(http_error)
-    trace = fallback_trace if isinstance(fallback_trace, list) else []
-    payload: dict[str, Any] = {
-        "status": "success",
-        "source": "llm",
-        "total_score": 0.0,
-        "product_score": 0.0,
-        "logistics_score": 0.0,
-        "service_score": 0.0,
-        "bad_behavior_score": 0.0,
-        "reviews": {"summary": {}, "items": []},
-        "violations": {"summary": {}, "waiting_list": []},
-        "raw": {},
-    }
-
-    agent = LLMDashboardAgent()
-    llm_error: Exception | None = None
-    try:
-        patched = agent.supplement_cold_data(
-            payload,
-            runtime.shop_id,
-            metric_date,
-            reason=reason,
-        )
-    except Exception as exc:
-        patched = None
-        llm_error = exc
-    finally:
-        close = getattr(agent, "close", None)
-        if callable(close):
-            close()
-
-    if not isinstance(patched, dict):
-        failure_error = (
-            str(llm_error) if llm_error is not None else "invalid_llm_payload"
-        )
-        raw = dict(payload.get("raw") or {})
-        raw["llm_patch"] = {
-            "status": "failed",
-            "reason": reason,
-            "error": failure_error,
-        }
-        payload["raw"] = raw
-        payload["status"] = "degraded"
-        payload["reason"] = "llm_failed"
-        patched = payload
-        _append_fallback_trace(
-            trace,
-            stage="agent",
-            status="failed",
-            error=llm_error if llm_error is not None else RuntimeError(failure_error),
-        )
-    else:
-        _append_fallback_trace(
-            trace,
-            stage="agent",
-            status="success",
-        )
-
-    if not isinstance(patched, dict):
-        patched = payload
-    patched["source"] = "llm"
-    raw = patched.get("raw")
-    if not isinstance(raw, dict):
-        raw = {}
-    raw.setdefault("llm_patch", {"status": "success", "reason": reason})
-    patched["raw"] = raw
-    return _normalize_task_result(
-        runtime,
-        metric_date,
-        patched,
-        retry_count=retry_count,
-        fallback_trace=trace,
-    )
 
 
 def _resolve_metric_dates(runtime: ShopDashboardRuntimeConfig) -> list[str]:

@@ -1,3 +1,4 @@
+from src.core.agent.crawler import AgentCrawler
 from src.core.agent.browser import BrowserDriver
 from src.core.agent.browser import DriverResult
 from src.core.agent.models import Artifact
@@ -15,6 +16,7 @@ from src.core.agent.models import Step
 
 __all__ = [
     "Artifact",
+    "AgentCrawler",
     "AssertionSpec",
     "BrowserDriver",
     "DriverResult",

@@ -68,6 +68,7 @@ class CollectionExecutor(Protocol):
         *,
         runtime: ShopDashboardRuntimeConfig,
         metric_date: str,
+        plan_unit: Any | None = None,
         lock_manager: LockManager,
         state_store: SessionStateStore,
         login_state_manager: LoginStateManager,
@@ -190,6 +191,7 @@ class TaskModuleCollectionExecutor:
         *,
         runtime: ShopDashboardRuntimeConfig,
         metric_date: str,
+        plan_unit: Any | None = None,
         lock_manager: LockManager,
         state_store: SessionStateStore,
         login_state_manager: LoginStateManager,
@@ -202,6 +204,7 @@ class TaskModuleCollectionExecutor:
         if not callable(collect_one_day):
             raise AttributeError("missing collection entrypoint")
         keyword_args = {
+            "plan_unit": plan_unit,
             "lock_manager": lock_manager,
             "state_store": state_store,
             "login_state_manager": login_state_manager,

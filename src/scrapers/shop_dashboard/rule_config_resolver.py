@@ -93,6 +93,7 @@ class ResolvedRuleConfig:
     graphql_query: str | None
     common_query: dict[str, Any]
     token_keys: list[str]
+    agent_recipe_ref: dict[str, Any] | None
     account_id: str
     cookies: dict[str, str]
     storage_state: dict[str, Any] | None
@@ -358,8 +359,12 @@ def resolve_rule_config(
         rule_id=rule_id,
     )
 
-    fallback = pick("fallback_chain", default="http->llm")
+    fallback = pick("fallback_chain", default="browser_agent")
     fallback_chain = _normalize_fallback_chain(fallback)
+    agent_recipe_ref = _normalize_agent_recipe_ref(
+        pick("agent_recipe", default=None),
+        rule_id=rule_id,
+    )
     graphql_query = _normalize_nullable_text(pick("graphql_query", default=None))
 
     common_query = _as_dict(ds_extra.get("common_query"))
@@ -410,6 +415,7 @@ def resolve_rule_config(
         graphql_query=graphql_query,
         common_query=common_query,
         token_keys=token_keys,
+        agent_recipe_ref=agent_recipe_ref,
         account_id=account_id,
         cookies=cookies,
         storage_state=storage_state,
@@ -635,22 +641,40 @@ def _normalize_fallback_chain(value: Any) -> tuple[str, ...]:
     elif isinstance(value, (list, tuple)):
         parts = [str(part).strip().lower() for part in value if str(part).strip()]
     else:
-        parts = ["http", "llm"]
+        parts = ["browser_agent"]
     if not parts:
-        parts = ["http", "llm"]
+        parts = ["browser_agent"]
     normalized: list[str] = []
     seen: set[str] = set()
     for part in parts:
-        stage = "agent" if part in {"agent", "llm"} else part
-        if stage == "browser":
-            continue
-        if stage not in {"http", "agent"} or stage in seen:
+        stage = "browser_agent" if part in {"browser", "browser_agent"} else part
+        if stage not in {"browser_agent"} or stage in seen:
             continue
         normalized.append(stage)
         seen.add(stage)
     if not normalized:
-        return ("http", "agent")
+        return ("browser_agent",)
     return tuple(normalized)
+
+
+def _normalize_agent_recipe_ref(value: Any, *, rule_id: int) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        _invalid_field("agent_recipe", value, rule_id=rule_id)
+    namespace = _normalize_nullable_text(value.get("namespace"))
+    key = _normalize_nullable_text(value.get("key"))
+    if not namespace or not key:
+        _invalid_field("agent_recipe", value, rule_id=rule_id)
+    result: dict[str, Any] = {"namespace": namespace, "key": key}
+    version = value.get("version")
+    if version is not None:
+        result["version"] = _normalize_optional_int(
+            version,
+            field="agent_recipe.version",
+            rule_id=rule_id,
+        )
+    return result
 
 
 def _normalize_text(

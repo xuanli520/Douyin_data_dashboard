@@ -161,6 +161,39 @@ def test_resolve_rule_config_should_not_fallback_to_data_source_shop_id():
     assert config.shop_mode == "EXACT"
 
 
+def test_resolve_rule_config_defaults_to_browser_agent_recipe_ref():
+    data_source = _build_data_source()
+    rule = _build_rule(
+        filters={"shop_id": ["shop-1"]},
+        extra_config={"agent_recipe": {"namespace": "generic", "key": "overview"}},
+    )
+
+    config = resolve_rule_config(
+        data_source=data_source,
+        rule=rule,
+        execution_id="exec-browser-agent",
+    )
+
+    assert config.fallback_chain == ("browser_agent",)
+    assert config.agent_recipe_ref == {"namespace": "generic", "key": "overview"}
+
+
+def test_resolve_rule_config_drops_legacy_fallback_stages():
+    data_source = _build_data_source()
+    rule = _build_rule(
+        filters={"shop_id": ["shop-1"]},
+        extra_config={"fallback_chain": "http->llm->browser"},
+    )
+
+    config = resolve_rule_config(
+        data_source=data_source,
+        rule=rule,
+        execution_id="exec-browser-only",
+    )
+
+    assert config.fallback_chain == ("browser_agent",)
+
+
 def test_resolve_rule_config_all_mode_ignores_shop_id_details():
     data_source = _build_data_source(extra_config={"shop_ids": ["shop-10", "shop-11"]})
     rule = _build_rule(filters={"shop_id": ["shop-1", "shop-2"]})
