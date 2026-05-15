@@ -6,55 +6,6 @@ from dataclasses import dataclass
 from http.cookies import CookieError, SimpleCookie
 from typing import Any
 
-DEFAULT_GROUPS_BY_TARGET: dict[str, list[str]] = {
-    "SHOP_OVERVIEW": [
-        "overview",
-        "analysis",
-        "diagnosis",
-        "graphql",
-        "cash_info",
-        "score_node",
-        "ticket_count",
-        "enum_config",
-        "waiting_list",
-        "top_rule",
-        "high_frequency",
-    ],
-    "CUSTOMER": ["statistics", "comment_list", "unreply", "tags", "products"],
-    "AFTERSALE_REFUND": [
-        "cash_info",
-        "score_node",
-        "ticket_count",
-        "enum_config",
-        "waiting_list",
-        "top_rule",
-        "high_frequency",
-    ],
-}
-
-METRIC_TO_GROUP: dict[str, str] = {
-    "overview": "overview",
-    "analysis": "analysis",
-    "diagnosis": "diagnosis",
-    "graphql": "graphql",
-    "statistics": "statistics",
-    "commentlist": "comment_list",
-    "comment_list": "comment_list",
-    "unreply": "unreply",
-    "tags": "tags",
-    "products": "products",
-    "cash_info": "cash_info",
-    "score_node": "score_node",
-    "ticket": "ticket_count",
-    "ticket_count": "ticket_count",
-    "enum": "enum_config",
-    "enum_config": "enum_config",
-    "waiting": "waiting_list",
-    "waiting_list": "waiting_list",
-    "top_rule": "top_rule",
-    "high_frequency": "high_frequency",
-}
-
 VALID_GRANULARITY = {"HOUR", "DAY", "WEEK", "MONTH"}
 VALID_INCREMENTAL_MODE = {"BY_DATE", "BY_CURSOR"}
 
@@ -87,12 +38,9 @@ class ResolvedRuleConfig:
     resolved_shop_ids: list[str]
     shop_id: str
     shop_ids: list[str]
-    api_groups: list[str]
     rate_limit_policy: int | dict[str, Any] | None
     fallback_chain: tuple[str, ...]
-    graphql_query: str | None
     common_query: dict[str, Any]
-    token_keys: list[str]
     agent_recipe_ref: dict[str, Any] | None
     account_id: str
     cookies: dict[str, str]
@@ -347,36 +295,16 @@ def resolve_rule_config(
         or default_account_id
     )
 
-    explicit_groups = pick("api_groups", default=None)
-    api_groups = _resolve_api_groups(
-        target_type=target_type,
-        metrics=metrics,
-        explicit_groups=explicit_groups,
-    )
-    api_groups = _normalize_string_list(
-        api_groups,
-        field="api_groups",
-        rule_id=rule_id,
-    )
-
     fallback = pick("fallback_chain", default="browser_agent")
     fallback_chain = _normalize_fallback_chain(fallback)
     agent_recipe_ref = _normalize_agent_recipe_ref(
         pick("agent_recipe", default=None),
         rule_id=rule_id,
     )
-    graphql_query = _normalize_nullable_text(pick("graphql_query", default=None))
-
     common_query = _as_dict(ds_extra.get("common_query"))
     common_query.update(_as_dict(rule_extra.get("common_query")))
     common_query.update(_as_dict(payload_extra.get("common_query")))
     common_query.update(_as_dict(payload.get("common_query")))
-
-    token_keys = _normalize_string_list(
-        pick("token_keys", default=[]),
-        field="token_keys",
-        rule_id=rule_id,
-    )
 
     cursor = _normalize_nullable_text(filters.get("cursor"))
     if cursor is None:
@@ -409,44 +337,15 @@ def resolve_rule_config(
         resolved_shop_ids=resolved_shop_ids,
         shop_id=shop_id,
         shop_ids=list(resolved_shop_ids),
-        api_groups=api_groups,
         rate_limit_policy=rate_limit,
         fallback_chain=fallback_chain,
-        graphql_query=graphql_query,
         common_query=common_query,
-        token_keys=token_keys,
         agent_recipe_ref=agent_recipe_ref,
         account_id=account_id,
         cookies=cookies,
         storage_state=storage_state,
         cursor=cursor,
     )
-
-
-def _resolve_api_groups(
-    *,
-    target_type: str,
-    metrics: list[str],
-    explicit_groups: Any,
-) -> list[str]:
-    if isinstance(explicit_groups, list):
-        normalized = [
-            str(item).strip() for item in explicit_groups if str(item).strip()
-        ]
-        if normalized:
-            return normalized
-    defaults = list(DEFAULT_GROUPS_BY_TARGET.get(target_type, []))
-    if not metrics:
-        return defaults
-    metric_groups = []
-    for metric in metrics:
-        key = str(metric).strip().lower()
-        group = METRIC_TO_GROUP.get(key, key)
-        metric_groups.append(group)
-    if not defaults:
-        return list(dict.fromkeys(metric_groups))
-    metric_group_set = set(metric_groups)
-    return [group for group in defaults if group in metric_group_set]
 
 
 def _normalize_granularity(value: Any, *, rule_id: int) -> str:

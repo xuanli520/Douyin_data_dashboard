@@ -9,8 +9,9 @@ from typing import Any
 import httpx
 
 from src.config import get_settings
-from src.scrapers.shop_dashboard.http_scraper import ENDPOINT_SPECS
-from src.scrapers.shop_dashboard.http_scraper import SHOP_CONTEXT_VERIFY_GROUPS
+from src.scrapers.shop_dashboard.bootstrap_contracts import (
+    SHOP_CONTEXT_VERIFY_ENDPOINTS,
+)
 from src.scrapers.shop_dashboard.parsers import (
     extract_actual_shop_id_from_group_payloads,
 )
@@ -285,27 +286,14 @@ class SessionBootstrapper:
             for attempt in range(attempts):
                 payloads: dict[str, dict[str, Any]] = {}
                 request_failed_result: _RequestResult | None = None
-                for group_name in SHOP_CONTEXT_VERIFY_GROUPS:
-                    spec = ENDPOINT_SPECS[group_name]
+                for group_name, spec in SHOP_CONTEXT_VERIFY_ENDPOINTS.items():
                     request_payload = build_endpoint_request_payload(
                         runtime,
                         metric_date=verify_metric_date,
                         group_name=group_name,
                         base_params=spec.params,
                         base_json_body=spec.json_body,
-                        requires_graphql_query=spec.requires_graphql_query,
-                        graphql_query=runtime.graphql_query,
                     )
-                    if (
-                        spec.requires_graphql_query
-                        and request_payload.json_body is None
-                    ):
-                        request_failed_result = _RequestResult(
-                            success=False,
-                            error_code="request_failed",
-                            error_message="graphql_query_missing",
-                        )
-                        break
                     request_params = dict(runtime.common_query or {})
                     if request_payload.params:
                         request_params.update(request_payload.params)

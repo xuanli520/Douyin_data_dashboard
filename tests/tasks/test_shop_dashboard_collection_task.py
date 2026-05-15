@@ -191,10 +191,12 @@ def _collect_success(
     runtime_config,
     metric_date: str,
     *,
+    plan_unit=None,
     lock_manager,
     state_store,
     login_state_manager,
 ) -> dict[str, Any]:
+    _ = plan_unit
     _ = lock_manager
     _ = state_store
     _ = login_state_manager
@@ -449,7 +451,7 @@ def test_sync_shop_dashboard_sets_recommended_mode_for_unsupported(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_collection_usecase_should_persist_shop_name_from_http_chain(
+async def test_collection_usecase_should_persist_shop_name_from_browser_agent_chain(
     test_db,
     monkeypatch,
 ):
@@ -461,29 +463,21 @@ async def test_collection_usecase_should_persist_shop_name_from_http_chain(
         raising=False,
     )
 
-    class _FakeHttpScraper:
-        def __init__(self, **_kwargs):
-            pass
+    class _FakeBrowserAgentAdapter:
+        def __init__(self, settings):
+            self.settings = settings
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, _exc_type, _exc_val, _exc_tb):
-            return None
-
-        def close(self):
-            return None
-
-        def fetch_dashboard_with_context(self, runtime_config, metric_date):
+        def collect(self, *, runtime, metric_date, state_store, plan_unit=None):
+            _ = (state_store, plan_unit)
             return {
                 "status": "success",
-                "shop_id": runtime_config.shop_id,
-                "actual_shop_id": runtime_config.shop_id,
+                "shop_id": runtime.shop_id,
+                "actual_shop_id": runtime.shop_id,
                 "shop_name": "demo-shop",
                 "metric_date": metric_date,
-                "rule_id": runtime_config.rule_id,
-                "execution_id": runtime_config.execution_id,
-                "source": "script",
+                "rule_id": runtime.rule_id,
+                "execution_id": runtime.execution_id,
+                "source": "browser_agent",
                 "total_score": 4.8,
                 "product_score": 4.7,
                 "logistics_score": 4.9,
@@ -494,7 +488,7 @@ async def test_collection_usecase_should_persist_shop_name_from_http_chain(
                 "raw": {},
             }
 
-    monkeypatch.setattr(module, "HttpScraper", _FakeHttpScraper)
+    monkeypatch.setattr(module, "BrowserAgentAdapter", _FakeBrowserAgentAdapter)
     monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
     monkeypatch.setattr(
         module,

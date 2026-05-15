@@ -29,10 +29,7 @@ def _runtime():
         rule_id=9,
         execution_id="exec-1",
         fallback_chain=("browser_agent",),
-        graphql_query=None,
         common_query={},
-        token_keys=[],
-        api_groups=[],
         agent_recipe_ref={"namespace": "generic", "key": "overview"},
         account_id="acct-1",
     )

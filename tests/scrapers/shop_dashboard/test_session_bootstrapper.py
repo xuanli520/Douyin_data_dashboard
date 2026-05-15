@@ -100,11 +100,8 @@ def _build_runtime() -> ShopDashboardRuntimeConfig:
         dedupe_key=None,
         rule_id=7,
         execution_id="exec-bootstrap",
-        fallback_chain=("http",),
-        graphql_query=None,
+        fallback_chain=("browser_agent",),
         common_query={"msToken": "m1"},
-        token_keys=[],
-        api_groups=["overview", "analysis"],
         account_id="acct-1",
     )
 

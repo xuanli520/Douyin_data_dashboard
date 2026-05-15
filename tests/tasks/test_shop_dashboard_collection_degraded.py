@@ -28,30 +28,14 @@ def _runtime() -> ShopDashboardRuntimeConfig:
         dedupe_key=None,
         rule_id=1,
         execution_id="exec-degraded",
-        fallback_chain=("http", "agent"),
-        graphql_query=None,
+        fallback_chain=("browser_agent",),
         common_query={},
-        token_keys=[],
-        api_groups=["overview"],
         account_id="acct-1",
     )
 
 
 def test_collect_one_day_returns_degraded_when_shop_lock_unavailable(monkeypatch):
     runtime = _runtime()
-
-    class _FakeHttpScraper:
-        def __init__(self, **_kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, _exc_type, _exc_value, _traceback):
-            return None
-
-        def close(self):
-            return None
 
     class _FakeLockManager:
         def acquire_shop_lock(self, _shop_id, ttl_seconds=None):  # noqa: ARG002
@@ -60,7 +44,6 @@ def test_collect_one_day_returns_degraded_when_shop_lock_unavailable(monkeypatch
         def release_shop_lock(self, _shop_id, _token):
             return None
 
-    monkeypatch.setattr(module, "HttpScraper", _FakeHttpScraper)
     monkeypatch.setattr(module, "LockManager", _FakeLockManager)
 
     payload = module._collect_one_day(runtime, "2026-03-03")
@@ -75,23 +58,18 @@ def test_collect_one_day_uses_account_fallback_shop_lock_when_shop_id_empty(
     runtime = _runtime()
     runtime.shop_id = ""
     runtime.account_id = "acct-fallback"
-    runtime.fallback_chain = ("http",)
+    runtime.fallback_chain = ("browser_agent",)
 
     seen_shop_ids: list[str] = []
 
-    class _FakeHttpScraper:
-        def __init__(self, **_kwargs):
-            pass
+    class _FakeBrowserAgentAdapter:
+        def __init__(self, settings):
+            self.settings = settings
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, _exc_type, _exc_value, _traceback):
-            return None
-
-        def fetch_dashboard_with_context(self, _runtime, _metric_date):
+        def collect(self, *, runtime, metric_date, state_store, plan_unit=None):
+            _ = (runtime, metric_date, state_store, plan_unit)
             return {
-                "source": "script",
+                "source": "browser_agent",
                 "total_score": 4.8,
                 "product_score": 4.7,
                 "logistics_score": 4.9,
@@ -100,9 +78,6 @@ def test_collect_one_day_uses_account_fallback_shop_lock_when_shop_id_empty(
                 "violations": {"summary": {}, "waiting_list": []},
                 "raw": {},
             }
-
-        def close(self):
-            return None
 
     class _FakeLockManager:
         def acquire_shop_lock(self, shop_id, ttl_seconds=None):  # noqa: ARG002
@@ -114,11 +89,11 @@ def test_collect_one_day_uses_account_fallback_shop_lock_when_shop_id_empty(
         def release_shop_lock(self, _shop_id, _token):
             return None
 
-    monkeypatch.setattr(module, "HttpScraper", _FakeHttpScraper)
+    monkeypatch.setattr(module, "BrowserAgentAdapter", _FakeBrowserAgentAdapter)
     monkeypatch.setattr(module, "LockManager", _FakeLockManager)
 
     payload = module._collect_one_day(runtime, "2026-03-03")
 
     assert payload["status"] == "success"
-    assert payload["source"] == "script"
+    assert payload["source"] == "browser_agent"
     assert seen_shop_ids == ["account:acct-fallback"]

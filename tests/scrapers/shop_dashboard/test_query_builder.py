@@ -71,7 +71,3 @@ def test_build_endpoint_query_context_applies_filters_dimensions_metrics_and_opt
     assert context.json_body["sort_by"] == "-total_score"
     assert context.json_body["include_long_tail"] is True
     assert context.json_body["session_level"] is True
-
-    assert context.graphql_variables["filters"]["region"] == "east"
-    assert context.graphql_variables["dimensions"] == ["shop", "category"]
-    assert context.graphql_variables["metrics"] == ["overview", "analysis"]

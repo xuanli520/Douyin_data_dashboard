@@ -255,10 +255,7 @@ def _build_runtime() -> ShopDashboardRuntimeConfig:
         rule_id=2,
         execution_id="exec-pipeline",
         fallback_chain=("browser_agent",),
-        graphql_query=None,
         common_query={},
-        token_keys=[],
-        api_groups=["overview"],
         agent_recipe_ref={"namespace": "generic", "key": "overview"},
         account_id="acct-1",
     )
@@ -392,11 +389,8 @@ def test_pipeline_rule_config_fields_flow_into_plan_and_query_context(monkeypatc
         dedupe_key="{shop_id}:{window_start}:{window_end}:{rule_id}:{execution_id}",
         rule_id=2,
         execution_id="exec-pipeline-full-fields",
-        fallback_chain=("http",),
-        graphql_query=None,
+        fallback_chain=("browser_agent",),
         common_query={},
-        token_keys=[],
-        api_groups=["overview"],
         extra_config={"cursor": "cursor-1"},
     )
     _install_fake_runtime_loader(monkeypatch, runtime)

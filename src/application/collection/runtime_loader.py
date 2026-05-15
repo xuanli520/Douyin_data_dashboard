@@ -125,15 +125,6 @@ class CollectionRuntimeLoader:
             runtime=runtime,
             data_source_id=data_source_id,
         )
-        if not runtime.api_groups:
-            raise ScrapingFailedException(
-                "No API groups resolved for runtime",
-                error_data={
-                    "rule_id": rule_id,
-                    "target_type": runtime.target_type,
-                    "metrics": runtime.metrics,
-                },
-            )
         return LoadedCollectionRuntime(
             runtime=runtime,
             rule_version=rule_contract.version,
@@ -175,7 +166,6 @@ class CollectionRuntimeLoader:
             "metrics": list(runtime.metrics),
             "dimensions": list(runtime.dimensions),
             "filters": dict(runtime.filters),
-            "api_groups": list(runtime.api_groups),
             "fallback_chain": list(runtime.fallback_chain),
             "rate_limit": runtime.rate_limit,
             "overrides": dict(overrides),

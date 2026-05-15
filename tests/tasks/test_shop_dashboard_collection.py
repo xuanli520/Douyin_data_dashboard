@@ -324,11 +324,12 @@ def _collect_mismatch(
     runtime_config,
     metric_date: str,
     *,
+    plan_unit=None,
     lock_manager,
     state_store,
     login_state_manager,
 ) -> dict[str, Any]:
-    _ = (lock_manager, state_store, login_state_manager)
+    _ = (plan_unit, lock_manager, state_store, login_state_manager)
     return {
         "status": "success",
         "shop_id": runtime_config.shop_id,

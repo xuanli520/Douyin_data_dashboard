@@ -37,10 +37,7 @@ class ShopDashboardRuntimeConfig:
     rule_id: int
     execution_id: str
     fallback_chain: tuple[str, ...]
-    graphql_query: str | None
     common_query: dict[str, Any]
-    token_keys: list[str]
-    api_groups: list[str]
     agent_recipe_ref: dict[str, Any] | None = None
     timezone: str = "Asia/Shanghai"
     sort_by: str | None = None
@@ -93,10 +90,7 @@ def build_runtime_config(
         rule_id=int(_read_source_value(rule, "id", 0) or 0),
         execution_id=execution_id,
         fallback_chain=("browser_agent",),
-        graphql_query=None,
         common_query={},
-        token_keys=[],
-        api_groups=[],
         agent_recipe_ref=None,
     )
 
@@ -163,10 +157,7 @@ def _build_runtime_from_resolved(
         rule_id=resolved.rule_id,
         execution_id=resolved.execution_id,
         fallback_chain=tuple(resolved.fallback_chain),
-        graphql_query=resolved.graphql_query,
         common_query=dict(resolved.common_query),
-        token_keys=list(resolved.token_keys),
-        api_groups=list(resolved.api_groups),
         agent_recipe_ref=dict(resolved.agent_recipe_ref)
         if resolved.agent_recipe_ref
         else None,

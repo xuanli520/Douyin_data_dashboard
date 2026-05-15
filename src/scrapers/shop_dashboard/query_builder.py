@@ -10,7 +10,6 @@ from typing import Any
 class EndpointQueryContext:
     params: dict[str, Any]
     json_body: dict[str, Any]
-    graphql_variables: dict[str, Any]
     warnings: tuple[str, ...] = ()
 
 
@@ -87,27 +86,10 @@ def build_endpoint_query_context(
         if isinstance(window_end, datetime):
             json_body["window_end"] = window_end.isoformat()
 
-    graphql_variables = {
-        "shopId": shop_id,
-        "date": resolved_metric_date,
-        "filters": dict(filters),
-        "dimensions": list(dimensions),
-        "metrics": list(metrics),
-        "includeLongTail": include_long_tail,
-        "sessionLevel": session_level,
-    }
-    if top_n is not None:
-        graphql_variables["topN"] = top_n
-    if sort_by is not None:
-        graphql_variables["sortBy"] = sort_by
-    if cursor is not None:
-        graphql_variables["cursor"] = cursor
-
     warnings = tuple(f"unknown_filter:{key}" for key in unknown_filters)
     return EndpointQueryContext(
         params=params,
         json_body=json_body,
-        graphql_variables=graphql_variables,
         warnings=warnings,
     )
 
@@ -119,8 +101,6 @@ def build_endpoint_request_payload(
     group_name: str,
     base_params: Mapping[str, Any] | None = None,
     base_json_body: Mapping[str, Any] | None = None,
-    requires_graphql_query: bool = False,
-    graphql_query: str | None = None,
 ) -> EndpointRequestPayload:
     query_context = build_endpoint_query_context(
         config,
@@ -131,22 +111,11 @@ def build_endpoint_request_payload(
     params.update(flatten_query_context_params(query_context.params))
     resolved_params = params or None
 
-    resolved_json_body: dict[str, Any] | None
-    if requires_graphql_query:
-        if not graphql_query:
-            resolved_json_body = None
-        else:
-            resolved_json_body = {
-                "operationName": "ExperienceScoreHome",
-                "query": graphql_query,
-                "variables": dict(query_context.graphql_variables),
-            }
-    else:
-        resolved_json_body = dict(base_json_body or {}) if base_json_body else None
-        if query_context.json_body:
-            if resolved_json_body is None:
-                resolved_json_body = {}
-            resolved_json_body.update(query_context.json_body)
+    resolved_json_body = dict(base_json_body or {}) if base_json_body else None
+    if query_context.json_body:
+        if resolved_json_body is None:
+            resolved_json_body = {}
+        resolved_json_body.update(query_context.json_body)
     return EndpointRequestPayload(
         params=resolved_params,
         json_body=resolved_json_body,
