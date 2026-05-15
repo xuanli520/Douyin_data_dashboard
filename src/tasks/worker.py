@@ -10,7 +10,7 @@ from typing import Callable
 
 from src import session
 from src.config import get_settings
-from src.tasks.collection import douyin_shop_agent, douyin_shop_dashboard
+from src.tasks.collection import douyin_shop_dashboard
 from src.tasks.etl import orders as etl_orders
 from src.tasks.etl import products as etl_products
 
@@ -24,9 +24,6 @@ def _queue_runners(etl_processes: int) -> dict[str, Callable[[], None]]:
         "collection_shop_dashboard": lambda: (
             douyin_shop_dashboard.sync_shop_dashboard.consume()
         ),
-        "collection_shop_dashboard_agent": lambda: (
-            douyin_shop_agent.sync_shop_dashboard_agent.consume()
-        ),
         "etl_orders": lambda: etl_orders.process_orders.multi_process_consume(
             etl_processes
         ),
@@ -35,9 +32,6 @@ def _queue_runners(etl_processes: int) -> dict[str, Callable[[], None]]:
         ),
         "collection_shop_dashboard_dlx": lambda: (
             douyin_shop_dashboard.handle_collection_shop_dashboard_dead_letter.consume()
-        ),
-        "collection_shop_dashboard_agent_dlx": lambda: (
-            douyin_shop_agent.handle_collection_shop_dashboard_agent_dead_letter.consume()
         ),
         "etl_orders_dlx": lambda: etl_orders.handle_etl_orders_dead_letter.consume(),
         "etl_products_dlx": lambda: (

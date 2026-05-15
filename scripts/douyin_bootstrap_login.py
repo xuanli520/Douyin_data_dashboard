@@ -9,24 +9,6 @@ from typing import Any
 from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
 
 
-def bootstrap_login(
-    *,
-    page: Any,
-    account_id: str,
-    state_store: SessionStateStore,
-    login_url: str = "https://fxg.jinritemai.com/login/common",
-) -> Path:
-    page.goto(login_url, wait_until="domcontentloaded")
-    page.wait_for_function(
-        """() => {
-            const href = window.location.href || "";
-            return href.includes("fxg.jinritemai.com") && !href.includes("/login/");
-        }""",
-        timeout=300000,
-    )
-    return state_store.save(account_id, page.context.storage_state())
-
-
 def run_bootstrap(
     *,
     account_id: str,

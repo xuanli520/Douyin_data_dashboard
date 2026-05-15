@@ -6,7 +6,6 @@ def test_tasks_package_imports_task_modules():
     import src.tasks as tasks
 
     assert hasattr(tasks, "douyin_shop_dashboard")
-    assert hasattr(tasks, "douyin_shop_agent")
     assert hasattr(tasks, "etl_orders")
     assert hasattr(tasks, "etl_products")
 
@@ -28,12 +27,6 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
         raising=False,
     )
     monkeypatch.setattr(
-        module.douyin_shop_agent.sync_shop_dashboard_agent,
-        "consume",
-        lambda: calls.append("collection_shop_dashboard_agent"),
-        raising=False,
-    )
-    monkeypatch.setattr(
         module.etl_orders.process_orders,
         "multi_process_consume",
         lambda n: calls.append(("etl_orders", n)),
@@ -49,12 +42,6 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
         module.douyin_shop_dashboard.handle_collection_shop_dashboard_dead_letter,
         "consume",
         lambda: calls.append("collection_shop_dashboard_dlx"),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        module.douyin_shop_agent.handle_collection_shop_dashboard_agent_dead_letter,
-        "consume",
-        lambda: calls.append("collection_shop_dashboard_agent_dlx"),
         raising=False,
     )
     monkeypatch.setattr(
@@ -89,23 +76,19 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
     monkeypatch.setattr(module, "Thread", _FakeThread)
 
     module.run_all(etl_processes=2)
-    assert len(calls) == 8
-    assert len(waited_threads) == 6
+    assert len(calls) == 6
+    assert len(waited_threads) == 4
     assert {thread.name for thread in waited_threads} == {
         "worker-collection_shop_dashboard",
-        "worker-collection_shop_dashboard_agent",
         "worker-collection_shop_dashboard_dlx",
-        "worker-collection_shop_dashboard_agent_dlx",
         "worker-etl_orders_dlx",
         "worker-etl_products_dlx",
     }
     assert {
         "collection_shop_dashboard",
-        "collection_shop_dashboard_agent",
         ("etl_orders", 2),
         ("etl_products", 2),
         "collection_shop_dashboard_dlx",
-        "collection_shop_dashboard_agent_dlx",
         "etl_orders_dlx",
         "etl_products_dlx",
     } == set(calls)

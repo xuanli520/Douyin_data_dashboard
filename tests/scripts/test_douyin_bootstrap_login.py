@@ -1,29 +1,11 @@
 import importlib
 import subprocess
 import sys
-from unittest import mock
-
-from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
 
 from scripts import douyin_bootstrap_login as module
-from scripts.douyin_bootstrap_login import bootstrap_login
 
 
-def test_bootstrap_waits_for_login_success_and_saves_state(tmp_path):
-    page = mock.Mock()
-    page.context.storage_state.return_value = {"cookies": [], "origins": []}
-    store = SessionStateStore(base_dir=tmp_path)
-
-    bootstrap_login(page=page, account_id="acct-1", state_store=store)
-
-    page.wait_for_function.assert_called_once()
-    args, kwargs = page.wait_for_function.call_args
-    assert '!href.includes("/login/")' in args[0]
-    assert kwargs["timeout"] == 300000
-    assert store.exists("acct-1") is True
-
-
-def test_run_bootstrap_returns_actual_saved_path(monkeypatch, tmp_path):
+def test_run_bootstrap_returns_actual_saved_path(tmp_path):
     commands: list[list[str]] = []
 
     def runner(command: list[str]) -> subprocess.CompletedProcess[str]:

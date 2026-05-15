@@ -9,7 +9,6 @@ from src.application.collection.runtime_loader import LoadedCollectionRuntime
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.tasks.collection import douyin_shop_dashboard as module
 from src.tasks.collection.shop_dashboard_plan_builder import build_collection_plan
-from src.tasks.exceptions import ScrapingFailedException
 
 
 class _FakeRedis:
@@ -229,23 +228,6 @@ def _install_fake_collection_usecase(monkeypatch):
     )
 
 
-class _FakeHttpScraper:
-    def __init__(self, **_kwargs):
-        pass
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, _exc_type, _exc_value, _traceback):
-        return None
-
-    def fetch_dashboard_with_context(self, _runtime, _metric_date):
-        raise ScrapingFailedException("http failed")
-
-    def close(self):
-        return None
-
-
 def _build_runtime() -> ShopDashboardRuntimeConfig:
     return ShopDashboardRuntimeConfig(
         shop_mode="EXACT",
@@ -272,11 +254,13 @@ def _build_runtime() -> ShopDashboardRuntimeConfig:
         dedupe_key=None,
         rule_id=2,
         execution_id="exec-pipeline",
-        fallback_chain=("http", "agent"),
+        fallback_chain=("browser_agent",),
         graphql_query=None,
         common_query={},
         token_keys=[],
         api_groups=["overview"],
+        agent_recipe_ref={"namespace": "generic", "key": "overview"},
+        account_id="acct-1",
     )
 
 
@@ -284,49 +268,7 @@ async def _fake_persist(*_args, **_kwargs):
     return None
 
 
-def test_pipeline_http_fail_then_llm(monkeypatch):
-    _install_fake_collection_usecase(monkeypatch)
-    _install_fake_runtime_loader(monkeypatch)
-    monkeypatch.setattr(
-        module.sync_shop_dashboard,
-        "publisher",
-        SimpleNamespace(redis_db_frame=_FakeRedis()),
-        raising=False,
-    )
-    monkeypatch.setattr(module, "HttpScraper", _FakeHttpScraper)
-    monkeypatch.setattr(module, "_persist_result", _fake_persist)
-
-    class _FakeAgent:
-        def supplement_cold_data(self, result, shop_id, date, reason):
-            _ = shop_id
-            _ = date
-            patched = dict(result)
-            raw = dict(patched.get("raw") or {})
-            raw["llm_patch"] = {"status": "success", "reason": reason}
-            patched["raw"] = raw
-            return patched
-
-        def close(self):
-            return None
-
-    monkeypatch.setattr(module, "LLMDashboardAgent", lambda: _FakeAgent())
-
-    result = module.sync_shop_dashboard(
-        data_source_id=1,
-        rule_id=2,
-        execution_id="exec-pipeline",
-    )
-
-    assert result["items"][0]["source"] == "llm"
-    assert result["items"][0]["retry_count"] == 1
-    assert len(result["items"][0]["fallback_trace"]) == 2
-    assert result["items"][0]["fallback_trace"][0]["stage"] == "http"
-    assert result["items"][0]["fallback_trace"][0]["status"] == "failed"
-    assert result["items"][0]["fallback_trace"][1]["stage"] in {"llm", "agent"}
-    assert result["items"][0]["fallback_trace"][1]["status"] == "success"
-
-
-def test_pipeline_cookie_only_http_success(monkeypatch):
+def test_pipeline_runs_browser_agent(monkeypatch):
     _install_fake_collection_usecase(monkeypatch)
     _install_fake_runtime_loader(monkeypatch)
     monkeypatch.setattr(
@@ -337,22 +279,17 @@ def test_pipeline_cookie_only_http_success(monkeypatch):
     )
     monkeypatch.setattr(module, "_persist_result", _fake_persist)
 
-    class _SuccessHttpScraper:
-        def __init__(self, **_kwargs):
-            pass
+    class _FakeAdapter:
+        def __init__(self, settings):
+            self.settings = settings
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, _exc_type, _exc_value, _traceback):
-            return None
-
-        def fetch_dashboard_with_context(self, runtime, metric_date):
-            assert runtime.cookies["sessionid"] == "token"
+        def collect(self, *, runtime, metric_date, state_store, plan_unit=None):
+            _ = (state_store, plan_unit)
             return {
                 "shop_id": runtime.shop_id,
+                "actual_shop_id": runtime.shop_id,
                 "metric_date": metric_date,
-                "source": "script",
+                "source": "browser_agent",
                 "total_score": 4.8,
                 "product_score": 4.7,
                 "logistics_score": 4.9,
@@ -362,10 +299,54 @@ def test_pipeline_cookie_only_http_success(monkeypatch):
                 "raw": {},
             }
 
-        def close(self):
-            return None
+    monkeypatch.setattr(module, "BrowserAgentAdapter", _FakeAdapter)
 
-    monkeypatch.setattr(module, "HttpScraper", _SuccessHttpScraper)
+    result = module.sync_shop_dashboard(
+        data_source_id=1,
+        rule_id=2,
+        execution_id="exec-pipeline",
+    )
+
+    assert result["items"][0]["source"] == "browser_agent"
+    assert result["items"][0]["retry_count"] == 0
+    assert result["items"][0]["fallback_trace"] == [
+        {"stage": "browser_agent", "status": "success"}
+    ]
+
+
+def test_pipeline_cookie_only_browser_agent_success(monkeypatch):
+    _install_fake_collection_usecase(monkeypatch)
+    _install_fake_runtime_loader(monkeypatch)
+    monkeypatch.setattr(
+        module.sync_shop_dashboard,
+        "publisher",
+        SimpleNamespace(redis_db_frame=_FakeRedis()),
+        raising=False,
+    )
+    monkeypatch.setattr(module, "_persist_result", _fake_persist)
+
+    class _FakeAdapter:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def collect(self, *, runtime, metric_date, state_store, plan_unit=None):
+            _ = (state_store, plan_unit)
+            assert runtime.cookies["sessionid"] == "token"
+            return {
+                "shop_id": runtime.shop_id,
+                "actual_shop_id": runtime.shop_id,
+                "metric_date": metric_date,
+                "source": "browser_agent",
+                "total_score": 4.8,
+                "product_score": 4.7,
+                "logistics_score": 4.9,
+                "service_score": 4.6,
+                "reviews": {"summary": {}, "items": []},
+                "violations": {"summary": {}, "waiting_list": []},
+                "raw": {},
+            }
+
+    monkeypatch.setattr(module, "BrowserAgentAdapter", _FakeAdapter)
 
     result = module.sync_shop_dashboard(
         data_source_id=1,
@@ -373,10 +354,10 @@ def test_pipeline_cookie_only_http_success(monkeypatch):
         execution_id="exec-pipeline-cookie-only",
     )
 
-    assert result["items"][0]["source"] == "script"
+    assert result["items"][0]["source"] == "browser_agent"
     assert result["items"][0]["retry_count"] == 0
     assert result["items"][0]["fallback_trace"] == [
-        {"stage": "http", "status": "success"}
+        {"stage": "browser_agent", "status": "success"}
     ]
 
 
