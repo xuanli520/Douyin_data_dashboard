@@ -3,6 +3,11 @@ from __future__ import annotations
 from src.core.agent.assertions import evaluate_assertions
 from src.core.agent.browser import BrowserDriver
 from src.core.agent.exceptions import AgentError
+from src.core.agent.exceptions import AssertionFailedError
+from src.core.agent.exceptions import BrowserDriverError
+from src.core.agent.exceptions import ObservationError
+from src.core.agent.exceptions import RecipeValidationError
+from src.core.agent.exceptions import SecurityPolicyError
 from src.core.agent.models import Failure
 from src.core.agent.models import Recipe
 from src.core.agent.models import RunContext
@@ -41,9 +46,42 @@ class AgentCrawler:
             evaluate_assertions(assertions=recipe.assertions, values=output)
             return RunResult(status="succeeded", output=output)
         except AgentError as exc:
+            failure = _classify_agent_error(exc)
             return RunResult(
                 status="failed",
-                failure=Failure(kind=type(exc).__name__, message=str(exc)),
+                failure=Failure(
+                    kind=failure["kind"],
+                    message=str(exc),
+                    observation_id=failure.get("observation_id"),
+                    recoverable=bool(failure.get("recoverable")),
+                ),
             )
         finally:
             self.driver.close()
+
+
+def _classify_agent_error(exc: AgentError) -> dict[str, object]:
+    if isinstance(exc, ObservationError):
+        observation_id = _extract_observation_id(str(exc))
+        return {
+            "kind": "observation_empty",
+            "observation_id": observation_id,
+            "recoverable": observation_id is not None,
+        }
+    if isinstance(exc, AssertionFailedError):
+        return {"kind": "assertion_failed", "recoverable": False}
+    if isinstance(exc, SecurityPolicyError):
+        return {"kind": "security_policy_violation", "recoverable": False}
+    if isinstance(exc, RecipeValidationError):
+        return {"kind": "recipe_schema_invalid", "recoverable": False}
+    if isinstance(exc, BrowserDriverError):
+        return {"kind": "driver_crashed", "recoverable": False}
+    return {"kind": type(exc).__name__, "recoverable": False}
+
+
+def _extract_observation_id(message: str) -> str | None:
+    prefix = "observation "
+    suffix = " is required"
+    if not message.startswith(prefix) or suffix not in message:
+        return None
+    return message[len(prefix) : message.index(suffix)].strip() or None

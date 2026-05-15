@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from src.application.collection.browser_agent_adapter import BrowserAgentAdapter
+from src.core.agent.models import Failure
 from src.core.agent.models import RunResult
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
@@ -51,8 +52,16 @@ def _recipe():
         "version": 1,
         "entrypoint": {"url": "https://example.test/app"},
         "steps": [{"id": "open", "action": "goto"}],
-        "observations": {},
+        "observations": {
+            "total": {
+                "id": "total",
+                "kind": "text",
+                "locator": {"kind": "css", "value": ".old-total"},
+                "required": True,
+            }
+        },
         "assertions": [],
+        "recovery_policy": {"enabled": True, "max_attempts": 1},
         "security_policy": {"allowed_origins": ["https://example.test"]},
     }
 
@@ -128,3 +137,81 @@ def test_browser_agent_adapter_accepts_inline_recipe(tmp_path):
     )
 
     assert payload["source"] == "browser_agent"
+
+
+def test_browser_agent_adapter_recovers_recipe_and_records_next_version(tmp_path):
+    calls = []
+    written = []
+
+    class _Model:
+        def propose_recovery(self, request, messages):
+            _ = (request, messages)
+            return {
+                "base_version": 1,
+                "confidence": 0.91,
+                "reason": "replace locator",
+                "patches": [
+                    {
+                        "op": "replace",
+                        "path": "/observations/total/locator",
+                        "value": {"type": "css", "value": ".new-total"},
+                    }
+                ],
+            }
+
+    class _FailingCrawler:
+        def run(self, recipe, context):
+            calls.append(("failed", recipe.observations["total"].locator.value, context))
+            return RunResult(
+                status="failed",
+                failure=Failure(
+                    kind="observation_empty",
+                    message="missing total",
+                    observation_id="total",
+                    recoverable=True,
+                ),
+            )
+
+    class _RecoveredCrawler:
+        def run(self, recipe, context):
+            calls.append(("recovered", recipe.observations["total"].locator.value, context))
+            return RunResult(status="succeeded", output={"total_score": 95})
+
+    crawlers = [_FailingCrawler(), _RecoveredCrawler()]
+
+    def crawler_factory(_path):
+        return crawlers.pop(0)
+
+    def recipe_version_writer(**payload):
+        written.append(payload)
+        return {"version": 2}
+
+    adapter = BrowserAgentAdapter(
+        recipe_loader=lambda _ref: _recipe(),
+        crawler_factory=crawler_factory,
+        recovery_model=_Model(),
+        recipe_version_writer=recipe_version_writer,
+        settings=SimpleNamespace(
+            agent_browser_headed=False,
+            agent_allowed_origins=["https://example.test"],
+            agent_artifact_dir=str(tmp_path / "artifacts"),
+        ),
+    )
+
+    payload = adapter.collect(
+        runtime=_runtime(),
+        metric_date="2026-03-01",
+        state_store=SessionStateStore(tmp_path),
+    )
+
+    assert payload["total_score"] == 95
+    assert payload["raw"]["agent"]["recipe"]["version"] == 2
+    assert payload["raw"]["agent"]["recovery"] == {
+        "status": "success",
+        "previous_version": 1,
+        "next_version": 2,
+        "reason": "recovered",
+    }
+    assert [call[0] for call in calls] == ["failed", "recovered"]
+    assert calls[1][1] == ".new-total"
+    assert written[0]["expected_version"] == 1

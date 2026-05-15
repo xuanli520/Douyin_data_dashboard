@@ -70,6 +70,19 @@ class ReplayRunner:
                 reason=str(payload.get("reason", "")),
                 raw=payload,
             )
+        elif hasattr(payload, "ok") and hasattr(payload, "status"):
+            success = bool(getattr(payload, "ok"))
+            failure = getattr(payload, "failure", None)
+            reason = ""
+            if failure is not None:
+                reason = str(getattr(failure, "message", "") or getattr(failure, "kind", ""))
+            outcome = ReplayOutcome(
+                success=success,
+                failed_targets=[] if success else expected_targets,
+                recovered_targets=list(expected_targets) if success else [],
+                reason=reason,
+                raw=payload,
+            )
         else:
             outcome = ReplayOutcome(success=bool(payload), raw=payload)
         if outcome.success and expected_targets:
