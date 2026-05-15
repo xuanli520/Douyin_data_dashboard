@@ -39,6 +39,14 @@ def test_shop_dashboard_settings_defaults():
     assert settings.shop_dashboard.account_switch_observation_ttl_seconds == 900
     assert settings.shop_dashboard.unsupported_http_shop_switch_ttl_seconds == 900
     assert settings.shop_dashboard.llm_timeout_seconds == 120
+    assert settings.shop_dashboard.agent_artifact_dir == ".runtime/agent_artifacts"
+    assert settings.shop_dashboard.agent_artifact_ttl_seconds == 86400
+    assert settings.shop_dashboard.agent_max_steps == 30
+    assert settings.shop_dashboard.agent_allowed_origins == [
+        "https://fxg.jinritemai.com"
+    ]
+    assert settings.shop_dashboard.agent_browser_driver == "playwright_python"
+    assert settings.shop_dashboard.agent_browser_headed is False
 
 
 def test_shop_dashboard_settings_env_override(monkeypatch):

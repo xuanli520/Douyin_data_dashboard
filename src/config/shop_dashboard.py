@@ -17,6 +17,12 @@ class ShopDashboardSettings(BaseSettings):
     llm_provider: str = "claude"
     llm_endpoint: str | None = None
     llm_model: str | None = None
+    agent_artifact_dir: str = ".runtime/agent_artifacts"
+    agent_artifact_ttl_seconds: int = 86400
+    agent_max_steps: int = 30
+    agent_allowed_origins: list[str] = ["https://fxg.jinritemai.com"]
+    agent_browser_driver: str = "playwright_python"
+    agent_browser_headed: bool = False
     browser_headless: bool = True
     browser_timeout_seconds: int = 45
     browser_refresh_url: str = "https://fxg.jinritemai.com"

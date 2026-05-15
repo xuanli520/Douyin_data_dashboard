@@ -147,3 +147,36 @@ def test_application_usecase_must_not_import_tasks() -> None:
         "src/application/collection/usecase.py",
         ("src.tasks",),
     )
+
+
+def test_core_agent_must_not_import_business_layers() -> None:
+    agent_root = PROJECT_ROOT / "src" / "core" / "agent"
+    for path in agent_root.rglob("*.py"):
+        relative_path = path.relative_to(PROJECT_ROOT).as_posix()
+        _assert_no_forbidden_imports(
+            relative_path,
+            (
+                "src.tasks",
+                "src.application.collection",
+                "src.scrapers.shop_dashboard",
+                "src.domains.scraping_rule",
+            ),
+        )
+
+
+def test_core_agent_must_not_use_business_terms() -> None:
+    forbidden_terms = (
+        "shop_id",
+        "metric_date",
+        "scraping_rule",
+        "douyin",
+        "fxg",
+        "dashboard",
+        "score",
+        "collection_job",
+        "data_source",
+    )
+    agent_root = PROJECT_ROOT / "src" / "core" / "agent"
+    for path in agent_root.rglob("*.py"):
+        content = path.read_text(encoding="utf-8").casefold()
+        assert not any(term in content for term in forbidden_terms), str(path)
