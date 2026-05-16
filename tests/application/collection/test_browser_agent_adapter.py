@@ -63,6 +63,19 @@ def _recipe():
     }
 
 
+def _agent_output(**overrides):
+    output = {
+        "actual_shop_id": "1001",
+        "total_score": 90,
+        "product_score": 91,
+        "logistics_score": 92,
+        "service_score": 93,
+        "bad_behavior_score": 94,
+    }
+    output.update(overrides)
+    return output
+
+
 def test_browser_agent_adapter_maps_crawler_output(tmp_path):
     state_store = SessionStateStore(tmp_path)
     state_store.save_playwright_state(
@@ -78,11 +91,7 @@ def test_browser_agent_adapter_maps_crawler_output(tmp_path):
             assert context.storage_state_path.endswith("1001.json")
             return RunResult(
                 status="succeeded",
-                output={
-                    "actual_shop_id": "1001",
-                    "total_score": 90,
-                    "shop_name": "name",
-                },
+                output=_agent_output(shop_name="name"),
             )
 
     def crawler_factory(path):
@@ -118,7 +127,10 @@ def test_browser_agent_adapter_maps_crawler_output(tmp_path):
 def test_browser_agent_adapter_accepts_inline_recipe(tmp_path):
     adapter = BrowserAgentAdapter(
         crawler_factory=lambda _path: SimpleNamespace(
-            run=lambda _recipe, _context: RunResult(status="succeeded", output={})
+            run=lambda _recipe, _context: RunResult(
+                status="succeeded",
+                output=_agent_output(),
+            )
         ),
         settings=SimpleNamespace(
             agent_browser_headed=False,
@@ -158,7 +170,9 @@ def test_browser_agent_adapter_recovers_recipe_and_records_next_version(tmp_path
 
     class _FailingCrawler:
         def run(self, recipe, context):
-            calls.append(("failed", recipe.observations["total"].locator.value, context))
+            calls.append(
+                ("failed", recipe.observations["total"].locator.value, context)
+            )
             return RunResult(
                 status="failed",
                 failure=Failure(
@@ -171,8 +185,10 @@ def test_browser_agent_adapter_recovers_recipe_and_records_next_version(tmp_path
 
     class _RecoveredCrawler:
         def run(self, recipe, context):
-            calls.append(("recovered", recipe.observations["total"].locator.value, context))
-            return RunResult(status="succeeded", output={"total_score": 95})
+            calls.append(
+                ("recovered", recipe.observations["total"].locator.value, context)
+            )
+            return RunResult(status="succeeded", output=_agent_output(total_score=95))
 
     crawlers = [_FailingCrawler(), _RecoveredCrawler()]
 

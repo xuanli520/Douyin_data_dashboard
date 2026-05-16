@@ -1,13 +1,38 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import src.api.v1.agent_discovery as agent_discovery
+from src.audit import get_audit_service
 from src.api.v1.agent_discovery import _RUN_EVENTS
 from src.api.v1.agent_discovery import router
+from src.auth.rbac import get_permission_service
+
+
+class _AuditService:
+    async def log(self, **_kwargs):
+        return None
+
+
+class _PermissionService:
+    async def check_permissions(self, *_args, **_kwargs):
+        return True
+
+
+async def _current_user():
+    return type("_User", (), {"id": 1, "is_superuser": True, "is_active": True})()
+
+
+def _app():
+    app = FastAPI()
+    app.dependency_overrides[agent_discovery.current_user] = _current_user
+    app.dependency_overrides[get_permission_service] = lambda: _PermissionService()
+    app.dependency_overrides[get_audit_service] = lambda: _AuditService()
+    app.include_router(router, prefix="/api/v1")
+    return app
 
 
 def test_agent_discovery_trigger_returns_run_id(monkeypatch):
-    app = FastAPI()
-    app.include_router(router, prefix="/api/v1")
+    app = _app()
     client = TestClient(app)
     pushed = []
 
@@ -35,8 +60,7 @@ def test_agent_discovery_trigger_returns_run_id(monkeypatch):
 
 
 def test_agent_discovery_trigger_rejects_empty_goal():
-    app = FastAPI()
-    app.include_router(router, prefix="/api/v1")
+    app = _app()
     client = TestClient(app)
 
     response = client.post(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.core.agent.models import LocatorSpec
 from src.core.agent.tools import ToolCall, ToolRegistry
 
 
@@ -69,36 +70,56 @@ class ToolExecutor:
         if tool_call.name == "reload":
             return self._require_driver_method("reload")()
         if tool_call.name == "click":
-            return self._require_driver_method("click")(arguments["locator"])
+            return self._require_driver_method("click")(
+                self._locator(arguments["locator"])
+            )
         if tool_call.name == "fill":
-            return self._require_driver_method("fill")(arguments["locator"], arguments["value"])
+            return self._require_driver_method("fill")(
+                self._locator(arguments["locator"]),
+                arguments["value"],
+            )
         if tool_call.name == "select":
-            return self._require_driver_method("select")(arguments["locator"], arguments["value"])
+            return self._require_driver_method("select")(
+                self._locator(arguments["locator"]),
+                arguments["value"],
+            )
         if tool_call.name == "scroll_down":
             return self._require_driver_method("scroll_down")(arguments.get("amount"))
         if tool_call.name == "scroll_up":
             return self._require_driver_method("scroll_up")(arguments.get("amount"))
         if tool_call.name == "scroll_to_element":
-            return self._require_driver_method("scroll_to_element")(arguments["locator"])
+            return self._require_driver_method("scroll_to_element")(
+                self._locator(arguments["locator"])
+            )
         if tool_call.name == "wait_visible":
             return self._require_driver_method("wait_visible")(
-                arguments["locator"],
+                self._locator(arguments["locator"]),
                 arguments.get("timeout_seconds"),
             )
         if tool_call.name == "wait_network_idle":
-            return self._require_driver_method("wait_network_idle")(arguments.get("timeout_seconds"))
+            return self._require_driver_method("wait_network_idle")(
+                arguments.get("timeout_seconds")
+            )
         if tool_call.name == "get_current_url":
             return self._require_driver_method("get_current_url")()
         if tool_call.name == "get_page_title":
             return self._require_driver_method("get_page_title")()
         if tool_call.name == "get_element_text":
-            return self._require_driver_method("get_element_text")(arguments["locator"])
+            return self._require_driver_method("get_element_text")(
+                self._locator(arguments["locator"])
+            )
         if tool_call.name == "extract_table":
-            return self._require_driver_method("extract_table")(arguments["locator"])
+            return self._require_driver_method("extract_table")(
+                self._locator(arguments["locator"])
+            )
         if tool_call.name == "extract_list":
-            return self._require_driver_method("extract_list")(arguments["locator"])
+            return self._require_driver_method("extract_list")(
+                self._locator(arguments["locator"])
+            )
         if tool_call.name == "extract_text":
-            return self._require_driver_method("extract_text")(arguments["locator"])
+            return self._require_driver_method("extract_text")(
+                self._locator(arguments["locator"])
+            )
         raise ValueError(f"unsupported tool: {tool_call.name}")
 
     def _validate_tool_call(
@@ -110,7 +131,7 @@ class ToolExecutor:
         self._call_security_validator("validate_tool_name", tool_call.name)
         locator = tool_call.arguments.get("locator")
         if locator is not None:
-            self._call_security_validator("validate_locator", locator)
+            self._call_security_validator("validate_locator", self._locator(locator))
         url = tool_call.arguments.get("url")
         if url is not None:
             self._call_navigation_validator(url, security_policy)
@@ -146,6 +167,13 @@ class ToolExecutor:
         if method is None:
             raise AttributeError(f"driver does not implement {name}")
         return method
+
+    def _locator(self, value: Any) -> LocatorSpec:
+        return (
+            value
+            if isinstance(value, LocatorSpec)
+            else LocatorSpec.model_validate(value)
+        )
 
     def _safe_driver_call(self, name: str) -> Any:
         method = getattr(self._driver, name, None)

@@ -4,6 +4,7 @@ from typing import Any
 
 from src.core.agent.browser import BrowserDriver
 from src.core.agent.browser import DriverResult
+from src.core.agent.exceptions import AgentError
 from src.core.agent.exceptions import BrowserDriverError
 from src.core.agent.exceptions import RecipeValidationError
 from src.core.agent.models import Step
@@ -45,11 +46,19 @@ def run_step(
             )
         if step.action == "wait_network_idle":
             return driver.wait_network_idle(float(step.timeout_seconds or 30))
-        if step.action in {"scroll_down", "scroll_up", "scroll_to_element"}:
-            return DriverResult(data={"action": step.action})
-        if step.action in {"extract_table", "extract_list", "extract_text"}:
-            return DriverResult(data={"action": step.action})
-    except BrowserDriverError:
+        if step.action == "scroll_down":
+            return driver.scroll_down(step.value)
+        if step.action == "scroll_up":
+            return driver.scroll_up(step.value)
+        if step.action == "scroll_to_element":
+            return driver.scroll_to_element(_require_target(step))
+        if step.action == "extract_table":
+            return driver.extract_table(_require_target(step))
+        if step.action == "extract_list":
+            return driver.extract_list(_require_target(step))
+        if step.action == "extract_text":
+            return driver.extract_text(_require_target(step))
+    except AgentError:
         raise
     except Exception as exc:
         raise BrowserDriverError(str(exc)) from exc

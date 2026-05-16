@@ -20,7 +20,9 @@ class PlaywrightCLIDriver:
         | None = None,
     ) -> None:
         self.executable = executable
-        self.storage_state_path = Path(storage_state_path) if storage_state_path else None
+        self.storage_state_path = (
+            Path(storage_state_path) if storage_state_path else None
+        )
         self.artifact_dir = Path(artifact_dir)
         self._run_command = run_command or self._default_run_command
         self._current_url = ""
@@ -28,13 +30,18 @@ class PlaywrightCLIDriver:
 
     def open(self, url: str | None = None, *, headed: bool = False) -> None:
         command = ["open"]
-        if url:
+        should_load_state = bool(
+            self.storage_state_path and self.storage_state_path.exists()
+        )
+        if url and not should_load_state:
             command.append(url)
         if headed:
             command.append("--headed")
         self._run(command)
-        if self.storage_state_path and self.storage_state_path.exists():
+        if should_load_state:
             self.state_load(self.storage_state_path)
+        if should_load_state and url:
+            self.goto(url)
 
     def close(self) -> None:
         self._run(["close"])
@@ -79,17 +86,51 @@ class PlaywrightCLIDriver:
         self._capture_page_metadata(self._run(["snapshot"]).stdout)
         return DriverResult()
 
+    def scroll_down(self, amount: str | int | float | None = None) -> DriverResult:
+        command = ["scroll-down"]
+        if amount is not None:
+            command.append(str(amount))
+        self._capture_page_metadata(self._run(command).stdout)
+        return DriverResult(data={"amount": amount})
+
+    def scroll_up(self, amount: str | int | float | None = None) -> DriverResult:
+        command = ["scroll-up"]
+        if amount is not None:
+            command.append(str(amount))
+        self._capture_page_metadata(self._run(command).stdout)
+        return DriverResult(data={"amount": amount})
+
+    def scroll_to_element(self, locator: LocatorSpec) -> DriverResult:
+        self._capture_page_metadata(
+            self._run(["scroll-to-element", locator.value]).stdout
+        )
+        return DriverResult(data={"locator": locator.value})
+
+    def extract_table(self, locator: LocatorSpec) -> DriverResult:
+        text = self._run(["extract-table", locator.value]).stdout.strip()
+        return DriverResult(data={"text": text})
+
+    def extract_list(self, locator: LocatorSpec) -> DriverResult:
+        text = self._run(["extract-list", locator.value]).stdout.strip()
+        return DriverResult(
+            data={"items": [item.strip() for item in text.splitlines() if item.strip()]}
+        )
+
+    def extract_text(self, locator: LocatorSpec) -> DriverResult:
+        text = self._run(["extract-text", locator.value]).stdout.strip()
+        return DriverResult(data={"text": text})
+
     def screenshot(self, filename: str) -> Path:
         target = self.artifact_dir / Path(filename).name
         target.parent.mkdir(parents=True, exist_ok=True)
         self._run(["screenshot", f"--filename={target}"])
         return target
 
-    def snapshot(self, filename: str, max_chars: int) -> str:
+    def snapshot(self, filename: str = "snapshot.yml", max_chars: int = 30000) -> str:
         target = self.artifact_dir / Path(filename).name
         target.parent.mkdir(parents=True, exist_ok=True)
         result = self._run(["snapshot", f"--filename={target}"])
-        text = result.stdout[:max(max_chars, 0)]
+        text = result.stdout[: max(max_chars, 0)]
         target.write_text(text, encoding="utf-8")
         return text
 
@@ -104,11 +145,29 @@ class PlaywrightCLIDriver:
     def current_url(self) -> str:
         return self._current_url
 
+    def get_current_url(self) -> str:
+        return self.current_url()
+
     def title(self) -> str:
         return self._title
 
+    def get_page_title(self) -> str:
+        return self.title()
+
     def text(self, locator: LocatorSpec) -> str:
         return self._run(["snapshot", locator.value]).stdout.strip()
+
+    def get_element_text(self, locator: LocatorSpec) -> str:
+        return self.text(locator)
+
+    def get_snapshot(self) -> str:
+        return self.snapshot()
+
+    def capture_screenshot(self) -> str:
+        return str(self.screenshot("screenshot.png"))
+
+    def take_screenshot(self) -> str:
+        return self.capture_screenshot()
 
     def _run(self, args: list[str]) -> subprocess.CompletedProcess[str]:
         command = [self.executable, *args]

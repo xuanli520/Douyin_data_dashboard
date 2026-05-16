@@ -66,7 +66,9 @@ class BrowserAgentAdapter:
             session_id=f"{account_id}-{runtime.shop_id}-{metric_date}",
             input_data={
                 "date": metric_date,
-                "window_start": _format_optional(getattr(plan_unit, "window_start", None)),
+                "window_start": _format_optional(
+                    getattr(plan_unit, "window_start", None)
+                ),
                 "window_end": _format_optional(getattr(plan_unit, "window_end", None)),
             },
             storage_state_path=str(storage_state_path) if storage_state_path else None,
@@ -87,7 +89,9 @@ class BrowserAgentAdapter:
             )
             if recovered_payload is not None:
                 return recovered_payload
-            failure_message = result.failure.message if result.failure else "browser_agent_failed"
+            failure_message = (
+                result.failure.message if result.failure else "browser_agent_failed"
+            )
             raise DataIncompleteError(failure_message)
         return self._build_payload(
             runtime=runtime,
@@ -154,7 +158,11 @@ class BrowserAgentAdapter:
         *,
         db_backed: bool = False,
     ) -> _LoadedRecipe:
-        payload = _recipe_payload_from_model(value) if hasattr(value, "entrypoint") else dict(value)
+        payload = (
+            _recipe_payload_from_model(value)
+            if hasattr(value, "entrypoint")
+            else dict(value)
+        )
         recipe_id = _extract_int(payload.get("id") or payload.get("recipe_id"))
         recipe = self._recipe_from_payload(payload)
         stored_payload = recipe.model_dump(mode="json")
@@ -173,7 +181,9 @@ class BrowserAgentAdapter:
         if hasattr(payload, "entrypoint"):
             payload = _recipe_payload_from_model(payload)
         recipe_payload = dict(payload)
-        recipe_id = recipe_payload.pop("id", None) or recipe_payload.pop("recipe_id", None)
+        recipe_id = recipe_payload.pop("id", None) or recipe_payload.pop(
+            "recipe_id", None
+        )
         recipe_payload.pop("status", None)
         recipe_payload.pop("created_at", None)
         recipe_payload.pop("updated_at", None)
@@ -182,14 +192,20 @@ class BrowserAgentAdapter:
             metadata.setdefault("recipe_id", recipe_id)
             recipe_payload["metadata"] = metadata
         entrypoint = recipe_payload.get("entrypoint")
-        if isinstance(entrypoint, dict) and "url_template" in entrypoint and "url" not in entrypoint:
+        if (
+            isinstance(entrypoint, dict)
+            and "url_template" in entrypoint
+            and "url" not in entrypoint
+        ):
             entrypoint = dict(entrypoint)
             entrypoint["url"] = entrypoint.pop("url_template")
             recipe_payload["entrypoint"] = entrypoint
         security_policy = recipe_payload.get("security_policy")
         if not security_policy:
             recipe_payload["security_policy"] = {
-                "allowed_origins": list(getattr(self.settings, "agent_allowed_origins", []))
+                "allowed_origins": list(
+                    getattr(self.settings, "agent_allowed_origins", [])
+                )
             }
         return Recipe.model_validate(recipe_payload)
 
@@ -251,7 +267,9 @@ class BrowserAgentAdapter:
             self._mark_recipe_degraded(loaded_recipe, recovery)
             return None
         if next_version is not None:
-            candidate_recipe = candidate_recipe.model_copy(update={"version": next_version})
+            candidate_recipe = candidate_recipe.model_copy(
+                update={"version": next_version}
+            )
         recovery_metadata = {
             "status": "success",
             "previous_version": loaded_recipe.recipe.version,
@@ -305,10 +323,7 @@ class BrowserAgentAdapter:
                     loaded_recipe.recipe.namespace,
                     loaded_recipe.recipe.key,
                 )
-                if (
-                    current_recipe is None
-                    or current_recipe.version != expected_version
-                ):
+                if current_recipe is None or current_recipe.version != expected_version:
                     if db_session.in_transaction():
                         await db_session.rollback()
                     return None
@@ -393,7 +408,9 @@ class BrowserAgentAdapter:
             return self.crawler_factory(storage_state_path)
         driver = PlaywrightCLIDriver(
             storage_state_path=storage_state_path,
-            artifact_dir=getattr(self.settings, "agent_artifact_dir", ".runtime/agent_artifacts"),
+            artifact_dir=getattr(
+                self.settings, "agent_artifact_dir", ".runtime/agent_artifacts"
+            ),
         )
         return AgentCrawler(driver)
 
@@ -405,18 +422,13 @@ class BrowserAgentAdapter:
         output: dict[str, Any],
     ) -> dict[str, Any]:
         payload = dict(output)
+        _validate_required_output(payload)
         payload.setdefault("status", "success")
         payload.setdefault("source", "browser_agent")
         payload.setdefault("shop_id", runtime.shop_id)
-        payload.setdefault("actual_shop_id", payload.get("shop_id") or runtime.shop_id)
         payload.setdefault("metric_date", metric_date)
         payload.setdefault("rule_id", runtime.rule_id)
         payload.setdefault("execution_id", runtime.execution_id)
-        payload.setdefault("total_score", 0.0)
-        payload.setdefault("product_score", 0.0)
-        payload.setdefault("logistics_score", 0.0)
-        payload.setdefault("service_score", 0.0)
-        payload.setdefault("bad_behavior_score", 0.0)
         payload.setdefault("reviews", {"summary": {}, "items": []})
         payload.setdefault("violations", {"summary": {}, "waiting_list": []})
         payload.setdefault("raw", {})
@@ -447,6 +459,38 @@ def _resolve_account_id(runtime: ShopDashboardRuntimeConfig) -> str:
 
 def _format_optional(value: Any) -> str:
     return value.isoformat() if hasattr(value, "isoformat") else str(value or "")
+
+
+def _validate_required_output(payload: dict[str, Any]) -> None:
+    required_fields = (
+        "actual_shop_id",
+        "total_score",
+        "product_score",
+        "logistics_score",
+        "service_score",
+        "bad_behavior_score",
+    )
+    missing = [field for field in required_fields if payload.get(field) is None]
+    if missing:
+        raise DataIncompleteError(
+            f"browser_agent_output_missing_required_fields: {', '.join(missing)}"
+        )
+    empty = [
+        field
+        for field in required_fields
+        if isinstance(payload.get(field), str) and not payload[field].strip()
+    ]
+    if empty:
+        raise DataIncompleteError(
+            f"browser_agent_output_empty_required_fields: {', '.join(empty)}"
+        )
+    for field in required_fields[1:]:
+        try:
+            payload[field] = float(payload[field])
+        except (TypeError, ValueError) as exc:
+            raise DataIncompleteError(
+                f"browser_agent_output_invalid_score_field: {field}"
+            ) from exc
 
 
 def _recipe_payload_from_model(value: Any) -> dict[str, Any]:
@@ -494,7 +538,9 @@ class _RecoveryReplayCrawler:
         parsed_recipe = self._adapter._recipe_from_payload(recipe)
         replay_context = self._context
         if input_data is not None:
-            replay_context = replay_context.model_copy(update={"input_data": input_data})
+            replay_context = replay_context.model_copy(
+                update={"input_data": input_data}
+            )
         return crawler.run(parsed_recipe, replay_context)
 
 

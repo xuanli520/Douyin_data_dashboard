@@ -27,6 +27,12 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
         raising=False,
     )
     monkeypatch.setattr(
+        module.douyin_shop_discovery.run_agent_discovery,
+        "consume",
+        lambda: calls.append("collection_shop_dashboard_discovery"),
+        raising=False,
+    )
+    monkeypatch.setattr(
         module.etl_orders.process_orders,
         "multi_process_consume",
         lambda n: calls.append(("etl_orders", n)),
@@ -76,16 +82,18 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
     monkeypatch.setattr(module, "Thread", _FakeThread)
 
     module.run_all(etl_processes=2)
-    assert len(calls) == 6
-    assert len(waited_threads) == 4
+    assert len(calls) == 7
+    assert len(waited_threads) == 5
     assert {thread.name for thread in waited_threads} == {
         "worker-collection_shop_dashboard",
+        "worker-collection_shop_dashboard_discovery",
         "worker-collection_shop_dashboard_dlx",
         "worker-etl_orders_dlx",
         "worker-etl_products_dlx",
     }
     assert {
         "collection_shop_dashboard",
+        "collection_shop_dashboard_discovery",
         ("etl_orders", 2),
         ("etl_products", 2),
         "collection_shop_dashboard_dlx",

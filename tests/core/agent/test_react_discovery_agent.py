@@ -1,4 +1,5 @@
 from src.core.agent.discovery import ReActDiscoveryAgent
+from src.core.agent.models import LocatorSpec
 from src.core.agent.tools import ToolCall
 
 
@@ -6,7 +7,7 @@ class _FakeDriver:
     def __init__(self) -> None:
         self.current_url = ""
         self.page_title = ""
-        self.clicks: list[dict[str, str]] = []
+        self.clicks: list[LocatorSpec] = []
 
     def goto(self, url):
         self.current_url = url
@@ -88,7 +89,9 @@ def test_react_discovery_agent_runs_until_done():
     assert result.status == "completed"
     assert result.recipe["key"] == "auto_recipe"
     assert replayed == ["auto_recipe"]
-    assert driver.clicks == [{"type": "css", "value": "#open"}]
+    assert [item.model_dump(mode="json") for item in driver.clicks] == [
+        {"kind": "css", "value": "#open"}
+    ]
     assert result.trajectory["entries"][0]["tool_name"] == "click"
     assert [event["event_type"] for event in result.events] == [
         "run_started",

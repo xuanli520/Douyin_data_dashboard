@@ -1,12 +1,17 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import src.api.v1.agent_discovery as agent_discovery
 from src.api.v1.agent_discovery import _RUN_EVENTS
 from src.api.v1.agent_discovery import append_discovery_event
 from src.api.v1.agent_discovery import router
 
 
-def test_agent_discovery_websocket_streams_sanitized_events():
+def test_agent_discovery_websocket_streams_sanitized_events(monkeypatch):
+    async def authorize(_websocket):
+        return True
+
+    monkeypatch.setattr(agent_discovery, "_authorize_websocket", authorize)
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
     run_id = "run-1"
@@ -21,6 +26,14 @@ def test_agent_discovery_websocket_streams_sanitized_events():
             "status": "running",
             "message": "observed",
             "snapshot_text": "hidden",
+        },
+    )
+    append_discovery_event(
+        run_id,
+        {
+            "event_type": "run_finished",
+            "status": "completed",
+            "message": "done",
         },
     )
     client = TestClient(app)
