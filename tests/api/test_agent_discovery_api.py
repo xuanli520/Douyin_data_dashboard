@@ -55,7 +55,7 @@ def test_agent_discovery_trigger_returns_run_id(monkeypatch):
     assert response.status_code == 200
     body = response.json()["data"]
     assert body["status"] == "queued"
-    assert body["run_id"] in _RUN_EVENTS
+    assert f"agent_discovery:{body['run_id']}" in _RUN_EVENTS
     assert pushed[0]["run_id"] == body["run_id"]
 
 

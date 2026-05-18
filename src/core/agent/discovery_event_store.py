@@ -17,9 +17,11 @@ class DiscoveryEventStore:
         self,
         *,
         redis_client: Any | None = None,
+        prefix: str = "agent_discovery",
         ttl_seconds: int = 86400,
     ) -> None:
         self._redis_client = redis_client
+        self._prefix = str(prefix or "agent_discovery").strip(":")
         self._redis_disabled = False
         self._ttl_seconds = ttl_seconds
 
@@ -31,7 +33,7 @@ class DiscoveryEventStore:
         )
         client = self._client()
         if client is None:
-            events = _RUN_EVENTS.setdefault(run_id, [])
+            events = _RUN_EVENTS.setdefault(self._memory_key(run_id), [])
             next_event = _public_event(
                 run_id=run_id,
                 sequence=len(events) + 1,
@@ -40,21 +42,21 @@ class DiscoveryEventStore:
             events.append(next_event)
             return next_event
 
-        sequence = int(client.incr(_sequence_key(run_id)))
+        sequence = int(client.incr(self._sequence_key(run_id)))
         next_event = _public_event(run_id=run_id, sequence=sequence, event=payload)
         encoded = json.dumps(next_event, ensure_ascii=False)
         try:
             pipeline = client.pipeline()
-            pipeline.rpush(_events_key(run_id), encoded)
-            pipeline.expire(_events_key(run_id), self._ttl_seconds)
-            pipeline.expire(_sequence_key(run_id), self._ttl_seconds)
-            pipeline.publish(_channel(run_id), encoded)
+            pipeline.rpush(self._events_key(run_id), encoded)
+            pipeline.expire(self._events_key(run_id), self._ttl_seconds)
+            pipeline.expire(self._sequence_key(run_id), self._ttl_seconds)
+            pipeline.publish(self._channel(run_id), encoded)
             pipeline.execute()
         except Exception:
-            client.rpush(_events_key(run_id), encoded)
-            client.expire(_events_key(run_id), self._ttl_seconds)
-            client.expire(_sequence_key(run_id), self._ttl_seconds)
-            client.publish(_channel(run_id), encoded)
+            client.rpush(self._events_key(run_id), encoded)
+            client.expire(self._events_key(run_id), self._ttl_seconds)
+            client.expire(self._sequence_key(run_id), self._ttl_seconds)
+            client.publish(self._channel(run_id), encoded)
         return next_event
 
     def list(self, run_id: str, *, after_sequence: int = 0) -> list[dict[str, Any]]:
@@ -62,11 +64,11 @@ class DiscoveryEventStore:
         if client is None:
             return [
                 event
-                for event in _RUN_EVENTS.get(run_id, [])
+                for event in _RUN_EVENTS.get(self._memory_key(run_id), [])
                 if int(event.get("sequence") or 0) > after_sequence
             ]
         try:
-            raw_events = client.lrange(_events_key(run_id), 0, -1)
+            raw_events = client.lrange(self._events_key(run_id), 0, -1)
         except Exception:
             return []
         events: list[dict[str, Any]] = []
@@ -84,13 +86,13 @@ class DiscoveryEventStore:
         if client is None or not hasattr(client, "pubsub"):
             return None
         pubsub = client.pubsub(ignore_subscribe_messages=True)
-        pubsub.subscribe(_channel(run_id))
+        pubsub.subscribe(self._channel(run_id))
         return pubsub
 
     def _client(self) -> Any | None:
         if self._redis_disabled:
             return None
-        if "PYTEST_CURRENT_TEST" in os.environ:
+        if self._redis_client is None and "PYTEST_CURRENT_TEST" in os.environ:
             self._redis_disabled = True
             return None
         if self._redis_client is None:
@@ -119,6 +121,18 @@ class DiscoveryEventStore:
             return None
         return self._redis_client
 
+    def _memory_key(self, run_id: str) -> str:
+        return f"{self._prefix}:{run_id}"
+
+    def _events_key(self, run_id: str) -> str:
+        return f"{self._prefix}:{run_id}:events"
+
+    def _sequence_key(self, run_id: str) -> str:
+        return f"{self._prefix}:{run_id}:sequence"
+
+    def _channel(self, run_id: str) -> str:
+        return f"{self._prefix}:{run_id}:pubsub"
+
 
 def terminal_event(event: dict[str, Any]) -> bool:
     return event.get("event_type") == "run_finished"
@@ -144,15 +158,3 @@ def _public_event(
         "message": str(event.get("message") or ""),
         "created_at": str(created_at),
     }
-
-
-def _events_key(run_id: str) -> str:
-    return f"agent_discovery:{run_id}:events"
-
-
-def _sequence_key(run_id: str) -> str:
-    return f"agent_discovery:{run_id}:sequence"
-
-
-def _channel(run_id: str) -> str:
-    return f"agent_discovery:{run_id}:pubsub"

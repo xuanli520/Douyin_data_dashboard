@@ -8,14 +8,14 @@ from src.api.v1.agent_discovery import router
 
 
 def test_agent_discovery_websocket_streams_sanitized_events(monkeypatch):
-    async def authorize(_websocket):
+    async def authorize(_websocket, _permission):
         return True
 
-    monkeypatch.setattr(agent_discovery, "_authorize_websocket", authorize)
+    monkeypatch.setattr(agent_discovery, "authorize_agent_websocket", authorize)
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
     run_id = "run-1"
-    _RUN_EVENTS[run_id] = []
+    _RUN_EVENTS[f"agent_discovery:{run_id}"] = []
     append_discovery_event(
         run_id,
         {

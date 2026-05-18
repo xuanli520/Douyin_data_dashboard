@@ -6,18 +6,12 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, status
-from fastapi_users.db import SQLAlchemyUserDatabase
 from pydantic import BaseModel, Field
 
 from src.auth import User, current_user
-from src import cache as cache_module
-from src import session as session_module
-from src.auth.backend import get_jwt_strategy
-from src.auth.manager import UserManager
-from src.auth.models import OAuthAccount
 from src.auth.permissions import ShopDashboardPermission
-from src.auth.rbac import PermissionRepository, PermissionService, require_permissions
-from src.config import get_settings
+from src.auth.rbac import require_permissions
+from src.api.v1.agent_auth import authorize_agent_websocket
 from src.core.agent.discovery_event_store import (
     DiscoveryEventStore,
     _RUN_EVENTS as _STORE_RUN_EVENTS,
@@ -71,7 +65,7 @@ async def stream_agent_discovery_events(
     websocket: WebSocket,
     run_id: str,
 ) -> None:
-    if not await _authorize_websocket(websocket):
+    if not await authorize_agent_websocket(websocket, _DISCOVERY_PERMISSION):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
     await websocket.accept()
@@ -141,41 +135,6 @@ def _event(
         "message": message,
         "created_at": datetime.now(tz=UTC).isoformat(),
     }
-
-
-async def _authorize_websocket(websocket: WebSocket) -> bool:
-    token = _websocket_token(websocket)
-    if not token:
-        return False
-    session_factory = session_module.async_session_factory
-    if session_factory is None:
-        return False
-    async with session_factory() as db_session:
-        user_db = SQLAlchemyUserDatabase(db_session, User, OAuthAccount)
-        user_manager = UserManager(user_db, get_settings(), cache_module.cache)
-        strategy = get_jwt_strategy(get_settings())
-        user = await strategy.read_token(token, user_manager)
-        if user is None or not user.is_active:
-            return False
-        if user.is_superuser:
-            return True
-        permission_service = PermissionService(PermissionRepository(db_session))
-        return await permission_service.check_permissions(
-            user.id,
-            [_DISCOVERY_PERMISSION],
-        )
-
-
-def _websocket_token(websocket: WebSocket) -> str | None:
-    authorization = websocket.headers.get("authorization", "")
-    scheme, _, value = authorization.partition(" ")
-    if scheme.casefold() == "bearer" and value.strip():
-        return value.strip()
-    query_token = websocket.query_params.get("access_token")
-    if query_token:
-        return query_token
-    settings = get_settings()
-    return websocket.cookies.get(settings.auth.access_cookie_name)
 
 
 def _publish_discovery_task(

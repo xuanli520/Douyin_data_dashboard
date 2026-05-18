@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+from uuid import uuid4
 
 from src.core.agent.browser import DriverResult
 from src.core.agent.exceptions import BrowserDriverError
@@ -14,12 +15,14 @@ class PlaywrightCLIDriver:
         self,
         *,
         executable: str = "playwright-cli",
+        session_id: str | None = None,
         storage_state_path: str | Path | None = None,
         artifact_dir: str | Path = ".runtime/agent_artifacts",
         run_command: Callable[[list[str]], subprocess.CompletedProcess[str]]
         | None = None,
     ) -> None:
         self.executable = executable
+        self._session_id = str(session_id or uuid4().hex)
         self.storage_state_path = (
             Path(storage_state_path) if storage_state_path else None
         )
@@ -170,7 +173,7 @@ class PlaywrightCLIDriver:
         return self.capture_screenshot()
 
     def _run(self, args: list[str]) -> subprocess.CompletedProcess[str]:
-        command = [self.executable, *args]
+        command = [self.executable, f"-s={self._session_id}", *args]
         try:
             result = self._run_command(command)
         except FileNotFoundError as exc:
