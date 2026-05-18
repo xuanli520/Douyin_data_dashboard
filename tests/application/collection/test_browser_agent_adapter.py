@@ -84,6 +84,7 @@ def test_browser_agent_adapter_maps_crawler_output(tmp_path):
         "1001",
     )
     seen_paths: list[Path | None] = []
+    seen_contexts = []
 
     class _Crawler:
         def run(self, recipe, context):
@@ -94,8 +95,9 @@ def test_browser_agent_adapter_maps_crawler_output(tmp_path):
                 output=_agent_output(shop_name="name"),
             )
 
-    def crawler_factory(path):
+    def crawler_factory(path, context):
         seen_paths.append(path)
+        seen_contexts.append(context)
         return _Crawler()
 
     adapter = BrowserAgentAdapter(
@@ -122,11 +124,12 @@ def test_browser_agent_adapter_maps_crawler_output(tmp_path):
         "version": 1,
     }
     assert seen_paths == [tmp_path / "playwright_states" / "acct-1" / "1001.json"]
+    assert seen_contexts[0].session_id == "acct-1-1001-2026-03-01"
 
 
 def test_browser_agent_adapter_accepts_inline_recipe(tmp_path):
     adapter = BrowserAgentAdapter(
-        crawler_factory=lambda _path: SimpleNamespace(
+        crawler_factory=lambda _path, _context: SimpleNamespace(
             run=lambda _recipe, _context: RunResult(
                 status="succeeded",
                 output=_agent_output(),
@@ -192,7 +195,7 @@ def test_browser_agent_adapter_recovers_recipe_and_records_next_version(tmp_path
 
     crawlers = [_FailingCrawler(), _RecoveredCrawler()]
 
-    def crawler_factory(_path):
+    def crawler_factory(_path, _context):
         return crawlers.pop(0)
 
     def recipe_version_writer(**payload):

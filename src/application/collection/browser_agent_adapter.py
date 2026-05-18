@@ -74,7 +74,7 @@ class BrowserAgentAdapter:
             storage_state_path=str(storage_state_path) if storage_state_path else None,
             headed=bool(getattr(self.settings, "agent_browser_headed", False)),
         )
-        crawler = self._build_crawler(storage_state_path)
+        crawler = self._build_crawler(storage_state_path, context=context)
         result = crawler.run(recipe, context)
         if self._is_login_failure(result):
             raise LoginExpiredError(result.failure.message)
@@ -403,10 +403,17 @@ class BrowserAgentAdapter:
             return account_path
         return shop_path if isinstance(shop_path, Path) else None
 
-    def _build_crawler(self, storage_state_path: Path | None) -> Any:
+    def _build_crawler(
+        self,
+        storage_state_path: Path | None,
+        *,
+        context: RunContext,
+    ) -> Any:
+        """Build a crawler bound to the current Playwright CLI session."""
         if self.crawler_factory is not None:
-            return self.crawler_factory(storage_state_path)
+            return self.crawler_factory(storage_state_path, context)
         driver = PlaywrightCLIDriver(
+            session_id=context.session_id,
             storage_state_path=storage_state_path,
             artifact_dir=getattr(
                 self.settings, "agent_artifact_dir", ".runtime/agent_artifacts"
@@ -534,7 +541,10 @@ class _RecoveryReplayCrawler:
         context: dict[str, Any] | None = None,
     ) -> RunResult:
         _ = context
-        crawler = self._adapter._build_crawler(self._storage_state_path)
+        crawler = self._adapter._build_crawler(
+            self._storage_state_path,
+            context=self._context,
+        )
         parsed_recipe = self._adapter._recipe_from_payload(recipe)
         replay_context = self._context
         if input_data is not None:

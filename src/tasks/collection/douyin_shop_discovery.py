@@ -117,7 +117,10 @@ def _run_discovery(
     max_steps: int | None,
     settings: Any,
 ) -> dict[str, Any]:
-    driver = PlaywrightCLIDriver(artifact_dir=settings.agent_artifact_dir)
+    driver = PlaywrightCLIDriver(
+        session_id=run_id,
+        artifact_dir=settings.agent_artifact_dir,
+    )
     llm_client = _ConfiguredDiscoveryLLMClient(settings=settings)
     security_policy = SecurityPolicy(
         allowed_origins=list(settings.agent_allowed_origins)
@@ -208,12 +211,15 @@ class _DiscoveryReplayCrawler:
     ) -> Any:
         _ = input_data
         parsed = Recipe.model_validate(_normalize_recipe_payload(recipe))
-        driver = PlaywrightCLIDriver(artifact_dir=self._settings.agent_artifact_dir)
         run_context = RunContext(
             session_id=str(
                 (context or {}).get("session_id") or f"{self._run_id}-replay"
             ),
             headed=bool(self._settings.agent_browser_headed),
+        )
+        driver = PlaywrightCLIDriver(
+            session_id=run_context.session_id,
+            artifact_dir=self._settings.agent_artifact_dir,
         )
         return AgentCrawler(driver).run(parsed, run_context)
 
