@@ -245,7 +245,7 @@ class LoginSession:
         self._llm_client = llm_client
         self._event_sink = event_sink
         self._recipe_path = Path(recipe_path) if recipe_path else _DEFAULT_RECIPE_PATH
-        self._allowed_origins = list(allowed_origins or ["https://fxg.jinritemai.com"])
+        self._allowed_origins = list(allowed_origins or [])
         self._headed = bool(headed)
         self._code_timeout_seconds = max(int(code_timeout_seconds), 1)
         self._max_steps = max(int(max_steps), 1)
@@ -262,6 +262,11 @@ class LoginSession:
     def run(self) -> LoginResult:
         recipe = self._load_recipe()
         entrypoint = str(recipe.get("entrypoint") or "").strip()
+        if not self._allowed_origins:
+            self._allowed_origins = [_origin(entrypoint)]
+            self._security_policy = SecurityPolicy(
+                allowed_origins=self._allowed_origins
+            )
         self._emit(
             "login_started",
             status="running",
@@ -412,7 +417,7 @@ class LoginSession:
         history: list[dict[str, Any]] = []
         for step_index in range(self._max_steps):
             request = ToolSelectionRequest(
-                goal="Complete Douyin shop login with SMS verification code.",
+                goal="Complete managed web login with SMS verification code.",
                 entrypoint_url=entrypoint,
                 current_observation=observation,
                 tool_history=history,
@@ -774,12 +779,16 @@ def _url_ok(url: str, allowed_origins: list[str]) -> bool:
     lowered = normalized.casefold()
     if not normalized or any(token in lowered for token in _LOGIN_URL_TOKENS):
         return False
-    parsed = urlparse(normalized)
-    origin = (
-        f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else ""
-    )
+    origin = _origin(normalized)
     allowed = {str(item).rstrip("/") for item in allowed_origins if str(item).strip()}
     return bool(origin and origin.rstrip("/") in allowed)
+
+
+def _origin(url: str) -> str:
+    parsed = urlparse(str(url or "").strip())
+    return (
+        f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else ""
+    )
 
 
 def _title_ok(title: str) -> bool:
