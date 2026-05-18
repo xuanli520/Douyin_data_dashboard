@@ -6,6 +6,7 @@ def test_tasks_package_imports_task_modules():
     import src.tasks as tasks
 
     assert hasattr(tasks, "douyin_shop_dashboard")
+    assert hasattr(tasks, "douyin_shop_login")
     assert hasattr(tasks, "etl_orders")
     assert hasattr(tasks, "etl_products")
 
@@ -30,6 +31,12 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
         module.douyin_shop_discovery.run_agent_discovery,
         "consume",
         lambda: calls.append("collection_shop_dashboard_discovery"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        module.douyin_shop_login.run_login_session,
+        "consume",
+        lambda: calls.append("collection_shop_dashboard_login"),
         raising=False,
     )
     monkeypatch.setattr(
@@ -82,11 +89,12 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
     monkeypatch.setattr(module, "Thread", _FakeThread)
 
     module.run_all(etl_processes=2)
-    assert len(calls) == 7
-    assert len(waited_threads) == 5
+    assert len(calls) == 8
+    assert len(waited_threads) == 6
     assert {thread.name for thread in waited_threads} == {
         "worker-collection_shop_dashboard",
         "worker-collection_shop_dashboard_discovery",
+        "worker-collection_shop_dashboard_login",
         "worker-collection_shop_dashboard_dlx",
         "worker-etl_orders_dlx",
         "worker-etl_products_dlx",
@@ -94,6 +102,7 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
     assert {
         "collection_shop_dashboard",
         "collection_shop_dashboard_discovery",
+        "collection_shop_dashboard_login",
         ("etl_orders", 2),
         ("etl_products", 2),
         "collection_shop_dashboard_dlx",

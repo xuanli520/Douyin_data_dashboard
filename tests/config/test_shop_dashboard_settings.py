@@ -47,6 +47,11 @@ def test_shop_dashboard_settings_defaults():
     ]
     assert settings.shop_dashboard.agent_browser_driver == "playwright_cli"
     assert settings.shop_dashboard.agent_browser_headed is False
+    assert settings.shop_dashboard.agent_login_browser_headed is True
+    assert settings.shop_dashboard.agent_login_code_timeout_seconds == 300
+    assert settings.shop_dashboard.agent_login_session_ttl_seconds == 900
+    assert settings.shop_dashboard.agent_login_max_steps == 20
+    assert settings.shop_dashboard.agent_login_debug_events is False
 
 
 def test_shop_dashboard_settings_env_override(monkeypatch):
@@ -82,6 +87,11 @@ def test_shop_dashboard_settings_env_override(monkeypatch):
         "SHOP_DASHBOARD__UNSUPPORTED_HTTP_SHOP_SWITCH_TTL_SECONDS", "600"
     )
     monkeypatch.setenv("SHOP_DASHBOARD__LLM_TIMEOUT_SECONDS", "90")
+    monkeypatch.setenv("SHOP_DASHBOARD__AGENT_LOGIN_BROWSER_HEADED", "false")
+    monkeypatch.setenv("SHOP_DASHBOARD__AGENT_LOGIN_CODE_TIMEOUT_SECONDS", "120")
+    monkeypatch.setenv("SHOP_DASHBOARD__AGENT_LOGIN_SESSION_TTL_SECONDS", "240")
+    monkeypatch.setenv("SHOP_DASHBOARD__AGENT_LOGIN_MAX_STEPS", "8")
+    monkeypatch.setenv("SHOP_DASHBOARD__AGENT_LOGIN_DEBUG_EVENTS", "true")
 
     settings = get_settings()
 
@@ -112,6 +122,11 @@ def test_shop_dashboard_settings_env_override(monkeypatch):
     assert settings.shop_dashboard.account_switch_observation_ttl_seconds == 180
     assert settings.shop_dashboard.unsupported_http_shop_switch_ttl_seconds == 600
     assert settings.shop_dashboard.llm_timeout_seconds == 90
+    assert settings.shop_dashboard.agent_login_browser_headed is False
+    assert settings.shop_dashboard.agent_login_code_timeout_seconds == 120
+    assert settings.shop_dashboard.agent_login_session_ttl_seconds == 240
+    assert settings.shop_dashboard.agent_login_max_steps == 8
+    assert settings.shop_dashboard.agent_login_debug_events is True
 
 
 def test_shop_dashboard_settings_llm_controls(monkeypatch):

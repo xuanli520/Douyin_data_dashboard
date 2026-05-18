@@ -23,6 +23,11 @@ class ShopDashboardSettings(BaseSettings):
     agent_allowed_origins: list[str] = ["https://fxg.jinritemai.com"]
     agent_browser_driver: str = "playwright_cli"
     agent_browser_headed: bool = False
+    agent_login_browser_headed: bool = True
+    agent_login_code_timeout_seconds: int = 300
+    agent_login_session_ttl_seconds: int = 900
+    agent_login_max_steps: int = 20
+    agent_login_debug_events: bool = False
     browser_headless: bool = True
     browser_timeout_seconds: int = 45
     browser_refresh_url: str = "https://fxg.jinritemai.com"

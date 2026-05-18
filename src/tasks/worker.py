@@ -12,6 +12,7 @@ from src import session
 from src.config import get_settings
 from src.tasks.collection import douyin_shop_discovery
 from src.tasks.collection import douyin_shop_dashboard
+from src.tasks.collection import douyin_shop_login
 from src.tasks.etl import orders as etl_orders
 from src.tasks.etl import products as etl_products
 
@@ -27,6 +28,9 @@ def _queue_runners(etl_processes: int) -> dict[str, Callable[[], None]]:
         ),
         "collection_shop_dashboard_discovery": lambda: (
             douyin_shop_discovery.run_agent_discovery.consume()
+        ),
+        "collection_shop_dashboard_login": lambda: (
+            douyin_shop_login.run_login_session.consume()
         ),
         "etl_orders": lambda: etl_orders.process_orders.multi_process_consume(
             etl_processes
