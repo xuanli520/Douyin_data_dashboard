@@ -110,6 +110,7 @@ def test_agent_login_code_submits_without_storing_plain_code(monkeypatch):
     assert events[-1]["event_type"] == "code_submitted"
     assert "123456" not in str(events[-1])
     assert redis.values[0][0] == "agent_login:session-1:input"
+    assert ("agent_login:session-1:input", 900) in redis.expired
 
 
 def test_agent_login_code_rejects_invalid_code():

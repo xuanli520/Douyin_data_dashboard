@@ -19,6 +19,7 @@ from src.auth import current_user
 from src.auth.permissions import ShopDashboardPermission
 from src.auth.rbac import require_permissions
 from src.cache import resolve_sync_redis_client
+from src.config import get_settings
 from src.core.agent.discovery_event_store import DiscoveryEventStore
 from src.core.agent.discovery_event_store import _RUN_EVENTS as _STORE_RUN_EVENTS
 from src.core.agent.discovery_event_store import terminal_event
@@ -201,4 +202,8 @@ def _publish_login_task(
 
 
 def _broker() -> HumanInputBroker:
-    return HumanInputBroker(redis_client=resolve_sync_redis_client())
+    settings = get_settings().shop_dashboard
+    return HumanInputBroker(
+        redis_client=resolve_sync_redis_client(),
+        ttl_seconds=settings.agent_login_session_ttl_seconds,
+    )
