@@ -452,6 +452,7 @@ class CollectionUseCase:
                 execution,
                 {
                     "status": TaskExecutionStatus.SUCCESS,
+                    "completed_at": completed_at,
                     "processed_rows": processed_rows,
                     "effective_config_snapshot": snapshot,
                     "error_message": "",
@@ -483,10 +484,12 @@ class CollectionUseCase:
             execution = await execution_repo.get_by_id(execution_id)
             if execution is None:
                 return
+            completed_at = execution.completed_at or datetime.now(tz=UTC)
             await execution_repo.update(
                 execution,
                 {
                     "status": TaskExecutionStatus.FAILED,
+                    "completed_at": completed_at,
                     "error_message": error_message[:1000],
                 },
             )
@@ -494,7 +497,7 @@ class CollectionUseCase:
             rule = await rule_repo.get_by_id(rule_id)
             if rule is not None:
                 normalized_execution_id = str(rule_execution_id or "").strip()
-                rule.last_executed_at = execution.completed_at or datetime.now(tz=UTC)
+                rule.last_executed_at = completed_at
                 rule.last_execution_id = (
                     normalized_execution_id[:100] if normalized_execution_id else None
                 )
@@ -836,8 +839,8 @@ class CollectionUseCase:
             source = "unknown"
             status = "failed"
             try:
-                collected = await asyncio.to_thread(
-                    self._collect_one_unit_payload,
+                collected = await self._collect_unit_payload(
+                    bootstrapper=bootstrapper,
                     runtime=unit_runtime,
                     metric_date=plan_unit.metric_date,
                     plan_unit=plan_unit,
@@ -884,8 +887,8 @@ class CollectionUseCase:
                                     unit_runtime,
                                     common_query=merged_common_query,
                                 )
-                        collected = await asyncio.to_thread(
-                            self._collect_one_unit_payload,
+                        collected = await self._collect_unit_payload(
+                            bootstrapper=bootstrapper,
                             runtime=unit_runtime,
                             metric_date=plan_unit.metric_date,
                             plan_unit=plan_unit,
@@ -1072,7 +1075,18 @@ class CollectionUseCase:
         primary_error = ""
         for item in failed_items:
             reason = str(item.get("reason") or "").strip()
+            error_code = str(
+                item.get("error_code") or item.get("bootstrap_verify_error_code") or ""
+            ).strip()
             error = str(item.get("error") or "").strip()
+            if error_code:
+                error_detail = (
+                    f"{error_code}: {error}"
+                    if error and error != error_code
+                    else error_code
+                )
+                primary_error = f"{reason}: {error_detail}" if reason else error_detail
+                break
             if error:
                 primary_error = f"{reason}: {error}" if reason else error
                 break
@@ -1125,6 +1139,59 @@ class CollectionUseCase:
         if candidate:
             return candidate
         return str(fallback_shop_id or "").strip()
+
+    async def _collect_unit_payload(
+        self,
+        *,
+        bootstrapper: Bootstrapper,
+        runtime: ShopDashboardRuntimeConfig,
+        metric_date: str,
+        plan_unit: Any | None = None,
+        lock_manager: Any,
+        state_store: Any,
+        login_state_manager: Any,
+    ) -> dict[str, Any]:
+        http_payload = await self._collect_http_unit_payload(
+            bootstrapper=bootstrapper,
+            runtime=runtime,
+            metric_date=metric_date,
+        )
+        if http_payload is not None:
+            return http_payload
+        return await asyncio.to_thread(
+            self._collect_one_unit_payload,
+            runtime=runtime,
+            metric_date=metric_date,
+            plan_unit=plan_unit,
+            lock_manager=lock_manager,
+            state_store=state_store,
+            login_state_manager=login_state_manager,
+        )
+
+    async def _collect_http_unit_payload(
+        self,
+        *,
+        bootstrapper: Bootstrapper,
+        runtime: ShopDashboardRuntimeConfig,
+        metric_date: str,
+    ) -> dict[str, Any] | None:
+        collect_shop_payload = getattr(bootstrapper, "collect_shop_payload", None)
+        if not callable(collect_shop_payload):
+            return None
+        try:
+            result = await self._invoke_with_optional_kwargs(
+                call=collect_shop_payload,
+                kwargs={
+                    "runtime": runtime,
+                    "shop_id": runtime.shop_id,
+                },
+                optional_kwargs={"metric_date": metric_date},
+            )
+        except ShopDashboardScraperError:
+            return None
+        if isinstance(result, dict):
+            return result
+        return None
 
     def _resolve_storage_account_id(
         self,

@@ -89,13 +89,14 @@ def write_finished_task_status(
     task_id: str,
     task_name: str,
     success: bool,
-    completed_at: float,
+    completed_at: float | None,
     triggered_by: int | None,
     processed_rows: int | None = None,
     error_message: str | None = None,
 ) -> None:
     redis_client = resolve_status_redis_client(owner)
     key = f"douyin:task:status:{task_id}"
+    completed_at = time.time() if completed_at is None else completed_at
     _write_status_mapping(
         redis_client,
         key,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import json
 import os
+import re
 import tempfile
 import threading
 import time
@@ -45,6 +46,7 @@ _DEBUG_EVENTS = frozenset(
 _LOGIN_TOOLS = frozenset({"request_verification_code", "check_login_status"})
 _LOGIN_URL_TOKENS = ("login/common", "/login", "passport", "/verify")
 _LOGIN_TITLE_TOKENS = ("登录", "验证", "passport")
+_VERIFICATION_CODE_SENT_PATTERN = re.compile(r"(?:\d{1,3}\s*[sS秒])|重新发送|已发送")
 _DEFAULT_RECIPE_PATH = Path(__file__).with_name("login_recipe.yml")
 
 
@@ -135,6 +137,7 @@ class HumanInputBroker:
     def _redis_wait(self, session_id: str, prompt: str, timeout_seconds: int) -> str:
         if timeout_seconds <= 0:
             raise HumanInputTimeout("verification_code_timeout")
+        deadline = time.monotonic() + timeout_seconds
         try:
             self._redis.set(
                 self._status_key(session_id), "waiting", ex=self._ttl_seconds
@@ -144,14 +147,20 @@ class HumanInputBroker:
                 mapping={"prompt": prompt, "updated_at": str(int(time.time()))},
             )
             self._expire(session_id)
-            raw = self._redis.blpop(
-                self._input_key(session_id),
-                timeout=timeout_seconds,
-            )
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise HumanInputTimeout("verification_code_timeout")
+                raw = self._redis.blpop(
+                    self._input_key(session_id),
+                    timeout=1,
+                )
+                if raw is not None:
+                    break
         except Exception as exc:
+            if isinstance(exc, HumanInputTimeout):
+                raise
             raise HumanInputBrokerUnavailable("redis broker is unavailable") from exc
-        if raw is None:
-            raise HumanInputTimeout("verification_code_timeout")
         message = _decode_broker_message(raw[1] if isinstance(raw, tuple) else raw)
         return _code_from_message(message)
 
@@ -277,12 +286,6 @@ class LoginSession:
         try:
             self._driver.open(entrypoint, headed=self._headed)
             result = self._run_deterministic_recipe(recipe)
-            if (
-                not result.logged_in
-                and result.reason.startswith("recipe_step_failed")
-                and self._llm_client is not None
-            ):
-                result = self._run_react_fallback(entrypoint)
             if result.logged_in:
                 result = self._persist_success(result)
             self._emit_result(result)
@@ -363,9 +366,15 @@ class LoginSession:
         if action == "fill":
             value = self._value_from_step(step)
             self._try_locators(step, action="fill", value=value)
+            self._assert_input_value(step, value)
             return None
         if action == "click":
             self._try_locators(step, action="click")
+            if step.get("id") == "send_code":
+                self._assert_verification_code_sent()
+            return None
+        if action == "check":
+            self._try_locators(step, action="check")
             return None
         raise ValueError(f"unsupported login recipe action: {action}")
 
@@ -387,6 +396,8 @@ class LoginSession:
                     self._emit_tool_started(action, step, locator, value)
                     if action == "fill":
                         result = self._driver.fill(locator, str(value or ""))
+                    elif action == "check":
+                        result = self._driver.check(locator)
                     else:
                         result = self._driver.click(locator)
                     self._emit_tool_finished(action, step, locator, result)
@@ -397,6 +408,36 @@ class LoginSession:
             if attempt + 1 < retry_count:
                 time.sleep(1)
         raise last_error or RuntimeError("locator failed")
+
+    def _assert_input_value(self, step: dict[str, Any], expected: str) -> None:
+        if step.get("id") not in {"fill_phone", "fill_code"}:
+            return
+        reader = getattr(self._driver, "input_value", None)
+        if not callable(reader):
+            return
+        last_error: Exception | None = None
+        for locator in _step_locators(step):
+            try:
+                actual = str(reader(locator) or "").strip()
+            except Exception as exc:
+                last_error = exc
+                continue
+            if actual == str(expected).strip():
+                return
+        message = f"{step.get('id')}_value_not_applied"
+        if last_error is not None:
+            message = f"{message}: {last_error}"
+        raise RuntimeError(message)
+
+    def _assert_verification_code_sent(self) -> None:
+        deadline = time.monotonic() + 10
+        while True:
+            page_text = self._page_text()
+            if _verification_code_sent(page_text):
+                return
+            if time.monotonic() >= deadline:
+                raise RuntimeError("verification_code_send_not_confirmed")
+            time.sleep(0.5)
 
     def _request_verification_code(self) -> str:
         self._emit(
@@ -495,8 +536,18 @@ class LoginSession:
         url_ok = _url_ok(current_url, self._allowed_origins)
         title_ok = _title_ok(page_title)
         cookie_ok = _has_session_cookie(state)
-        logged_in = sum((url_ok, title_ok, cookie_ok)) >= 2
-        reason = f"url_ok={url_ok}, title_ok={title_ok}, cookie_ok={cookie_ok}"
+        page_text = self._page_text()
+        page_ok = _logged_in_page_text(page_text)
+        login_form_visible = _login_form_visible(page_text)
+        logged_in = (
+            page_ok
+            or (cookie_ok and not login_form_visible)
+            or (cookie_ok and (url_ok or title_ok))
+        )
+        reason = (
+            f"url_ok={url_ok}, title_ok={title_ok}, cookie_ok={cookie_ok}, "
+            f"page_ok={page_ok}, login_form_visible={login_form_visible}"
+        )
         return LoginResult(
             logged_in,
             status="succeeded" if logged_in else "failed",
@@ -666,6 +717,17 @@ class LoginSession:
         fallback = getattr(self._driver, "get_page_title", None)
         return str(fallback() if callable(fallback) else "")
 
+    def _page_text(self) -> str:
+        for name in ("page_text", "get_page_text", "get_snapshot", "snapshot"):
+            reader = getattr(self._driver, name, None)
+            if not callable(reader):
+                continue
+            try:
+                return str(reader() or "")
+            except Exception:
+                continue
+        return ""
+
     def _load_recipe(self) -> dict[str, Any]:
         payload = yaml.safe_load(self._recipe_path.read_text(encoding="utf-8"))
         recipe = payload.get("login_recipe") if isinstance(payload, dict) else None
@@ -813,6 +875,20 @@ def _has_session_cookie(state: dict[str, Any]) -> bool:
         if ".jinritemai.com" in domain and name == "sessionid":
             return True
     return False
+
+
+def _verification_code_sent(page_text: str) -> bool:
+    return bool(_VERIFICATION_CODE_SENT_PATTERN.search(str(page_text or "")))
+
+
+def _logged_in_page_text(page_text: str) -> bool:
+    normalized = str(page_text or "")
+    return "请选择店铺" in normalized
+
+
+def _login_form_visible(page_text: str) -> bool:
+    normalized = str(page_text or "")
+    return "手机登录" in normalized and "验证码" in normalized
 
 
 def _tool_history(

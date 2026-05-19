@@ -9,6 +9,8 @@ x-app-common: &app-common
     options:
       max-size: "3m"
       max-file: "1"
+  volumes:
+    - runtime_data:/app/.runtime
 
 x-db-env: &db-env
   DB__DRIVER: postgresql
@@ -117,6 +119,7 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  runtime_data:
 
 networks:
   default:

@@ -23,7 +23,12 @@ def test_package_json_has_playwright_cli_dependency():
 def test_dockerfile_installs_playwright_cli_browser():
     dockerfile = (ROOT / "docker" / "Dockerfile").read_text(encoding="utf-8")
     assert "npm ci" in dockerfile
-    assert "playwright-cli install-browser --with-deps" in dockerfile
+    assert "PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright" in dockerfile
+    assert "PLAYWRIGHT_CFT_MIRROR=https://cdn.npmmirror.com/binaries/chrome-for-testing" in dockerfile
+    assert "npm config set registry https://registry.npmmirror.com" in dockerfile
+    assert "npx playwright install-deps chromium" in dockerfile
+    assert "chrome-linux64.zip" in dockerfile
+    assert "chrome-headless-shell-linux64.zip" in dockerfile
 
 
 def test_deploy_compose_has_non_sleep_worker_scheduler_default_commands():

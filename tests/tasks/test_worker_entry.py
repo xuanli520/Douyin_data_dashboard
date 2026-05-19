@@ -148,6 +148,33 @@ def test_worker_run_all_waits_for_non_blocking_consumers(monkeypatch):
     assert calls == ["consume_started", "wait_forever"]
 
 
+def test_wait_forever_keeps_alive_when_runner_thread_returned():
+    from src.tasks import worker as module
+
+    class _StopEvent:
+        def __init__(self):
+            self.calls = 0
+
+        def wait(self, _timeout):
+            self.calls += 1
+            return self.calls >= 2
+
+        def set(self):
+            return None
+
+    class _ReturnedThread:
+        name = "worker-returned"
+
+        def is_alive(self):
+            return False
+
+    stop_event = _StopEvent()
+
+    module._wait_forever(stop_event, [_ReturnedThread()])
+
+    assert stop_event.calls == 2
+
+
 def test_worker_run_all_keeps_parent_alive_when_multiprocess_runner_returns(
     monkeypatch,
 ):

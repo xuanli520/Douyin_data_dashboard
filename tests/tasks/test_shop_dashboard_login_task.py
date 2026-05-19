@@ -23,13 +23,6 @@ def test_run_login_session_wires_dependencies(monkeypatch):
         def __init__(self, **kwargs):
             captured["broker"] = kwargs
 
-    class _LLM:
-        def __init__(self, *, settings):
-            captured["llm_settings"] = settings
-
-        def close(self):
-            captured["llm_closed"] = True
-
     class _Session:
         def __init__(self, **kwargs):
             captured["session"] = kwargs
@@ -58,7 +51,6 @@ def test_run_login_session_wires_dependencies(monkeypatch):
     monkeypatch.setattr(module, "SessionStateStore", _StateStore)
     monkeypatch.setattr(module, "LoginStateManager", _LoginStateManager)
     monkeypatch.setattr(module, "HumanInputBroker", _Broker)
-    monkeypatch.setattr(module, "_ConfiguredDiscoveryLLMClient", _LLM)
     monkeypatch.setattr(module, "LoginSession", _Session)
 
     result = module.run_login_session(
@@ -77,7 +69,7 @@ def test_run_login_session_wires_dependencies(monkeypatch):
     assert captured["session"]["account_id"] == "acct-1"
     assert captured["session"]["phone"] == "13800138000"
     assert captured["session"]["headed"] is True
-    assert captured["llm_closed"] is True
+    assert "llm_client" not in captured["session"]
 
 
 def test_run_login_session_records_startup_failure(monkeypatch):

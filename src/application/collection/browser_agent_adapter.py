@@ -558,7 +558,9 @@ class _ConfiguredRecoveryModel:
     def __init__(self, *, settings: Any, client: httpx.Client | None = None) -> None:
         self._settings = settings
         self._owns_client = client is None
-        self._client = client or httpx.Client()
+        api_key = str(getattr(settings, "llm_api_key", "") or "").strip()
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        self._client = client or httpx.Client(headers=headers)
 
     def propose_recovery(
         self,

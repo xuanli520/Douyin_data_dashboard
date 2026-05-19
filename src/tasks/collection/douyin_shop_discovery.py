@@ -32,7 +32,6 @@ from src.tasks.params import CollectionTaskParams
     )
 )
 def run_agent_discovery(
-    *,
     run_id: str,
     goal: str,
     entrypoint_url: str,
@@ -244,7 +243,9 @@ class _DiscoverySecurity:
 class _ConfiguredDiscoveryLLMClient:
     def __init__(self, *, settings: Any, client: httpx.Client | None = None) -> None:
         self._settings = settings
-        self._client = client or httpx.Client()
+        api_key = str(getattr(settings, "llm_api_key", "") or "").strip()
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        self._client = client or httpx.Client(headers=headers)
         self._owns_client = client is None
 
     def complete_tool_call(self, request: ToolSelectionRequest) -> ToolCall:
@@ -260,6 +261,7 @@ class _ConfiguredDiscoveryLLMClient:
                                 "name": "tool name",
                                 "arguments": "tool arguments object",
                             },
+                            "response_format_instruction": "Return a JSON object only.",
                         },
                         ensure_ascii=False,
                     ),
@@ -277,6 +279,7 @@ class _ConfiguredDiscoveryLLMClient:
                         {
                             "task": "generate_browser_agent_recipe",
                             "request": request.model_dump(mode="json"),
+                            "response_format_instruction": "Return a JSON object only.",
                         },
                         ensure_ascii=False,
                     ),

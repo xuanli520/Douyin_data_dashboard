@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.cache import resolve_sync_redis_client
+from src.config import get_settings
 from src.domains.data_source.enums import DataSourceStatus
 from src.domains.data_source.enums import ScrapingRuleStatus
 from src.domains.data_source.repository import DataSourceRepository
@@ -21,6 +22,7 @@ from src.scrapers.shop_dashboard.contracts import ScrapingRuleContract
 from src.scrapers.shop_dashboard.account_shop_resolver import AccountShopResolver
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.scrapers.shop_dashboard.runtime import build_runtime_config
+from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
 from src.shared.shop_ids import normalize_shop_ids
 
 
@@ -117,6 +119,7 @@ class CollectionRuntimeLoader:
             execution_id=execution_id,
             overrides=dict(overrides or {}),
         )
+        runtime = self._hydrate_runtime_state(runtime)
         runtime = await self._resolve_all_mode_runtime(
             runtime=runtime,
             data_source=data_source_contract,
@@ -241,6 +244,24 @@ class CollectionRuntimeLoader:
             runtime,
             resolved_shop_ids=list(resolved_shop_ids),
             shop_id=resolved_shop_ids[0],
+        )
+
+    def _hydrate_runtime_state(
+        self,
+        runtime: ShopDashboardRuntimeConfig,
+    ) -> ShopDashboardRuntimeConfig:
+        account_id = str(runtime.account_id or "").strip()
+        if not account_id or runtime.cookies:
+            return runtime
+        state_store = SessionStateStore(base_dir=get_settings().shop_dashboard.runtime_state_dir)
+        storage_state = runtime.storage_state or state_store.load_playwright_state(account_id)
+        cookies = state_store.load_cookie_mapping(account_id)
+        if not storage_state and not cookies:
+            return runtime
+        return replace(
+            runtime,
+            storage_state=storage_state,
+            cookies=dict(cookies),
         )
 
 

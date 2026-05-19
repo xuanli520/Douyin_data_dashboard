@@ -114,6 +114,8 @@ def build_runtime_configs(
         shop_ids = list(resolved.resolved_shop_ids)
     if not shop_ids:
         shop_ids = [resolved.shop_id]
+    if resolved.shop_mode == "ALL":
+        return [_build_runtime_from_resolved(resolved, "")]
     if not shop_ids:
         return []
     return [_build_runtime_from_resolved(resolved, shop_id) for shop_id in shop_ids]

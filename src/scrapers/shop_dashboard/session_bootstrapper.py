@@ -14,8 +14,11 @@ from src.scrapers.shop_dashboard.bootstrap_contracts import (
 )
 from src.scrapers.shop_dashboard.parsers import (
     extract_actual_shop_id_from_group_payloads,
+    extract_shop_name,
+    parse_core_scores,
 )
 from src.scrapers.shop_dashboard.query_builder import build_endpoint_request_payload
+from src.scrapers.shop_dashboard.exceptions import ShopDashboardScraperError
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
 
@@ -37,6 +40,7 @@ class _VerifyResult:
     error_code: str
     error_message: str
     actual_shop_id: str = ""
+    payloads: dict[str, dict[str, Any]] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -360,12 +364,57 @@ class SessionBootstrapper:
                     error_code="",
                     error_message="",
                     actual_shop_id=actual_shop_id,
+                    payloads=payloads,
                 )
         return _VerifyResult(
             success=False,
             error_code="verify_request_failed",
             error_message="verify_request_failed",
         )
+
+    async def collect_shop_payload(
+        self,
+        *,
+        runtime: ShopDashboardRuntimeConfig,
+        shop_id: str,
+        metric_date: str,
+    ) -> dict[str, Any]:
+        target_shop_id = str(shop_id or "").strip()
+        unit_runtime = _with_target_shop_query(
+            replace(runtime, shop_id=target_shop_id),
+            target_shop_id,
+        )
+        verify_result = await self._verify_shop_context(
+            runtime=unit_runtime,
+            target_shop_id=target_shop_id,
+            verify_metric_date=_resolve_metric_date(metric_date),
+        )
+        if not verify_result.success:
+            raise ShopDashboardScraperError(
+                verify_result.error_message or verify_result.error_code,
+                error_data={"error_code": verify_result.error_code},
+            )
+        payloads = dict(verify_result.payloads or {})
+        overview_payload = payloads.get("overview") or {}
+        analysis_payload = payloads.get("analysis") or {}
+        scores = parse_core_scores(overview_payload)
+        result = {
+            "status": "success",
+            "shop_id": target_shop_id,
+            "actual_shop_id": verify_result.actual_shop_id,
+            "metric_date": _resolve_metric_date(metric_date),
+            "source": "http",
+            "reviews": {"summary": {}, "items": []},
+            "violations": {"summary": {}, "waiting_list": []},
+            "raw": {"http": payloads},
+            "retry_count": 0,
+            "fallback_trace": [{"stage": "http", "status": "success"}],
+        }
+        result.update(scores)
+        shop_name = extract_shop_name(analysis_payload, overview_payload)
+        if shop_name:
+            result["shop_name"] = shop_name
+        return result
 
     async def _choose_shop(
         self,

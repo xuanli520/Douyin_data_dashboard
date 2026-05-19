@@ -67,8 +67,8 @@ def test_login_session_runs_deterministic_recipe_and_saves_state():
     assert result.logged_in is True
     assert state_store.saved[0][0] == "acct-1"
     assert manager.active == ["acct-1"]
-    assert ("fill", 'spinbutton "手机号码"', "13800138000") in driver.commands
-    assert ("fill", 'spinbutton "验证码"', "123456") in driver.commands
+    assert ("fill", "input[placeholder*='手机号']", "13800138000") in driver.commands
+    assert ("fill", "input[placeholder*='验证码']", "123456") in driver.commands
     assert [event["event_type"] for event in events] == [
         "waiting_for_code",
         "login_success",
@@ -78,7 +78,7 @@ def test_login_session_runs_deterministic_recipe_and_saves_state():
 
 
 def test_login_session_tries_locator_fallback():
-    driver = _FakeDriver(fail_once={'spinbutton "手机号码"'})
+    driver = _FakeDriver(fail_once={"input[placeholder*='手机号']"})
     broker = HumanInputBroker(allow_memory_fallback=True)
     broker.resolve("login-2", "123456")
 
@@ -93,7 +93,7 @@ def test_login_session_tries_locator_fallback():
     ).run()
 
     assert result.logged_in is True
-    assert ("fill", "input[placeholder*='手机号']", "13800138000") in driver.commands
+    assert ("fill", 'spinbutton "手机号码"', "13800138000") in driver.commands
 
 
 def test_login_session_does_not_save_failed_login_state():
@@ -120,9 +120,9 @@ def test_login_session_does_not_save_failed_login_state():
     assert state_store.saved == []
 
 
-def test_login_session_fallback_intercepts_login_tools():
+def test_login_session_does_not_run_llm_fallback():
     driver = _FakeDriver(
-        fail_always={"button.get-code-btn", "获取验证码", "发送验证码"}
+        fail_always={".account-center-code-captcha.active", "获取验证码", "发送验证码"}
     )
     broker = HumanInputBroker(allow_memory_fallback=True)
     broker.resolve("login-4", "123456")
@@ -151,9 +151,9 @@ def test_login_session_fallback_intercepts_login_tools():
         max_steps=5,
     ).run()
 
-    assert result.logged_in is True
-    assert "request_verification_code" not in [item[0] for item in driver.commands]
-    assert [request.step_index for request in llm.requests] == [0, 1, 2]
+    assert result.logged_in is False
+    assert result.reason.startswith("recipe_step_failed: send_code")
+    assert llm.requests == []
 
 
 class _FakeDriver:
@@ -183,6 +183,8 @@ class _FakeDriver:
         }
         self.url = ""
         self.title_value = ""
+        self.values = {}
+        self.code_sent = False
 
     def open(self, url, *, headed=False):
         self.commands.append(("open", url, headed))
@@ -195,14 +197,28 @@ class _FakeDriver:
     def fill(self, locator, value):
         self._maybe_fail(locator.value)
         self.commands.append(("fill", locator.value, value))
+        self.values[locator.value] = value
         return {"ok": True}
 
     def click(self, locator):
         self._maybe_fail(locator.value)
         self.commands.append(("click", locator.value))
-        if locator.value in {'button "登录"', "button.login-btn"}:
+        if locator.value == ".account-center-code-captcha.active":
+            self.code_sent = True
+        if locator.value in {
+            "button.account-center-action-button.active",
+            "button.account-center-action-button",
+            "button:has-text('登录')",
+            'button "登录"',
+            "button.login-btn",
+        }:
             self.url = self.final_url
             self.title_value = self.final_title
+        return {"ok": True}
+
+    def check(self, locator):
+        self._maybe_fail(locator.value)
+        self.commands.append(("check", locator.value))
         return {"ok": True}
 
     def goto(self, url):
@@ -228,6 +244,22 @@ class _FakeDriver:
 
     def get_snapshot(self):
         return ""
+
+    def input_value(self, locator):
+        if locator.value in self.values:
+            return self.values[locator.value]
+        if "手机号" in locator.value and "input[placeholder*='手机号']" in self.values:
+            return self.values["input[placeholder*='手机号']"]
+        if "验证码" in locator.value and "input[placeholder*='验证码']" in self.values:
+            return self.values["input[placeholder*='验证码']"]
+        raise RuntimeError("input value not found")
+
+    def page_text(self):
+        if self.code_sent:
+            return "60S"
+        if self.url == self.final_url:
+            return self.final_title
+        return "手机登录 验证码"
 
     def capture_screenshot(self):
         return "screenshot.png"

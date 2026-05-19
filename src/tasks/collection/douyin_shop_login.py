@@ -10,7 +10,6 @@ from src.core.agent.login import LoginSession
 from src.scrapers.shop_dashboard.login_state_manager import LoginStateManager
 from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
 from src.tasks.base import TaskStatusMixin
-from src.tasks.collection.douyin_shop_discovery import _ConfiguredDiscoveryLLMClient
 from src.tasks.funboost_compat import boost
 from src.tasks.params import CollectionTaskParams
 
@@ -22,10 +21,10 @@ from src.tasks.params import CollectionTaskParams
         qps=0.2,
         concurrent_num=2,
         function_timeout=600,
+        max_retry_times=0,
     )
 )
 def run_login_session(
-    *,
     session_id: str,
     phone: str,
     account_id: str,
@@ -46,26 +45,21 @@ def run_login_session(
             redis_client=redis_client,
             ttl_seconds=settings.agent_login_session_ttl_seconds,
         )
-        llm_client = _ConfiguredDiscoveryLLMClient(settings=settings)
-        try:
-            result = LoginSession(
-                session_id=session_id,
-                account_id=account_id,
-                phone=phone,
-                driver=driver,
-                broker=broker,
-                state_store=state_store,
-                login_state_manager=login_state_manager,
-                llm_client=llm_client,
-                event_sink=lambda event: append_login_event(session_id, event),
-                allowed_origins=list(settings.agent_allowed_origins),
-                headed=bool(settings.agent_login_browser_headed),
-                code_timeout_seconds=settings.agent_login_code_timeout_seconds,
-                max_steps=settings.agent_login_max_steps,
-                debug_events=bool(settings.agent_login_debug_events),
-            ).run()
-        finally:
-            llm_client.close()
+        result = LoginSession(
+            session_id=session_id,
+            account_id=account_id,
+            phone=phone,
+            driver=driver,
+            broker=broker,
+            state_store=state_store,
+            login_state_manager=login_state_manager,
+            event_sink=lambda event: append_login_event(session_id, event),
+            allowed_origins=list(settings.agent_allowed_origins),
+            headed=bool(settings.agent_login_browser_headed),
+            code_timeout_seconds=settings.agent_login_code_timeout_seconds,
+            max_steps=settings.agent_login_max_steps,
+            debug_events=bool(settings.agent_login_debug_events),
+        ).run()
         return result.to_dict()
     except Exception as exc:
         message = str(exc) or type(exc).__name__

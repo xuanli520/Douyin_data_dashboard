@@ -66,19 +66,10 @@ def _wait_forever(
     threads: Sequence[Thread] | Thread | None = None,
 ) -> None:
     worker_stop_event = stop_event or Event()
-    thread_list = (
-        list(threads)
-        if isinstance(threads, Sequence)
-        else ([threads] if threads is not None else [])
-    )
+    _ = threads
     try:
         while not worker_stop_event.wait(5):
-            for thread in thread_list:
-                if not thread.is_alive():
-                    logger.error(
-                        "worker thread exited unexpectedly name=%s", thread.name
-                    )
-                    return
+            pass
     except KeyboardInterrupt:
         worker_stop_event.set()
     logger.info("Shutting down workers")

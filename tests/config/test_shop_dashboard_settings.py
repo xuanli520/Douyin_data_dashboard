@@ -47,7 +47,7 @@ def test_shop_dashboard_settings_defaults():
     ]
     assert settings.shop_dashboard.agent_browser_driver == "playwright_cli"
     assert settings.shop_dashboard.agent_browser_headed is False
-    assert settings.shop_dashboard.agent_login_browser_headed is True
+    assert settings.shop_dashboard.agent_login_browser_headed is False
     assert settings.shop_dashboard.agent_login_code_timeout_seconds == 300
     assert settings.shop_dashboard.agent_login_session_ttl_seconds == 900
     assert settings.shop_dashboard.agent_login_max_steps == 20
