@@ -29,7 +29,9 @@ def upgrade() -> None:
         sa.Column("namespace", sa.String(length=100), nullable=False),
         sa.Column("key", sa.String(length=200), nullable=False),
         sa.Column("version", sa.Integer(), nullable=False, server_default="1"),
-        sa.Column("status", sa.String(length=20), nullable=False, server_default="active"),
+        sa.Column(
+            "status", sa.String(length=20), nullable=False, server_default="active"
+        ),
         sa.Column("entrypoint", sa.JSON(), nullable=False),
         sa.Column("steps", sa.JSON(), nullable=False),
         sa.Column("observations", sa.JSON(), nullable=False),
@@ -67,4 +69,3 @@ def downgrade() -> None:
     op.drop_index("ix_agent_recipes_key", table_name="agent_recipes")
     op.drop_index("ix_agent_recipes_namespace", table_name="agent_recipes")
     op.drop_table("agent_recipes")
-

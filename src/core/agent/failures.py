@@ -73,7 +73,9 @@ class FailureClassifier:
         recoverable = (
             failure_type in _RECOVERABLE_FAILURE_TYPES
             and bool(failed_targets)
-            and all(self._is_observation_locator_target(target) for target in failed_targets)
+            and all(
+                self._is_observation_locator_target(target) for target in failed_targets
+            )
         )
         reason = reasons[0] if reasons else failure_type.value
         return FailureClassification(
@@ -137,7 +139,10 @@ class FailureClassifier:
         normalized = value.strip()
         if normalized.startswith("/observations/") and normalized.endswith("/locator"):
             return normalized
-        if normalized.startswith("/observations/") and "/" not in normalized[len("/observations/") :]:
+        if (
+            normalized.startswith("/observations/")
+            and "/" not in normalized[len("/observations/") :]
+        ):
             return f"{normalized}/locator"
         if normalized.startswith("observations."):
             observation_id = normalized.split(".", 2)[1]

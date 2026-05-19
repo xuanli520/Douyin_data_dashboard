@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from src.core.agent.assertions import evaluate_assertions
 from src.core.agent.browser import BrowserDriver
 from src.core.agent.exceptions import AgentError
@@ -18,6 +20,9 @@ from src.core.agent.observations import read_observations
 from src.core.agent.security import validate_navigation_target
 from src.core.agent.security import validate_page_risk
 from src.core.agent.steps import run_step
+
+
+logger = logging.getLogger(__name__)
 
 
 class AgentCrawler:
@@ -102,7 +107,10 @@ class AgentCrawler:
                 metadata={"trace": trace},
             )
         finally:
-            self.driver.close()
+            try:
+                self.driver.close()
+            except AgentError:
+                logger.warning("agent driver close failed", exc_info=True)
 
 
 def _classify_agent_error(

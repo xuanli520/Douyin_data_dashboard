@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -273,20 +274,49 @@ class _ConfiguredDiscoveryLLMClient:
     def summarize_recipe(self, request: RecipeSummaryRequest) -> dict[str, Any]:
         payload = self._post(
             [
+                {"role": "system", "content": _RECIPE_SYSTEM_PROMPT},
                 {
                     "role": "user",
                     "content": json.dumps(
                         {
                             "task": "generate_browser_agent_recipe",
                             "request": request.model_dump(mode="json"),
+                            "required_recipe_schema": _recipe_schema(request),
                             "response_format_instruction": "Return a JSON object only.",
                         },
                         ensure_ascii=False,
                     ),
-                }
+                },
             ]
         )
         return payload
+
+    def repair_recipe(
+        self,
+        *,
+        request: RecipeSummaryRequest,
+        invalid_recipe: dict[str, Any],
+        error_message: str,
+    ) -> dict[str, Any]:
+        return self._post(
+            [
+                {"role": "system", "content": _RECIPE_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "task": "repair_browser_agent_recipe",
+                            "validation_error": error_message,
+                            "invalid_recipe": invalid_recipe,
+                            "request": request.model_dump(mode="json"),
+                            "required_recipe_schema": _recipe_schema(request),
+                            "response_format_instruction": "Return the corrected recipe JSON object only.",
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ]
+        )
 
     def _post(self, messages: list[dict[str, str]]) -> dict[str, Any]:
         endpoint = str(self._settings.llm_endpoint or "").strip()
@@ -323,7 +353,7 @@ class _ConfiguredDiscoveryLLMClient:
 def _parse_llm_response(data: Any) -> dict[str, Any]:
     if not isinstance(data, dict):
         return {}
-    if "name" in data or "entrypoint" in data:
+    if any(key in data for key in ("name", "entrypoint", "namespace", "recipe")):
         return data
     choices = data.get("choices")
     if isinstance(choices, list) and choices:
@@ -359,6 +389,47 @@ def _extract_tool_call(payload: dict[str, Any]) -> dict[str, Any]:
     name = payload.get("tool_name") or payload.get("tool")
     arguments = payload.get("arguments") or payload.get("args") or {}
     return {"name": name, "arguments": arguments}
+
+
+_RECIPE_SYSTEM_PROMPT = (
+    "You generate executable browser automation recipes. Return only one JSON object. "
+    "The top-level object must be the recipe itself, not wrapped in another key. "
+    "All required fields must be present and must match the provided schema exactly."
+)
+
+
+def _recipe_schema(request: RecipeSummaryRequest) -> dict[str, Any]:
+    return {
+        "namespace": request.namespace_hint or "required string",
+        "key": request.key_hint or "required string",
+        "entrypoint": {"url": request.entrypoint_url},
+        "steps": [
+            {
+                "id": "open_entrypoint",
+                "action": "goto",
+                "value": request.entrypoint_url,
+            }
+        ],
+        "observations": {},
+        "assertions": [],
+        "recovery_policy": {
+            "enabled": True,
+            "minimum_confidence": 0.7,
+            "max_attempts": 1,
+        },
+        "security_policy": {
+            "allowed_origins": [_entrypoint_origin(request.entrypoint_url)],
+            "blocked_patterns": [],
+            "snapshot_max_chars": 30000,
+        },
+    }
+
+
+def _entrypoint_origin(url: str) -> str:
+    parsed = urlparse(str(url or "").strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 
 def _append_agent_event(run_id: str, event: Any) -> dict[str, Any] | None:

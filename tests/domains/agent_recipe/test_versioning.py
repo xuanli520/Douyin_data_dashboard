@@ -47,4 +47,3 @@ async def test_agent_recipe_version_rows_are_append_only(test_db):
         assert second.version == 2
         assert len(versions) == 2
         assert {item.version for item in versions} == {1, 2}
-

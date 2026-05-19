@@ -75,7 +75,9 @@ class ReplayRunner:
             failure = getattr(payload, "failure", None)
             reason = ""
             if failure is not None:
-                reason = str(getattr(failure, "message", "") or getattr(failure, "kind", ""))
+                reason = str(
+                    getattr(failure, "message", "") or getattr(failure, "kind", "")
+                )
             outcome = ReplayOutcome(
                 success=success,
                 failed_targets=[] if success else expected_targets,
@@ -87,7 +89,9 @@ class ReplayRunner:
             outcome = ReplayOutcome(success=bool(payload), raw=payload)
         if outcome.success and expected_targets:
             recovered = set(outcome.recovered_targets)
-            missing_targets = [target for target in expected_targets if target not in recovered]
+            missing_targets = [
+                target for target in expected_targets if target not in recovered
+            ]
             if missing_targets:
                 return ReplayOutcome(
                     success=False,

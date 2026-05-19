@@ -71,7 +71,9 @@ def test_recipe_generator_rejects_unknown_action():
 def test_recipe_generator_rejects_missing_assertion_source():
     generator = RecipeGenerator(
         _FakeLLM(
-            _build_recipe(assertions=[{"id": "assert-1", "source": "missing", "kind": "exists"}])
+            _build_recipe(
+                assertions=[{"id": "assert-1", "source": "missing", "kind": "exists"}]
+            )
         )
     )
 
@@ -90,7 +92,10 @@ def test_recipe_generator_rejects_relaxed_security_policy():
         _FakeLLM(
             _build_recipe(
                 security_policy={
-                    "allowed_origins": ["https://example.com", "https://other.example.com"],
+                    "allowed_origins": [
+                        "https://example.com",
+                        "https://other.example.com",
+                    ],
                     "allowed_tools": ["click", "fill", "download"],
                 }
             )

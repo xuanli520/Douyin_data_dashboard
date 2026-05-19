@@ -117,4 +117,3 @@ class AgentRecipeRepository(BaseRepository):
         _ = reason
         await self._flush()
         return True
-

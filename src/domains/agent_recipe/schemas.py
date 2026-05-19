@@ -46,4 +46,3 @@ class AgentRecipeResponse(AgentRecipePayload):
     status: AgentRecipeStatus
     created_at: datetime
     updated_at: datetime
-

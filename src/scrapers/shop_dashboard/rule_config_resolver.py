@@ -97,6 +97,11 @@ def resolve_rule_config(
             return rule_extra[key]
         return default
 
+    def has_payload_value(key: str) -> bool:
+        return (key in payload and payload[key] is not None) or (
+            key in payload_extra and payload_extra[key] is not None
+        )
+
     rule_id = int(_read_attr(rule, "id", 0) or 0)
 
     target_type = _normalize_text(
@@ -295,8 +300,13 @@ def resolve_rule_config(
         or default_account_id
     )
 
-    fallback = pick("fallback_chain", default="browser_agent")
-    fallback_chain = _normalize_fallback_chain(fallback)
+    collection_path = pick("collection_path", default=None)
+    fallback = pick("fallback_chain", default=None)
+    if has_payload_value("collection_path") and not has_payload_value("fallback_chain"):
+        fallback = collection_path
+    if fallback is None:
+        fallback = collection_path or "browser_agent"
+    fallback_chain = _normalize_fallback_chain(fallback, rule_id=rule_id)
     agent_recipe_ref = _normalize_agent_recipe_ref(
         pick("agent_recipe", default=None),
         rule_id=rule_id,
@@ -532,28 +542,42 @@ def _normalize_string_items(items: Iterable[Any]) -> list[str]:
     return normalized
 
 
-def _normalize_fallback_chain(value: Any) -> tuple[str, ...]:
+def _normalize_fallback_chain(value: Any, *, rule_id: int) -> tuple[str, ...]:
+    if value is None:
+        return ("browser_agent",)
     if isinstance(value, str):
+        text = value.replace(",", "->").replace("|", "->")
         parts = [
-            part.strip().lower() for part in value.split("->") if part and part.strip()
+            part.strip().lower() for part in text.split("->") if part and part.strip()
         ]
     elif isinstance(value, (list, tuple)):
         parts = [str(part).strip().lower() for part in value if str(part).strip()]
     else:
-        parts = ["browser_agent"]
+        _invalid_field("fallback_chain", value, rule_id=rule_id)
     if not parts:
-        parts = ["browser_agent"]
+        return ("browser_agent",)
     normalized: list[str] = []
     seen: set[str] = set()
     for part in parts:
-        stage = "browser_agent" if part in {"browser", "browser_agent"} else part
-        if stage not in {"browser_agent"} or stage in seen:
+        stage = _normalize_collection_stage(part)
+        if stage is None:
+            _invalid_field("fallback_chain", value, rule_id=rule_id)
+        if stage in seen:
             continue
         normalized.append(stage)
         seen.add(stage)
     if not normalized:
-        return ("browser_agent",)
+        _invalid_field("fallback_chain", value, rule_id=rule_id)
     return tuple(normalized)
+
+
+def _normalize_collection_stage(value: Any) -> str | None:
+    stage = str(value or "").strip().lower()
+    if stage in {"browser", "browser_agent", "agent"}:
+        return "browser_agent"
+    if stage in {"http", "api"}:
+        return "http"
+    return None
 
 
 def _normalize_agent_recipe_ref(value: Any, *, rule_id: int) -> dict[str, Any] | None:

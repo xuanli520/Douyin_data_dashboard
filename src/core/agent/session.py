@@ -13,7 +13,10 @@ def build_storage_state_path(base_dir: str | Path, session_id: str) -> Path:
     target = root / f"{_safe_segment(session_id)}.json"
     resolved_root = root.resolve()
     resolved_target = target.resolve()
-    if resolved_root not in resolved_target.parents and resolved_target != resolved_root:
+    if (
+        resolved_root not in resolved_target.parents
+        and resolved_target != resolved_root
+    ):
         raise ValueError("storage state path escapes base directory")
     return target
 

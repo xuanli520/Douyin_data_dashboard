@@ -56,7 +56,9 @@ def validate_tool_name(tool_name: str) -> str:
 
 def validate_url_allowed(url: str, allowed_origins: Iterable[str]) -> str:
     parsed = urlparse(str(url or "").strip())
-    origin = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else ""
+    origin = (
+        f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else ""
+    )
     allowed = {str(item).rstrip("/") for item in allowed_origins if str(item).strip()}
     if not origin or origin.rstrip("/") not in allowed:
         raise SecurityPolicyError(f"url origin is not allowed: {url}")

@@ -190,7 +190,7 @@ def run_coro(coro: Coroutine[Any, Any, T]) -> T:
 
     if loop is None or loop.is_closed():
         try:
-            running_loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
             return asyncio.run(coro)
         coro.close()

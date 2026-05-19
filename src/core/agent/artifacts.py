@@ -10,7 +10,10 @@ def build_artifact_path(base_dir: str | Path, session_id: str, filename: str) ->
     target = root / _safe_segment(session_id) / Path(filename).name
     resolved_root = root.resolve()
     resolved_target = target.resolve()
-    if resolved_root not in resolved_target.parents and resolved_target != resolved_root:
+    if (
+        resolved_root not in resolved_target.parents
+        and resolved_target != resolved_root
+    ):
         raise ValueError("artifact path escapes base directory")
     return target
 
@@ -40,8 +43,7 @@ def cleanup_expired_artifacts(
 def sanitize_payload(value: Any) -> Any:
     if isinstance(value, dict):
         return {
-            str(key): _redacted_value(str(key), item)
-            for key, item in value.items()
+            str(key): _redacted_value(str(key), item) for key, item in value.items()
         }
     if isinstance(value, list):
         return [sanitize_payload(item) for item in value]

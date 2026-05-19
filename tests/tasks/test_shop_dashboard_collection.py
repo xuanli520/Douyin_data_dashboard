@@ -681,7 +681,7 @@ async def test_bootstrap_verify_request_failed_not_counted_as_shop_mismatch(
         execution_id="exec-bootstrap-request-failed",
         queue_task_id="queue-bootstrap-request-failed",
         triggered_by=1,
-        overrides={},
+        overrides={"fallback_chain": ["http"]},
         redis_client=_FakeRedis(),
     )
 
@@ -731,7 +731,7 @@ async def test_bootstrap_verify_login_expired_marks_login_state_expired(
         execution_id="exec-bootstrap-login-expired",
         queue_task_id="queue-bootstrap-login-expired",
         triggered_by=1,
-        overrides={},
+        overrides={"fallback_chain": ["http"]},
         redis_client=_FakeRedis(),
     )
 
@@ -838,7 +838,7 @@ async def test_account_shop_switch_unsupported_short_circuit(
         execution_id="exec-account-unsupported",
         queue_task_id="queue-account-unsupported",
         triggered_by=1,
-        overrides={},
+        overrides={"fallback_chain": ["http"]},
         redis_client=_FakeRedis(),
     )
 

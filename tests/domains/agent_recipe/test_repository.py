@@ -133,4 +133,3 @@ class TestAgentRecipeRepositoryIntegration:
             assert stored is not None
             assert stored.status == AGENT_RECIPE_STATUS_DEGRADED
             assert active is None
-

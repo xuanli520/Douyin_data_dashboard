@@ -12,6 +12,15 @@ class AccountShopResolver:
     _LOGIN_PROBE_PATH = "/ecomauth/loginv1/get_login_subject_count"
     _LOGIN_PROBE_PARAMS: dict[str, Any] = {"login_source": "doudian_pc_web"}
     _SHOP_LIST_SPECS: tuple[tuple[str, dict[str, Any]], ...] = (
+        (
+            "/ecomauth/loginv1/get_login_subject",
+            {
+                "bus_type": 1,
+                "login_source": "doudian_pc_web",
+                "entry_source": 0,
+                "bus_child_type": 0,
+            },
+        ),
         ("/byteshop/index/getshoplist", {}),
         (
             "/byteshop/loginv2/getallshop",
@@ -301,11 +310,31 @@ def _normalize_candidate_shop_ids(
 
 
 def _extract_shop_ids_from_payload(payload: Any) -> list[str]:
+    login_subject_shop_ids = _extract_shop_ids_from_login_subject_payload(payload)
+    if login_subject_shop_ids:
+        return login_subject_shop_ids
     byteshop_shop_ids = _extract_shop_ids_from_byteshop_payload(payload)
     if byteshop_shop_ids:
         return byteshop_shop_ids
     result: list[str] = []
     _walk_shop_ids(payload, result, parent_key="")
+    return _dedupe_shop_ids(result)
+
+
+def _extract_shop_ids_from_login_subject_payload(payload: Any) -> list[str]:
+    if not isinstance(payload, Mapping):
+        return []
+    data = payload.get("data")
+    if not isinstance(data, Mapping):
+        return []
+    subjects = data.get("login_subject_list")
+    if not isinstance(subjects, list):
+        return []
+    result: list[str] = []
+    for item in subjects:
+        if not isinstance(item, Mapping):
+            continue
+        result.extend(_normalize_scalar_to_shop_ids(item.get("account_id")))
     return _dedupe_shop_ids(result)
 
 
@@ -319,8 +348,14 @@ def _extract_shop_ids_from_byteshop_payload(payload: Any) -> list[str]:
     for item in data:
         if not isinstance(item, Mapping):
             continue
-        for key in ("id", "shop_id", "shopId", "subject_id", "subjectId"):
-            result.extend(_normalize_scalar_to_shop_ids(item.get(key)))
+        for key in ("account_id", "shop_id", "shopId", "id"):
+            shop_ids = _normalize_scalar_to_shop_ids(item.get(key))
+            if shop_ids:
+                result.extend(shop_ids)
+                break
+        else:
+            for key in ("subject_id", "subjectId"):
+                result.extend(_normalize_scalar_to_shop_ids(item.get(key)))
     return _dedupe_shop_ids(result)
 
 

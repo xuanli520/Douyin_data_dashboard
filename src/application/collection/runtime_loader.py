@@ -253,8 +253,12 @@ class CollectionRuntimeLoader:
         account_id = str(runtime.account_id or "").strip()
         if not account_id or runtime.cookies:
             return runtime
-        state_store = SessionStateStore(base_dir=get_settings().shop_dashboard.runtime_state_dir)
-        storage_state = runtime.storage_state or state_store.load_playwright_state(account_id)
+        state_store = SessionStateStore(
+            base_dir=get_settings().shop_dashboard.runtime_state_dir
+        )
+        storage_state = runtime.storage_state or state_store.load_playwright_state(
+            account_id
+        )
         cookies = state_store.load_cookie_mapping(account_id)
         if not storage_state and not cookies:
             return runtime

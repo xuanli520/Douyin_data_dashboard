@@ -35,6 +35,8 @@ SHOP_DASHBOARD_OVERRIDE_KEYS: tuple[str, ...] = (
     "sort_by",
     "include_long_tail",
     "session_level",
+    "fallback_chain",
+    "collection_path",
     "extra_config",
 )
 

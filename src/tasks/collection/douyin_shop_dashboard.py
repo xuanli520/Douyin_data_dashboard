@@ -108,6 +108,8 @@ def sync_shop_dashboard(
     sort_by: str | None = None,
     include_long_tail: bool | None = None,
     session_level: bool | None = None,
+    fallback_chain: list[str] | str | None = None,
+    collection_path: str | None = None,
     extra_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     started_at = write_started_status_safe(
@@ -138,6 +140,8 @@ def sync_shop_dashboard(
             "sort_by": sort_by,
             "include_long_tail": include_long_tail,
             "session_level": session_level,
+            "fallback_chain": fallback_chain,
+            "collection_path": collection_path,
             "extra_config": extra_config,
         }.items()
         if value is not None
@@ -275,9 +279,8 @@ def _collect_one_day(
                     payload = BrowserAgentAdapter(settings=settings).collect(
                         runtime=runtime,
                         metric_date=metric_date,
-                        state_store=state_store or SessionStateStore(
-                            base_dir=settings.runtime_state_dir
-                        ),
+                        state_store=state_store
+                        or SessionStateStore(base_dir=settings.runtime_state_dir),
                         plan_unit=plan_unit,
                     )
                     _append_fallback_trace(
@@ -316,8 +319,7 @@ def _collect_one_day(
             "Unsupported fallback chain",
             error_data={
                 "fallback_chain": [
-                    _normalize_fallback_stage(stage)
-                    for stage in runtime.fallback_chain
+                    _normalize_fallback_stage(stage) for stage in runtime.fallback_chain
                 ]
             },
         )

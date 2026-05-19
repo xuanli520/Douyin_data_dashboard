@@ -40,4 +40,3 @@ class AgentRecipe(SQLModel, TimestampMixin, table=True):
     assertions: list[dict[str, Any]] = Field(default_factory=list, sa_type=JSON)
     recovery_policy: dict[str, Any] = Field(default_factory=dict, sa_type=JSON)
     security_policy: dict[str, Any] = Field(default_factory=dict, sa_type=JSON)
-

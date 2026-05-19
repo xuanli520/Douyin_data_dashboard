@@ -49,9 +49,12 @@ class _ChooseResult:
     error_code: str
     error_message: str
     cookies: dict[str, str] | None = None
+    common_query: dict[str, Any] | None = None
 
 
 class SessionBootstrapper:
+    _LOGIN_SUBJECT_PATH = "/ecomauth/loginv1/get_login_subject"
+    _LOGIN_CALLBACK_PATH = "/ecomauth/loginv1/callback"
     _PRIMARY_CHOOSE_SHOP_PATH = "/byteshop/loginv2/chooseshop"
     _FALLBACK_CHOOSE_SHOP_PATH = "/byteshop/index/chooseshop"
 
@@ -215,6 +218,14 @@ class SessionBootstrapper:
                 cookies={
                     **dict(unit_runtime.cookies or {}),
                     **choose_result.cookies,
+                },
+            )
+        if isinstance(choose_result.common_query, dict) and choose_result.common_query:
+            unit_runtime = replace(
+                unit_runtime,
+                common_query={
+                    **dict(unit_runtime.common_query or {}),
+                    **choose_result.common_query,
                 },
             )
 
@@ -421,6 +432,16 @@ class SessionBootstrapper:
         runtime: ShopDashboardRuntimeConfig,
         target_shop_id: str,
     ) -> _ChooseResult:
+        login_subject_result = await self._choose_shop_with_login_subject(
+            runtime,
+            target_shop_id,
+        )
+        if (
+            login_subject_result.success
+            or login_subject_result.error_code == "login_expired"
+        ):
+            return login_subject_result
+
         params = _build_choose_shop_params(
             common_query=runtime.common_query,
             target_shop_id=target_shop_id,
@@ -483,6 +504,97 @@ class SessionBootstrapper:
                 error_code=latest_failure.error_code or "request_failed",
                 error_message=latest_failure.error_message or "choose_shop_failed",
                 cookies=dict(working_cookies),
+            )
+
+    async def _choose_shop_with_login_subject(
+        self,
+        runtime: ShopDashboardRuntimeConfig,
+        target_shop_id: str,
+    ) -> _ChooseResult:
+        timeout_seconds = max(self._timeout_seconds, 0.1)
+        working_cookies = dict(runtime.cookies or {})
+        if not working_cookies:
+            return _ChooseResult(
+                success=False,
+                error_code="request_failed",
+                error_message="missing_cookies",
+                cookies={},
+            )
+        headers = {
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            timeout=timeout_seconds,
+            http2=True,
+        ) as client:
+            subject_headers = dict(headers)
+            subject_headers["Cookie"] = _build_cookie_header(working_cookies)
+            subject_result = await self._request_json(
+                client=client,
+                method="GET",
+                path=self._LOGIN_SUBJECT_PATH,
+                params=_build_login_subject_params(),
+                headers=subject_headers,
+            )
+            if subject_result.response_cookies:
+                working_cookies.update(subject_result.response_cookies)
+            if not subject_result.success:
+                return _ChooseResult(
+                    success=False,
+                    error_code=subject_result.error_code or "request_failed",
+                    error_message=subject_result.error_message
+                    or "login_subject_request_failed",
+                    cookies=dict(working_cookies),
+                )
+            subject = _find_login_subject(
+                subject_result.payload,
+                target_shop_id=target_shop_id,
+            )
+            if not subject:
+                return _ChooseResult(
+                    success=False,
+                    error_code="target_shop_not_found",
+                    error_message=f"target_shop_not_found:{target_shop_id}",
+                    cookies=dict(working_cookies),
+                )
+            callback_params = _build_login_callback_params(subject)
+            if not callback_params:
+                return _ChooseResult(
+                    success=False,
+                    error_code="request_failed",
+                    error_message="login_subject_identity_missing",
+                    cookies=dict(working_cookies),
+                )
+            callback_headers = dict(headers)
+            callback_headers["Cookie"] = _build_cookie_header(working_cookies)
+            callback_result = await self._request_json(
+                client=client,
+                method="GET",
+                path=self._LOGIN_CALLBACK_PATH,
+                params=callback_params,
+                headers=callback_headers,
+            )
+            if callback_result.response_cookies:
+                working_cookies.update(callback_result.response_cookies)
+            if not callback_result.success:
+                return _ChooseResult(
+                    success=False,
+                    error_code=callback_result.error_code or "request_failed",
+                    error_message=callback_result.error_message
+                    or "login_callback_request_failed",
+                    cookies=dict(working_cookies),
+                )
+            return _ChooseResult(
+                success=True,
+                error_code="",
+                error_message="",
+                cookies=dict(working_cookies),
+                common_query=_build_login_subject_common_query(
+                    subject,
+                    target_shop_id=target_shop_id,
+                ),
             )
 
     async def _request_json(
@@ -679,13 +791,103 @@ def _build_choose_shop_params(
     return params
 
 
+def _build_login_subject_params() -> dict[str, Any]:
+    return {
+        "bus_type": 1,
+        "login_source": "doudian_pc_web",
+        "entry_source": 0,
+        "bus_child_type": 0,
+    }
+
+
+def _find_login_subject(
+    payload: Mapping[str, Any] | None,
+    *,
+    target_shop_id: str,
+) -> dict[str, Any] | None:
+    target = str(target_shop_id or "").strip()
+    if not target or not isinstance(payload, Mapping):
+        return None
+    data = payload.get("data")
+    if not isinstance(data, Mapping):
+        return None
+    subjects = data.get("login_subject_list")
+    if not isinstance(subjects, list):
+        return None
+    for item in subjects:
+        if not isinstance(item, Mapping):
+            continue
+        identifiers = (
+            _subject_text(item, "account_id"),
+            _subject_text(item, "subject_id"),
+            _subject_text(item, "encode_shop_id"),
+            _subject_text(item, "member_id"),
+            _subject_text(item, "bus_member_id"),
+            _subject_text(item, "encode_member_id"),
+        )
+        if target in identifiers:
+            return dict(item)
+    return None
+
+
+def _build_login_callback_params(subject: Mapping[str, Any]) -> dict[str, Any]:
+    encode_shop_id = _subject_text(subject, "encode_shop_id")
+    member_id = _subject_text(subject, "member_id") or _subject_text(
+        subject,
+        "bus_member_id",
+    )
+    encode_member_id = _subject_text(subject, "encode_member_id")
+    if not encode_shop_id or not member_id or not encode_member_id:
+        return {}
+    return {
+        "login_source": "doudian_pc_web",
+        "subject_aid": 4966,
+        "encode_shop_id": encode_shop_id,
+        "member_id": member_id,
+        "bus_child_type": _subject_bus_child_type(subject),
+        "entry_source": 0,
+        "ecom_login_extra": "",
+        "use_cache": "false",
+        "encode_member_id": encode_member_id,
+        "action_type": 1,
+    }
+
+
+def _build_login_subject_common_query(
+    subject: Mapping[str, Any],
+    *,
+    target_shop_id: str,
+) -> dict[str, Any]:
+    account_id = _subject_text(subject, "account_id") or str(target_shop_id).strip()
+    subject_id = _subject_text(subject, "subject_id") or account_id
+    return {
+        "shop_id": account_id,
+        "subject_id": subject_id,
+    }
+
+
+def _subject_bus_child_type(subject: Mapping[str, Any]) -> Any:
+    account_type = subject.get("account_type")
+    if isinstance(account_type, Mapping):
+        value = account_type.get("bus_child_type")
+        if value is not None:
+            return value
+    return 0
+
+
+def _subject_text(subject: Mapping[str, Any], key: str) -> str:
+    value = subject.get(key)
+    return str(value or "").strip()
+
+
 def _with_target_shop_query(
     runtime: ShopDashboardRuntimeConfig,
     target_shop_id: str,
 ) -> ShopDashboardRuntimeConfig:
     merged_query = dict(runtime.common_query or {})
     merged_query["shop_id"] = target_shop_id
-    merged_query["subject_id"] = target_shop_id
+    if not str(merged_query.get("subject_id") or "").strip():
+        merged_query["subject_id"] = target_shop_id
     return replace(
         runtime,
         cookies=dict(runtime.cookies or {}),

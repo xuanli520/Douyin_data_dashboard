@@ -6,7 +6,11 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.core.agent.events import DiscoveryEvent
-from src.core.agent.llm import DiscoveryLLMClient, RecipeSummaryRequest, ToolSelectionRequest
+from src.core.agent.llm import (
+    DiscoveryLLMClient,
+    RecipeSummaryRequest,
+    ToolSelectionRequest,
+)
 from src.core.agent.observation_sync import ObservationSync
 from src.core.agent.recipe_generation import RecipeGenerator
 from src.core.agent.tool_executor import ToolExecutor
@@ -50,7 +54,9 @@ class ReActDiscoveryAgent:
             llm_client,
             registry=self._registry,
             validate_locator=getattr(security, "validate_locator", None),
-            validate_navigation_target=getattr(security, "validate_navigation_target", None),
+            validate_navigation_target=getattr(
+                security, "validate_navigation_target", None
+            ),
             system_security_policy=getattr(security, "DEFAULT_POLICY", None),
         )
         self._observation_sync = observation_sync or ObservationSync()
@@ -162,7 +168,9 @@ class ReActDiscoveryAgent:
                 current_observation = PageObservation.model_validate(
                     self._tool_executor.capture_observation(
                         security_policy=security_policy,
-                        tool_results=[{"tool_name": tool_call.name, "result": tool_result}],
+                        tool_results=[
+                            {"tool_name": tool_call.name, "result": tool_result}
+                        ],
                     )
                 )
                 trajectory.append_entry(
@@ -183,7 +191,9 @@ class ReActDiscoveryAgent:
                     tool_name=tool_call.name,
                     tool_result=tool_result,
                 )
-                self._emit_observation(active_run_id, current_observation, "page observed")
+                self._emit_observation(
+                    active_run_id, current_observation, "page observed"
+                )
             raise RuntimeError("max_steps_exceeded")
         except Exception as exc:
             trajectory.mark_failed(str(exc))

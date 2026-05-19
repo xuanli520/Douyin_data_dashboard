@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from datetime import date, datetime
 from typing import Any
@@ -18,7 +19,10 @@ def parse_number(value: Any) -> float:
     text = parse_text(value).replace(",", "")
     if not text:
         raise ObservationError("number value is empty")
-    return float(text)
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    if match is None:
+        raise ObservationError("number value is invalid")
+    return float(match.group(0))
 
 
 def parse_integer(value: Any) -> int:

@@ -30,7 +30,9 @@ class ProposalValidator:
         policy: RecoveryPolicy | dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         parsed_proposal = RecoveryProposal.from_value(proposal)
-        parsed_policy = RecoveryPolicy.from_value(policy or recipe.get("recovery_policy"))
+        parsed_policy = RecoveryPolicy.from_value(
+            policy or recipe.get("recovery_policy")
+        )
         if not parsed_policy.enabled:
             raise ProposalValidationError("recovery_disabled")
         if parsed_proposal.confidence < parsed_policy.confidence_threshold:
@@ -46,7 +48,9 @@ class ProposalValidator:
             raise ProposalValidationError("observation_locator_patch_disabled")
         if not parsed_proposal.patches:
             raise ProposalValidationError("proposal_has_no_patches")
-        allowed_targets = {self.normalize_target(path) for path in failure.failed_targets}
+        allowed_targets = {
+            self.normalize_target(path) for path in failure.failed_targets
+        }
         candidate = deepcopy(recipe)
         observations = candidate.get("observations")
         if not isinstance(observations, dict):
@@ -54,7 +58,10 @@ class ProposalValidator:
         for patch in parsed_proposal.patches:
             if patch.op != "replace":
                 raise ProposalValidationError("patch_operation_not_allowed")
-            if patch.confidence is not None and patch.confidence < parsed_policy.confidence_threshold:
+            if (
+                patch.confidence is not None
+                and patch.confidence < parsed_policy.confidence_threshold
+            ):
                 raise ProposalValidationError("patch_confidence_too_low")
             target = self.normalize_target(patch.path)
             if target not in allowed_targets:
@@ -75,7 +82,10 @@ class ProposalValidator:
         value = target.strip()
         if value.startswith("/observations/") and value.endswith("/locator"):
             return value
-        if value.startswith("/observations/") and "/" not in value[len("/observations/") :]:
+        if (
+            value.startswith("/observations/")
+            and "/" not in value[len("/observations/") :]
+        ):
             return f"{value}/locator"
         raise ProposalValidationError("patch_path_not_allowed")
 
@@ -88,7 +98,10 @@ class ProposalValidator:
             raise ProposalValidationError("locator_invalid")
         locator_type = locator.get("type")
         locator_value = locator.get("value")
-        if not isinstance(locator_type, str) or locator_type not in _ALLOWED_LOCATOR_TYPES:
+        if (
+            not isinstance(locator_type, str)
+            or locator_type not in _ALLOWED_LOCATOR_TYPES
+        ):
             raise ProposalValidationError("locator_type_not_allowed")
         if not isinstance(locator_value, str) or not locator_value.strip():
             raise ProposalValidationError("locator_value_invalid")

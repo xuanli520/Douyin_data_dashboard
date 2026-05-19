@@ -30,7 +30,11 @@ class ObservationSync:
         self._events.clear()
 
     def publish(self, event: DiscoveryEvent | dict[str, Any]) -> dict[str, Any] | None:
-        normalized = event if isinstance(event, DiscoveryEvent) else DiscoveryEvent.model_validate(event)
+        normalized = (
+            event
+            if isinstance(event, DiscoveryEvent)
+            else DiscoveryEvent.model_validate(event)
+        )
         public_event = self.to_public_event(normalized)
         if public_event is None:
             return None

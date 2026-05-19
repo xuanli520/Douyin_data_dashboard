@@ -109,4 +109,3 @@ class TestAgentRecipeServiceIntegration:
 
             assert updated is True
             assert active is None
-

@@ -90,7 +90,10 @@ def test_recovery_service_returns_recovered_result():
     assert result.status == "recovered"
     assert result.success is True
     assert result.candidate_recipe is not None
-    assert result.candidate_recipe["observations"]["price"]["locator"]["value"] == ".new-price"
+    assert (
+        result.candidate_recipe["observations"]["price"]["locator"]["value"]
+        == ".new-price"
+    )
     assert result.request is not None
     assert result.request.current_url == "https://example.test/dashboard"
     assert len(model.calls) == 1

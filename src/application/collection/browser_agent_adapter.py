@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -12,6 +14,7 @@ from src.core.agent import AgentCrawler
 from src.core.agent import Recipe
 from src.core.agent import RunContext
 from src.core.agent import RunResult
+from src.core.agent.models import LocatorSpec
 from src.core.agent.drivers import PlaywrightCLIDriver
 from src.core.agent.recovery import RecoveryResult
 from src.core.agent.recovery import RecoveryService
@@ -74,6 +77,21 @@ class BrowserAgentAdapter:
             storage_state_path=str(storage_state_path) if storage_state_path else None,
             headed=bool(getattr(self.settings, "agent_browser_headed", False)),
         )
+        storage_state_path = self._ensure_shop_storage_state(
+            state_store=state_store,
+            account_id=account_id,
+            runtime=runtime,
+            recipe=recipe,
+            storage_state_path=storage_state_path,
+            headed=context.headed,
+        )
+        context = context.model_copy(
+            update={
+                "storage_state_path": str(storage_state_path)
+                if storage_state_path
+                else None
+            }
+        )
         crawler = self._build_crawler(storage_state_path, context=context)
         result = crawler.run(recipe, context)
         if self._is_login_failure(result):
@@ -99,6 +117,7 @@ class BrowserAgentAdapter:
             recipe=recipe,
             result=result,
             output=result.output,
+            storage_state_path=storage_state_path,
         )
 
     def _build_payload(
@@ -110,11 +129,13 @@ class BrowserAgentAdapter:
         result: RunResult,
         output: dict[str, Any],
         recovery: dict[str, Any] | None = None,
+        storage_state_path: Path | None = None,
     ) -> dict[str, Any]:
         payload = self._map_output(
             runtime=runtime,
             metric_date=metric_date,
             output=output,
+            storage_state_path=storage_state_path,
         )
         raw = payload.get("raw")
         if not isinstance(raw, dict):
@@ -283,6 +304,7 @@ class BrowserAgentAdapter:
             result=replay_result.model_copy(update={"status": "recovered"}),
             output=replay_result.output,
             recovery=recovery_metadata,
+            storage_state_path=storage_state_path,
         )
 
     def _build_recovery_model(self) -> Any | None:
@@ -403,6 +425,81 @@ class BrowserAgentAdapter:
             return account_path
         return shop_path if isinstance(shop_path, Path) else None
 
+    def _ensure_shop_storage_state(
+        self,
+        *,
+        state_store: Any,
+        account_id: str,
+        runtime: ShopDashboardRuntimeConfig,
+        recipe: Recipe,
+        storage_state_path: Path | None,
+        headed: bool,
+    ) -> Path | None:
+        path_reader = getattr(state_store, "playwright_state_path", None)
+        if not callable(path_reader):
+            return storage_state_path
+        shop_path = path_reader(account_id, runtime.shop_id)
+        account_path = path_reader(account_id)
+        if not isinstance(account_path, Path) or not account_path.exists():
+            if isinstance(shop_path, Path) and shop_path.exists():
+                return shop_path
+            return storage_state_path
+        if isinstance(shop_path, Path) and shop_path.exists():
+            try:
+                if shop_path.stat().st_mtime >= account_path.stat().st_mtime:
+                    return shop_path
+            except OSError:
+                return shop_path
+        shop_name = _shop_name_from_state(account_path, runtime.shop_id)
+        if not shop_name:
+            if isinstance(shop_path, Path) and shop_path.exists():
+                return shop_path
+            return storage_state_path
+        return self._prepare_shop_storage_state(
+            account_path=account_path,
+            shop_path=shop_path,
+            shop_name=shop_name,
+            entrypoint_url=recipe.entrypoint.url,
+            headed=headed,
+        )
+
+    def _prepare_shop_storage_state(
+        self,
+        *,
+        account_path: Path,
+        shop_path: Path,
+        shop_name: str,
+        entrypoint_url: str,
+        headed: bool,
+    ) -> Path:
+        driver = PlaywrightCLIDriver(
+            session_id=f"agent-shop-context-{shop_path.stem}",
+            storage_state_path=account_path,
+            artifact_dir=getattr(
+                self.settings, "agent_artifact_dir", ".runtime/agent_artifacts"
+            ),
+        )
+        try:
+            driver.open(_shop_selection_url(entrypoint_url), headed=headed)
+            time.sleep(8)
+            page_text = driver.page_text()
+            if "请选择店铺" in page_text and shop_name in page_text:
+                driver.click(LocatorSpec(kind="text", value=shop_name))
+                time.sleep(8)
+            driver.goto(entrypoint_url)
+            time.sleep(5)
+            driver.state_save(shop_path)
+            return shop_path
+        except Exception as exc:
+            raise ShopDashboardScraperError(
+                f"agent_shop_context_prepare_failed: {exc}"
+            ) from exc
+        finally:
+            try:
+                driver.close()
+            except Exception:
+                pass
+
     def _build_crawler(
         self,
         storage_state_path: Path | None,
@@ -427,8 +524,14 @@ class BrowserAgentAdapter:
         runtime: ShopDashboardRuntimeConfig,
         metric_date: str,
         output: dict[str, Any],
+        storage_state_path: Path | None = None,
     ) -> dict[str, Any]:
         payload = dict(output)
+        payload.setdefault("actual_shop_id", runtime.shop_id)
+        if not str(payload.get("shop_name") or "").strip() and storage_state_path:
+            shop_name = _shop_name_from_state(storage_state_path, runtime.shop_id)
+            if shop_name:
+                payload["shop_name"] = shop_name
         _validate_required_output(payload)
         payload.setdefault("status", "success")
         payload.setdefault("source", "browser_agent")
@@ -466,6 +569,60 @@ def _resolve_account_id(runtime: ShopDashboardRuntimeConfig) -> str:
 
 def _format_optional(value: Any) -> str:
     return value.isoformat() if hasattr(value, "isoformat") else str(value or "")
+
+
+def _shop_selection_url(entrypoint_url: str) -> str:
+    parsed = urlparse(str(entrypoint_url or "").strip())
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}/ffa"
+    return "https://fxg.jinritemai.com/ffa"
+
+
+def _shop_name_from_state(path: Path, shop_id: str) -> str:
+    target = str(shop_id or "").strip()
+    if not target:
+        return ""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return ""
+    origins = payload.get("origins") if isinstance(payload, dict) else None
+    if not isinstance(origins, list):
+        return ""
+    for origin in origins:
+        if not isinstance(origin, dict):
+            continue
+        items = origin.get("localStorage")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            value = item.get("value")
+            if not isinstance(value, str) or target not in value:
+                continue
+            shop_name = _shop_name_from_storage_value(value, target)
+            if shop_name:
+                return shop_name
+    return ""
+
+
+def _shop_name_from_storage_value(value: str, shop_id: str) -> str:
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError:
+        return ""
+    subjects = payload.get("login_subject_list") if isinstance(payload, dict) else None
+    if not isinstance(subjects, list):
+        return ""
+    for subject in subjects:
+        if not isinstance(subject, dict):
+            continue
+        account_id = str(subject.get("account_id") or "").strip()
+        if account_id != shop_id:
+            continue
+        return str(subject.get("account_name") or "").strip()
+    return ""
 
 
 def _validate_required_output(payload: dict[str, Any]) -> None:

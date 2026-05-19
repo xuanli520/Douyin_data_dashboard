@@ -43,9 +43,29 @@ class LocatorSpec(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def normalize_kind(cls, value: Any) -> Any:
-        if isinstance(value, dict) and "type" in value and "kind" not in value:
+        if isinstance(value, str):
+            locator_value = value.strip()
+            return {
+                "kind": _infer_locator_kind(locator_value),
+                "value": _strip_locator_prefix(locator_value),
+            }
+        if isinstance(value, dict):
             normalized = dict(value)
-            normalized["kind"] = normalized.pop("type")
+            if "type" in normalized and "kind" not in normalized:
+                normalized["kind"] = normalized.pop("type")
+            if "selector" in normalized:
+                selector = normalized.pop("selector")
+                if "value" not in normalized:
+                    normalized["value"] = selector
+            if "locator" in normalized:
+                locator = normalized.pop("locator")
+                if "value" not in normalized:
+                    normalized["value"] = locator
+            raw_value = normalized.get("value")
+            if isinstance(raw_value, str):
+                if "kind" not in normalized:
+                    normalized["kind"] = _infer_locator_kind(raw_value)
+                normalized["value"] = _strip_locator_prefix(raw_value)
             return normalized
         return value
 
@@ -58,6 +78,29 @@ class LocatorSpec(BaseModel):
         if len(normalized) > 500:
             raise ValueError("locator value is too long")
         return normalized
+
+
+def _infer_locator_kind(value: str) -> str:
+    text = value.strip()
+    lowered = text.lower()
+    if lowered.startswith("xpath="):
+        return "xpath"
+    if lowered.startswith("css="):
+        return "css"
+    if lowered.startswith("text="):
+        return "text"
+    if text.startswith("//") or text.startswith("(//"):
+        return "xpath"
+    return "css"
+
+
+def _strip_locator_prefix(value: str) -> str:
+    text = value.strip()
+    lowered = text.lower()
+    for prefix in ("xpath=", "css=", "text="):
+        if lowered.startswith(prefix):
+            return text[len(prefix) :].strip()
+    return text
 
 
 class Entrypoint(BaseModel):

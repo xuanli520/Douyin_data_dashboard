@@ -86,6 +86,4 @@ def test_collect_one_day_preserves_browser_agent_recovery_metadata(monkeypatch):
     )
 
     assert result["raw"]["agent"]["recovery"]["next_version"] == 2
-    assert result["fallback_trace"] == [
-        {"stage": "browser_agent", "status": "success"}
-    ]
+    assert result["fallback_trace"] == [{"stage": "browser_agent", "status": "success"}]

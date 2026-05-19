@@ -57,10 +57,7 @@ class AgentRecipeService:
             data.namespace,
             data.key,
         )
-        if (
-            current_recipe is None
-            or current_recipe.version != data.expected_version
-        ):
+        if current_recipe is None or current_recipe.version != data.expected_version:
             if self.session.in_transaction():
                 await self.session.rollback()
             return None
@@ -103,4 +100,3 @@ async def get_agent_recipe_service(
     session: AsyncSession = Depends(get_session),
 ) -> AsyncGenerator[AgentRecipeService, None]:
     yield AgentRecipeService(session=session)
-

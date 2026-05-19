@@ -34,7 +34,10 @@ def build_recovery_prompt(request: RecoveryRequest) -> str:
                 {
                     "op": "replace",
                     "path": "/observations/{id}/locator",
-                    "value": {"type": "css|xpath|text|role|test_id|label|placeholder", "value": "string"},
+                    "value": {
+                        "type": "css|xpath|text|role|test_id|label|placeholder",
+                        "value": "string",
+                    },
                 }
             ],
         },

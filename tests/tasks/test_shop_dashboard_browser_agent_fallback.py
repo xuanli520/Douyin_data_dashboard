@@ -79,6 +79,4 @@ def test_collect_one_day_runs_browser_agent_stage(monkeypatch):
 
     assert result["source"] == "browser_agent"
     assert result["total_score"] == 88
-    assert result["fallback_trace"] == [
-        {"stage": "browser_agent", "status": "success"}
-    ]
+    assert result["fallback_trace"] == [{"stage": "browser_agent", "status": "success"}]

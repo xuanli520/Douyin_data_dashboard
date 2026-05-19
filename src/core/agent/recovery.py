@@ -62,7 +62,9 @@ class RecoveryService:
         policy: RecoveryPolicy | dict[str, Any] | None = None,
         attempt: int = 1,
     ) -> RecoveryResult:
-        parsed_policy = RecoveryPolicy.from_value(policy or recipe.get("recovery_policy"))
+        parsed_policy = RecoveryPolicy.from_value(
+            policy or recipe.get("recovery_policy")
+        )
         classification = self._classifier.classify(failure)
         if not parsed_policy.enabled:
             return RecoveryResult(
@@ -152,7 +154,9 @@ class RecoveryService:
             failure_reasons=list(classification.failure_reasons),
             recipe_excerpt=recipe_excerpt,
             observation_specs=observation_specs,
-            security_policy=dict(security_policy) if isinstance(security_policy, dict) else {},
+            security_policy=dict(security_policy)
+            if isinstance(security_policy, dict)
+            else {},
             recovery_policy=policy.to_dict(),
             current_url=artifact_data.get("current_url"),
             rendered_entrypoint_url=artifact_data.get("rendered_entrypoint_url"),

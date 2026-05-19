@@ -31,8 +31,14 @@ class ToolCall(BaseModel):
 
 class ToolRegistry:
     def __init__(self, definitions: Iterable[ToolDefinition] | None = None) -> None:
-        active_definitions = list(definitions) if definitions is not None else self._build_default_definitions()
-        self._definitions = {definition.name: definition for definition in active_definitions}
+        active_definitions = (
+            list(definitions)
+            if definitions is not None
+            else self._build_default_definitions()
+        )
+        self._definitions = {
+            definition.name: definition for definition in active_definitions
+        }
 
     def names(self) -> list[str]:
         return list(self._definitions)
@@ -50,19 +56,26 @@ class ToolRegistry:
         return definition
 
     def validate_tool_call(self, value: ToolCall | dict[str, Any]) -> ToolCall:
-        tool_call = value if isinstance(value, ToolCall) else ToolCall.model_validate(value)
+        tool_call = (
+            value if isinstance(value, ToolCall) else ToolCall.model_validate(value)
+        )
         definition = self.get(tool_call.name)
         argument_names = {argument.name for argument in definition.arguments}
         missing = [
             argument.name
             for argument in definition.arguments
-            if argument.required and self._is_missing(tool_call.arguments.get(argument.name))
+            if argument.required
+            and self._is_missing(tool_call.arguments.get(argument.name))
         ]
         if missing:
-            raise ValueError(f"missing required arguments for {tool_call.name}: {', '.join(missing)}")
+            raise ValueError(
+                f"missing required arguments for {tool_call.name}: {', '.join(missing)}"
+            )
         unexpected = sorted(set(tool_call.arguments) - argument_names)
         if unexpected:
-            raise ValueError(f"unexpected arguments for {tool_call.name}: {', '.join(unexpected)}")
+            raise ValueError(
+                f"unexpected arguments for {tool_call.name}: {', '.join(unexpected)}"
+            )
         return tool_call
 
     def _is_missing(self, value: Any) -> bool:
@@ -74,10 +87,14 @@ class ToolRegistry:
 
     def _build_default_definitions(self) -> list[ToolDefinition]:
         return [
-            ToolDefinition(name="goto", arguments=[ToolArgument(name="url", required=True)]),
+            ToolDefinition(
+                name="goto", arguments=[ToolArgument(name="url", required=True)]
+            ),
             ToolDefinition(name="back"),
             ToolDefinition(name="reload"),
-            ToolDefinition(name="click", arguments=[ToolArgument(name="locator", required=True)]),
+            ToolDefinition(
+                name="click", arguments=[ToolArgument(name="locator", required=True)]
+            ),
             ToolDefinition(
                 name="fill",
                 arguments=[

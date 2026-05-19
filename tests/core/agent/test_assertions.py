@@ -8,9 +8,7 @@ from src.core.agent.models import AssertionSpec
 def test_evaluate_assertions_raises_for_error():
     with pytest.raises(AssertionFailedError):
         evaluate_assertions(
-            assertions=[
-                AssertionSpec(id="required", kind="not_empty", source="value")
-            ],
+            assertions=[AssertionSpec(id="required", kind="not_empty", source="value")],
             values={"value": ""},
         )
 

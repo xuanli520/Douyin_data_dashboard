@@ -18,6 +18,10 @@ from src.application.collection.contracts import Bootstrapper
 from src.application.collection.contracts import SessionFactory
 from src.application.collection.executor import CollectionExecutor
 from src.application.collection.executor import TaskModuleCollectionExecutor
+from src.application.collection.browser_agent_adapter import (
+    _recipe_payload_from_model,
+)
+from src.application.collection.browser_agent_adapter import load_agent_recipe_from_db
 from src.application.collection.plan_builder_impl import CollectionPlanUnit
 from src.application.collection.plan_builder_impl import build_collection_plan
 from src.application.collection.redis_client import RedisClient
@@ -565,12 +569,14 @@ class CollectionUseCase:
             if plan_unit.shop_id in verify_metric_date_by_shop:
                 continue
             verify_metric_date_by_shop[plan_unit.shop_id] = plan_unit.metric_date
-        bootstrap_results = await self._bootstrap_shops(
-            bootstrapper=bootstrapper,
-            runtime=runtime,
-            shop_ids=requested_shop_ids,
-            verify_metric_date_by_shop=verify_metric_date_by_shop,
-        )
+        bootstrap_results: dict[str, dict[str, Any]] = {}
+        if self._uses_http_collection(runtime):
+            bootstrap_results = await self._bootstrap_shops(
+                bootstrapper=bootstrapper,
+                runtime=runtime,
+                shop_ids=requested_shop_ids,
+                verify_metric_date_by_shop=verify_metric_date_by_shop,
+            )
         capability_service = ShopSwitchCapabilityService(redis_client=redis_client)
         bootstrap_rebuild_count = 0
         bootstrap_verify_failed_count = 0
@@ -659,7 +665,7 @@ class CollectionUseCase:
                 )
                 continue
             bundle = state_store.load_bundle(storage_account_id, plan_unit.shop_id)
-            if not bundle:
+            if not bundle and self._uses_http_collection(unit_runtime):
                 bootstrap_result = await self._bootstrap_shop(
                     bootstrapper=bootstrapper,
                     runtime=unit_runtime,
@@ -792,6 +798,12 @@ class CollectionUseCase:
             if cached:
                 if isinstance(cached, dict) and "account_id_status" not in cached:
                     cached["account_id_status"] = account_id_status
+                await self._persist_success_payload(
+                    session_factory=session_factory,
+                    runtime=unit_runtime,
+                    metric_date=plan_unit.metric_date,
+                    payload=cached,
+                )
                 items.append(cached)
                 observe_shop_dashboard_collection(
                     source=str(cached.get("source", "cache")),
@@ -847,6 +859,7 @@ class CollectionUseCase:
                     lock_manager=lock_manager,
                     state_store=state_store,
                     login_state_manager=login_state_manager,
+                    session_factory=session_factory,
                 )
                 target_shop_id = plan_unit.shop_id
                 actual_shop_id = self._resolve_actual_shop_id(
@@ -856,7 +869,9 @@ class CollectionUseCase:
                 mismatch_status = (
                     "matched" if actual_shop_id == target_shop_id else "mismatched"
                 )
-                if mismatch_status == "mismatched":
+                if mismatch_status == "mismatched" and self._uses_http_collection(
+                    unit_runtime
+                ):
                     shop_mismatch_count += 1
                     state_store.invalidate_bundle(storage_account_id, target_shop_id)
                     bootstrap_retry = await self._bootstrap_shop(
@@ -895,6 +910,7 @@ class CollectionUseCase:
                             lock_manager=lock_manager,
                             state_store=state_store,
                             login_state_manager=login_state_manager,
+                            session_factory=session_factory,
                         )
                         actual_shop_id = self._resolve_actual_shop_id(
                             collected=collected,
@@ -979,14 +995,13 @@ class CollectionUseCase:
                 )
                 if capability_account_id:
                     capability_service.clear_observation(capability_account_id)
-                async with session_factory() as persist_session:
-                    await self.result_persister.persist(
-                        session=persist_session,
-                        runtime=unit_runtime,
-                        metric_date=plan_unit.metric_date,
-                        payload=collected,
-                    )
-                if str(collected.get("status", "success")).strip().lower() == "success":
+                await self._persist_success_payload(
+                    session_factory=session_factory,
+                    runtime=unit_runtime,
+                    metric_date=plan_unit.metric_date,
+                    payload=collected,
+                )
+                if self._is_success_payload(collected):
                     helper.cache_result(business_key, collected)
                 items.append(collected)
                 source = str(collected.get("source", "unknown"))
@@ -1140,6 +1155,27 @@ class CollectionUseCase:
             return candidate
         return str(fallback_shop_id or "").strip()
 
+    async def _persist_success_payload(
+        self,
+        *,
+        session_factory: SessionFactory,
+        runtime: ShopDashboardRuntimeConfig,
+        metric_date: str,
+        payload: Any,
+    ) -> None:
+        if not isinstance(payload, dict) or not self._is_success_payload(payload):
+            return
+        async with session_factory() as persist_session:
+            await self.result_persister.persist(
+                session=persist_session,
+                runtime=runtime,
+                metric_date=metric_date,
+                payload=payload,
+            )
+
+    def _is_success_payload(self, payload: dict[str, Any]) -> bool:
+        return str(payload.get("status", "success")).strip().lower() == "success"
+
     async def _collect_unit_payload(
         self,
         *,
@@ -1150,23 +1186,88 @@ class CollectionUseCase:
         lock_manager: Any,
         state_store: Any,
         login_state_manager: Any,
+        session_factory: SessionFactory,
     ) -> dict[str, Any]:
-        http_payload = await self._collect_http_unit_payload(
-            bootstrapper=bootstrapper,
-            runtime=runtime,
-            metric_date=metric_date,
+        fallback_trace: list[dict[str, Any]] = []
+        last_error: Exception | None = None
+        for stage in self._collection_stages(runtime):
+            if stage == "http":
+                try:
+                    payload = await self._collect_http_unit_payload(
+                        bootstrapper=bootstrapper,
+                        runtime=runtime,
+                        metric_date=metric_date,
+                    )
+                except ShopDashboardScraperError as exc:
+                    last_error = exc
+                    fallback_trace.append(
+                        {"stage": "http", "status": "failed", "error": str(exc)}
+                    )
+                    continue
+                if fallback_trace:
+                    payload["fallback_trace"] = fallback_trace + list(
+                        payload.get("fallback_trace", [])
+                    )
+                return payload
+            if stage == "browser_agent":
+                stage_runtime = replace(runtime, fallback_chain=("browser_agent",))
+                stage_runtime = await self._load_browser_agent_recipe(
+                    runtime=stage_runtime,
+                    session_factory=session_factory,
+                )
+                try:
+                    payload = await asyncio.to_thread(
+                        self._collect_one_unit_payload,
+                        runtime=stage_runtime,
+                        metric_date=metric_date,
+                        plan_unit=plan_unit,
+                        lock_manager=lock_manager,
+                        state_store=state_store,
+                        login_state_manager=login_state_manager,
+                    )
+                except (ShopDashboardScraperError, ScrapingFailedException) as exc:
+                    last_error = exc
+                    fallback_trace.append(
+                        {
+                            "stage": "browser_agent",
+                            "status": "failed",
+                            "error": str(exc),
+                        }
+                    )
+                    continue
+                if fallback_trace:
+                    payload["fallback_trace"] = fallback_trace + list(
+                        payload.get("fallback_trace", [])
+                    )
+                return payload
+        if last_error is not None:
+            raise last_error
+        raise ShopDashboardScraperError("collection_path_not_configured")
+
+    async def _load_browser_agent_recipe(
+        self,
+        *,
+        runtime: ShopDashboardRuntimeConfig,
+        session_factory: SessionFactory,
+    ) -> ShopDashboardRuntimeConfig:
+        extra_config = dict(runtime.extra_config or {})
+        if isinstance(extra_config.get("agent_recipe_inline"), dict):
+            return runtime
+        recipe_ref = runtime.agent_recipe_ref
+        if not isinstance(recipe_ref, dict) or isinstance(
+            recipe_ref.get("recipe"), dict
+        ):
+            return runtime
+        async with session_factory() as db_session:
+            recipe = await load_agent_recipe_from_db(db_session, recipe_ref)
+        if recipe is None:
+            return runtime
+        extra_config["agent_recipe_inline"] = (
+            _recipe_payload_from_model(recipe)
+            if hasattr(recipe, "entrypoint")
+            else dict(recipe)
         )
-        if http_payload is not None:
-            return http_payload
-        return await asyncio.to_thread(
-            self._collect_one_unit_payload,
-            runtime=runtime,
-            metric_date=metric_date,
-            plan_unit=plan_unit,
-            lock_manager=lock_manager,
-            state_store=state_store,
-            login_state_manager=login_state_manager,
-        )
+        return replace(runtime, extra_config=extra_config)
 
     async def _collect_http_unit_payload(
         self,
@@ -1174,23 +1275,45 @@ class CollectionUseCase:
         bootstrapper: Bootstrapper,
         runtime: ShopDashboardRuntimeConfig,
         metric_date: str,
-    ) -> dict[str, Any] | None:
+    ) -> dict[str, Any]:
         collect_shop_payload = getattr(bootstrapper, "collect_shop_payload", None)
         if not callable(collect_shop_payload):
-            return None
-        try:
-            result = await self._invoke_with_optional_kwargs(
-                call=collect_shop_payload,
-                kwargs={
-                    "runtime": runtime,
-                    "shop_id": runtime.shop_id,
-                },
-                optional_kwargs={"metric_date": metric_date},
-            )
-        except ShopDashboardScraperError:
-            return None
+            raise ShopDashboardScraperError("http_collection_not_available")
+        result = await self._invoke_with_optional_kwargs(
+            call=collect_shop_payload,
+            kwargs={
+                "runtime": runtime,
+                "shop_id": runtime.shop_id,
+            },
+            optional_kwargs={"metric_date": metric_date},
+        )
         if isinstance(result, dict):
             return result
+        raise ShopDashboardScraperError("http_collection_payload_invalid")
+
+    def _uses_http_collection(self, runtime: ShopDashboardRuntimeConfig) -> bool:
+        return "http" in self._collection_stages(runtime)
+
+    def _collection_stages(
+        self,
+        runtime: ShopDashboardRuntimeConfig,
+    ) -> tuple[str, ...]:
+        stages: list[str] = []
+        for stage in runtime.fallback_chain or ("browser_agent",):
+            normalized = self._normalize_collection_stage(stage)
+            if normalized is None:
+                raise ShopDashboardScraperError(f"invalid_collection_stage:{stage}")
+            if normalized in stages:
+                continue
+            stages.append(normalized)
+        return tuple(stages or ["browser_agent"])
+
+    def _normalize_collection_stage(self, stage: Any) -> str | None:
+        stage_name = str(stage or "").strip().lower()
+        if stage_name in {"http", "api"}:
+            return "http"
+        if stage_name in {"browser", "browser_agent", "agent"}:
+            return "browser_agent"
         return None
 
     def _resolve_storage_account_id(

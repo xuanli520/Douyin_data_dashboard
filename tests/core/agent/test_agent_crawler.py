@@ -2,6 +2,7 @@ from pathlib import Path
 
 from src.core.agent.browser import DriverResult
 from src.core.agent.crawler import AgentCrawler
+from src.core.agent.exceptions import BrowserDriverError
 from src.core.agent.models import Entrypoint
 from src.core.agent.models import LocatorSpec
 from src.core.agent.models import ObservationSpec
@@ -104,3 +105,31 @@ def test_agent_crawler_runs_recipe_with_fake_driver():
         ("open", "https://example.test/page"),
         ("goto", "https://example.test/page"),
     ]
+
+
+def test_agent_crawler_ignores_driver_close_error():
+    class CloseFailingDriver(TranscriptDriver):
+        def close(self) -> None:
+            self.closed = True
+            raise BrowserDriverError("close timeout")
+
+    driver = CloseFailingDriver()
+    recipe = Recipe(
+        namespace="generic",
+        key="sample",
+        entrypoint=Entrypoint(url="https://example.test/page"),
+        observations={
+            "value": ObservationSpec(
+                id="value",
+                kind="text",
+                locator=LocatorSpec(kind="css", value=".value"),
+                required=True,
+            )
+        },
+        security_policy=SecurityPolicy(allowed_origins=["https://example.test"]),
+    )
+
+    result = AgentCrawler(driver).run(recipe, RunContext(session_id="run"))
+
+    assert result.ok is True
+    assert driver.closed is True
