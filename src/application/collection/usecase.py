@@ -685,7 +685,7 @@ class CollectionUseCase:
             if cached:
                 if isinstance(cached, dict) and "account_id_status" not in cached:
                     cached["account_id_status"] = account_id_status
-                await self._persist_success_payload(
+                await self._persist_payload(
                     session_factory=session_factory,
                     runtime=unit_runtime,
                     metric_date=plan_unit.metric_date,
@@ -813,7 +813,7 @@ class CollectionUseCase:
                     account_id=storage_account_id,
                     shop_id=target_shop_id,
                 )
-                await self._persist_success_payload(
+                await self._persist_payload(
                     session_factory=session_factory,
                     runtime=unit_runtime,
                     metric_date=plan_unit.metric_date,
@@ -833,6 +833,12 @@ class CollectionUseCase:
                         error_code=error_code,
                         error=str(exc),
                         account_id_status=account_id_status,
+                    )
+                    await self._persist_payload(
+                        session_factory=session_factory,
+                        runtime=unit_runtime,
+                        metric_date=plan_unit.metric_date,
+                        payload=failed_item,
                     )
                     items.append(failed_item)
                     source = "browser_agent"
@@ -1071,7 +1077,7 @@ class CollectionUseCase:
         if cached:
             if isinstance(cached, dict) and "account_id_status" not in cached:
                 cached["account_id_status"] = account_id_status
-            await self._persist_success_payload(
+            await self._persist_payload(
                 session_factory=session_factory,
                 runtime=unit_runtime,
                 metric_date=plan_unit.metric_date,
@@ -1196,7 +1202,7 @@ class CollectionUseCase:
                 account_id=storage_account_id,
                 shop_id=target_shop_id,
             )
-            await self._persist_success_payload(
+            await self._persist_payload(
                 session_factory=session_factory,
                 runtime=unit_runtime,
                 metric_date=plan_unit.metric_date,
@@ -1222,6 +1228,12 @@ class CollectionUseCase:
                     error_code=error_code,
                     error=str(exc),
                     account_id_status=account_id_status,
+                )
+                await self._persist_payload(
+                    session_factory=session_factory,
+                    runtime=unit_runtime,
+                    metric_date=plan_unit.metric_date,
+                    payload=item,
                 )
                 observe_shop_dashboard_collection(
                     source="browser_agent",
@@ -1590,7 +1602,7 @@ class CollectionUseCase:
             return candidate
         return str(fallback_shop_id or "").strip()
 
-    async def _persist_success_payload(
+    async def _persist_payload(
         self,
         *,
         session_factory: SessionFactory,
@@ -1598,7 +1610,7 @@ class CollectionUseCase:
         metric_date: str,
         payload: Any,
     ) -> None:
-        if not isinstance(payload, dict) or not self._is_success_payload(payload):
+        if not isinstance(payload, dict):
             return
         async with session_factory() as persist_session:
             await self.result_persister.persist(

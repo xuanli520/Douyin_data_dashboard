@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
 from datetime import date
 from typing import Any
 
@@ -13,7 +12,6 @@ from src.domains.experience.services import ExperienceQueryService
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
 from src.middleware.monitor import observe_shop_dashboard_score_upsert
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
-from src.shared.payload_extractors import extract_nested_list
 
 logger = logging.getLogger(__name__)
 
@@ -57,76 +55,26 @@ class CollectionResultPersister:
             )
             return
         source = str(payload.get("source", "browser_agent"))
+        status = str(payload.get("status") or "success").strip() or "success"
         score = await repo.upsert_score(
             shop_id=resolved_shop_id,
             metric_date=metric_day,
-            total_score=float(payload.get("total_score", 0.0)),
-            product_score=float(payload.get("product_score", 0.0)),
-            logistics_score=float(payload.get("logistics_score", 0.0)),
-            service_score=float(payload.get("service_score", 0.0)),
-            bad_behavior_score=float(payload.get("bad_behavior_score", 0.0)),
+            total_score=_to_float_or_none(payload.get("total_score")),
+            product_score=_to_float_or_none(payload.get("product_score")),
+            logistics_score=_to_float_or_none(payload.get("logistics_score")),
+            service_score=_to_float_or_none(payload.get("service_score")),
+            bad_behavior_score=_to_float_or_none(payload.get("bad_behavior_score")),
             shop_name=str(payload.get("shop_name", "")).strip() or None,
             source=source,
+            status=status,
+            reason=payload.get("reason"),
+            error_code=payload.get("error_code"),
         )
         insert_or_update = sa_inspect(score).info.get("insert_or_update", "update")
         observe_shop_dashboard_score_upsert(
             insert_or_update=str(insert_or_update),
             shop_id=resolved_shop_id,
             metric_date=metric_day_text,
-        )
-
-        reviews = payload.get("reviews", {}).get("items", [])
-        review_rows = []
-        for review in reviews:
-            review_rows.append(
-                {
-                    "review_id": review.get("id") or review.get("review_id") or "",
-                    "content": review.get("content") or "",
-                    "is_replied": bool(review.get("shop_reply")),
-                    "source": source,
-                }
-            )
-        await repo.replace_reviews(
-            shop_id=resolved_shop_id,
-            metric_date=metric_day,
-            reviews=review_rows,
-        )
-
-        violations = _extract_violation_items(payload)
-        violation_rows = []
-        for item in violations:
-            violation_rows.append(
-                {
-                    "violation_id": item.get("ticket_id")
-                    or item.get("ticketId")
-                    or item.get("id")
-                    or item.get("rule_id")
-                    or item.get("penalty_id")
-                    or item.get("rule")
-                    or "",
-                    "violation_type": item.get("type")
-                    or item.get("rule_type")
-                    or item.get("violation_type")
-                    or item.get("penalty_type")
-                    or "unknown",
-                    "description": item.get("description")
-                    or item.get("reason")
-                    or item.get("rule"),
-                    "score": _to_int(
-                        item.get("score")
-                        or item.get("deduct_score")
-                        or item.get("deductScore")
-                        or item.get("point")
-                        or item.get("points")
-                        or 0
-                    ),
-                    "source": source,
-                }
-            )
-        await repo.replace_violations(
-            shop_id=resolved_shop_id,
-            metric_date=metric_day,
-            violations=violation_rows,
         )
         await session.commit()
         try:
@@ -163,40 +111,13 @@ class CollectionResultPersister:
         )
 
 
-def _extract_violation_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    violations = payload.get("violations")
-    if isinstance(violations, dict):
-        direct = _normalize_violation_items(violations.get("waiting_list"))
-        if direct:
-            return direct
-
-    raw = payload.get("raw")
-    if isinstance(raw, dict):
-        raw_violations = raw.get("violations")
-        if isinstance(raw_violations, dict):
-            extracted = extract_nested_list(raw_violations.get("waiting_list"))
-            fallback = _normalize_violation_items(extracted)
-            if fallback:
-                return fallback
-
-    return []
-
-
-def _normalize_violation_items(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    rows: list[dict[str, Any]] = []
-    for item in value:
-        if isinstance(item, Mapping):
-            rows.append(dict(item))
-    return rows
-
-
-def _to_int(value: Any) -> int:
+def _to_float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
     try:
-        return int(float(value))
+        return float(value)
     except (TypeError, ValueError):
-        return 0
+        return None
 
 
 def _normalize_shop_id(value: Any) -> str:
