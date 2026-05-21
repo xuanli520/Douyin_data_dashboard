@@ -56,7 +56,7 @@ class CollectionResultPersister:
                 metric_day_text,
             )
             return
-        source = str(payload.get("source", "script"))
+        source = str(payload.get("source", "browser_agent"))
         score = await repo.upsert_score(
             shop_id=resolved_shop_id,
             metric_date=metric_day,

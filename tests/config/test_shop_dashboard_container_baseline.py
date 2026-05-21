@@ -6,12 +6,12 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_pyproject_has_shop_dashboard_http_dependencies():
+def test_pyproject_has_shop_dashboard_agent_dependencies():
     pyproject_data = tomllib.loads(
         (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )
     dependencies = pyproject_data["project"]["dependencies"]
-    assert any(dep.startswith("h2") for dep in dependencies)
+    assert not any(dep.startswith("h2") for dep in dependencies)
     assert not any(dep.startswith("playwright") for dep in dependencies)
 
 

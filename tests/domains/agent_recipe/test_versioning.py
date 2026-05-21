@@ -43,7 +43,9 @@ async def test_agent_recipe_version_rows_are_append_only(test_db):
         versions = await repo.list_versions("shop_dashboard", "overview")
 
         assert created.version == 1
+        assert created.stability == "candidate"
         assert second is not None
         assert second.version == 2
+        assert second.stability == "candidate"
         assert len(versions) == 2
         assert {item.version for item in versions} == {1, 2}

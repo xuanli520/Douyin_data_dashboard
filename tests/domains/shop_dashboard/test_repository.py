@@ -24,7 +24,7 @@ async def test_upsert_score_by_shop_and_date(test_db):
             logistics_score=4.82,
             service_score=4.90,
             shop_name="shop-old",
-            source="http",
+            source="browser_agent",
         )
         second = await repo.upsert_score(
             shop_id="shop-1",
@@ -34,7 +34,7 @@ async def test_upsert_score_by_shop_and_date(test_db):
             logistics_score=4.83,
             service_score=4.91,
             shop_name="demo-shop",
-            source="browser",
+            source="browser_agent",
         )
 
         count = (
@@ -49,7 +49,7 @@ async def test_upsert_score_by_shop_and_date(test_db):
         assert first.id == second.id
         assert second.total_score == 4.88
         assert second.shop_name == "demo-shop"
-        assert second.source == "browser"
+        assert second.source == "browser_agent"
         assert count == 1
 
 
@@ -66,11 +66,11 @@ async def test_upsert_score_accepts_optional_bad_behavior_score(test_db):
             logistics_score=4.82,
             service_score=4.90,
             bad_behavior_score=0.0,
-            source="http",
+            source="browser_agent",
         )
 
         assert row.total_score == 4.86
-        assert row.source == "http"
+        assert row.source == "browser_agent"
 
 
 async def test_upsert_score_uses_zero_when_bad_behavior_score_is_none(test_db):
@@ -86,7 +86,7 @@ async def test_upsert_score_uses_zero_when_bad_behavior_score_is_none(test_db):
             logistics_score=4.82,
             service_score=4.90,
             bad_behavior_score=None,
-            source="http",
+            source="browser_agent",
         )
 
         assert row.bad_behavior_score == 0.0
@@ -106,7 +106,7 @@ async def test_upsert_score_preserves_valid_score_when_degraded_zero_overwrites(
             product_score=4.88,
             logistics_score=4.82,
             service_score=4.90,
-            source="script",
+            source="browser_agent",
         )
         second = await repo.upsert_score(
             shop_id="shop-1",
@@ -139,13 +139,13 @@ async def test_replace_reviews_by_shop_and_date(test_db):
                     "review_id": "r-1",
                     "content": "bad package",
                     "is_replied": False,
-                    "source": "http",
+                    "source": "browser_agent",
                 },
                 {
                     "review_id": "r-2",
                     "content": "late delivery",
                     "is_replied": True,
-                    "source": "http",
+                    "source": "browser_agent",
                 },
             ],
         )
@@ -157,13 +157,13 @@ async def test_replace_reviews_by_shop_and_date(test_db):
                     "review_id": "r-2",
                     "content": "late delivery",
                     "is_replied": True,
-                    "source": "browser",
+                    "source": "browser_agent",
                 },
                 {
                     "review_id": "r-3",
                     "content": "service issue",
                     "is_replied": False,
-                    "source": "browser",
+                    "source": "browser_agent",
                 },
             ],
         )
@@ -185,7 +185,7 @@ async def test_replace_reviews_by_shop_and_date(test_db):
 
         assert len(rows) == 2
         assert [row.review_id for row in rows] == ["r-2", "r-3"]
-        assert rows[0].source == "browser"
+        assert rows[0].source == "browser_agent"
 
 
 async def test_replace_violations_by_shop_and_date(test_db):
@@ -202,14 +202,14 @@ async def test_replace_violations_by_shop_and_date(test_db):
                     "violation_type": "A",
                     "description": "description-a",
                     "score": 4,
-                    "source": "http",
+                    "source": "browser_agent",
                 },
                 {
                     "violation_id": "v-2",
                     "violation_type": "B",
                     "description": "description-b",
                     "score": 2,
-                    "source": "http",
+                    "source": "browser_agent",
                 },
             ],
         )
@@ -306,7 +306,7 @@ async def test_build_agent_context_includes_existing_cold_metrics(test_db):
             product_score=4.88,
             logistics_score=4.82,
             service_score=4.90,
-            source="http",
+            source="browser_agent",
         )
         await repo.replace_violations(
             shop_id="shop-1",
@@ -317,7 +317,7 @@ async def test_build_agent_context_includes_existing_cold_metrics(test_db):
                     "violation_type": "A",
                     "description": "description-a",
                     "score": 4,
-                    "source": "http",
+                    "source": "browser_agent",
                 }
             ],
         )
@@ -355,7 +355,7 @@ async def test_list_display_materials_returns_grouped_daily_data(test_db):
             logistics_score=4.82,
             service_score=4.90,
             bad_behavior_score=0.2,
-            source="http",
+            source="browser_agent",
         )
         await repo.replace_violations(
             shop_id="shop-1",
@@ -366,7 +366,7 @@ async def test_list_display_materials_returns_grouped_daily_data(test_db):
                     "violation_type": "risk",
                     "description": "description-a",
                     "score": 4,
-                    "source": "http",
+                    "source": "browser_agent",
                 }
             ],
         )

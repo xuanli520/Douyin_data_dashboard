@@ -8,7 +8,6 @@ from typing import Protocol
 from src.scrapers.shop_dashboard.lock_manager import LockManager
 from src.scrapers.shop_dashboard.login_state_manager import LoginStateManager
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
-from src.scrapers.shop_dashboard.session_bootstrapper import SessionBootstrapper
 from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
 from src.shared.idempotency import FunboostIdempotencyHelper
 
@@ -47,12 +46,6 @@ class CollectionExecutor(Protocol):
         state_store: SessionStateStore,
         redis_client: Any,
     ) -> LoginStateManager: ...
-
-    def create_bootstrapper(
-        self,
-        *,
-        state_store: SessionStateStore,
-    ) -> SessionBootstrapper: ...
 
     def build_business_key(
         self,
@@ -146,20 +139,6 @@ class TaskModuleCollectionExecutor:
         return login_state_manager_cls(
             state_store=state_store,
             redis_client=redis_client,
-        )
-
-    def create_bootstrapper(
-        self,
-        *,
-        state_store: SessionStateStore,
-    ) -> SessionBootstrapper:
-        bootstrapper_cls = getattr(
-            self._task_module,
-            "SessionBootstrapper",
-            SessionBootstrapper,
-        )
-        return bootstrapper_cls(
-            state_store=state_store,
         )
 
     def build_business_key(

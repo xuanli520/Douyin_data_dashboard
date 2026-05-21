@@ -2,6 +2,7 @@ from src.domains.agent_recipe.repository import AgentRecipeRepository
 from src.domains.agent_recipe.schemas import (
     AgentRecipeCreate,
     AgentRecipeMarkDegraded,
+    AgentRecipeMarkStable,
     AgentRecipeVersionCreate,
 )
 from src.domains.agent_recipe.services import AgentRecipeService
@@ -36,6 +37,7 @@ class TestAgentRecipeServiceIntegration:
             assert active is not None
             assert active.id == created.id
             assert active.version == 1
+            assert active.stability == "candidate"
 
     async def test_create_next_version_returns_none_on_stale_expected_version(
         self,
@@ -83,6 +85,7 @@ class TestAgentRecipeServiceIntegration:
 
             assert created is not None
             assert created.version == 2
+            assert created.stability == "candidate"
             assert stale is None
             assert active is not None
             assert active.version == 2
@@ -109,3 +112,27 @@ class TestAgentRecipeServiceIntegration:
 
             assert updated is True
             assert active is None
+
+    async def test_mark_stable_promotes_active_version(self, test_db):
+        async with test_db() as session:
+            service = AgentRecipeService(session=session)
+            created = await service.create(
+                AgentRecipeCreate(
+                    namespace="shop_dashboard",
+                    key="overview",
+                    **_recipe_payload(),
+                )
+            )
+
+            updated = await service.mark_stable(
+                AgentRecipeMarkStable(
+                    recipe_id=created.id,
+                    expected_version=created.version,
+                )
+            )
+            stable = await service.get_stable_active("shop_dashboard", "overview")
+
+            assert updated is True
+            assert stable is not None
+            assert stable.id == created.id
+            assert stable.stability == "stable"

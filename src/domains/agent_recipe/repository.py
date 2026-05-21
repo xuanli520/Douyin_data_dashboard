@@ -5,6 +5,8 @@ from src.domains.agent_recipe.models import (
     AGENT_RECIPE_STATUS_ACTIVE,
     AGENT_RECIPE_STATUS_DEGRADED,
     AGENT_RECIPE_STATUS_DISABLED,
+    AGENT_RECIPE_STABILITY_CANDIDATE,
+    AGENT_RECIPE_STABILITY_STABLE,
     AgentRecipe,
 )
 from src.shared.repository import BaseRepository
@@ -48,6 +50,20 @@ class AgentRecipeRepository(BaseRepository):
         )
         return (await self.session.execute(stmt)).scalars().first()
 
+    async def get_stable_active(self, namespace: str, key: str) -> AgentRecipe | None:
+        stmt = (
+            select(AgentRecipe)
+            .where(
+                AgentRecipe.namespace == namespace,
+                AgentRecipe.key == key,
+                AgentRecipe.status == AGENT_RECIPE_STATUS_ACTIVE,
+                AgentRecipe.stability == AGENT_RECIPE_STABILITY_STABLE,
+            )
+            .order_by(desc(AgentRecipe.version), desc(AgentRecipe.id))
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).scalars().first()
+
     async def get_active_for_update(
         self,
         namespace: str,
@@ -77,6 +93,7 @@ class AgentRecipeRepository(BaseRepository):
             key=current_recipe.key,
             version=(current_recipe.version or 0) + 1,
             status=AGENT_RECIPE_STATUS_ACTIVE,
+            stability=AGENT_RECIPE_STABILITY_CANDIDATE,
             entrypoint=data["entrypoint"],
             steps=data["steps"],
             observations=data["observations"],
@@ -114,6 +131,29 @@ class AgentRecipeRepository(BaseRepository):
             return False
 
         recipe.status = AGENT_RECIPE_STATUS_DEGRADED
+        recipe.stability = AGENT_RECIPE_STABILITY_CANDIDATE
         _ = reason
+        await self._flush()
+        return True
+
+    async def mark_stable(
+        self,
+        *,
+        recipe_id: int,
+        expected_version: int,
+    ) -> bool:
+        recipe = await self.get_by_id(recipe_id)
+        if (
+            recipe is None
+            or recipe.version != expected_version
+            or recipe.status != AGENT_RECIPE_STATUS_ACTIVE
+        ):
+            return False
+
+        current_active = await self.get_active_for_update(recipe.namespace, recipe.key)
+        if current_active is None or current_active.id != recipe.id:
+            return False
+
+        recipe.stability = AGENT_RECIPE_STABILITY_STABLE
         await self._flush()
         return True

@@ -2,6 +2,7 @@ from src.domains.agent_recipe.repository import AgentRecipeRepository
 from src.domains.agent_recipe.schemas import (
     AgentRecipeCreate,
     AgentRecipeMarkDegraded,
+    AgentRecipeMarkStable,
     AgentRecipeVersionCreate,
 )
 from src.domains.agent_recipe.services import AgentRecipeService
@@ -49,6 +50,7 @@ async def test_agent_recipe_versioning_flow(test_db):
 
         assert upgraded is not None
         assert upgraded.version == 2
+        assert upgraded.stability == "candidate"
         assert active is not None
         assert active.id == upgraded.id
         assert [item.version for item in versions] == [2, 1]
@@ -81,3 +83,31 @@ async def test_agent_recipe_mark_degraded_keeps_prior_versions(test_db):
         assert active is None
         assert len(versions) == 1
         assert versions[0].version == 1
+        assert versions[0].stability == "candidate"
+
+
+async def test_agent_recipe_mark_stable_allows_stable_lookup(test_db):
+    async with test_db() as session:
+        service = AgentRecipeService(session=session)
+        created = await service.create(
+            AgentRecipeCreate(
+                namespace="shop_dashboard",
+                key="overview",
+                **_recipe_payload(),
+            )
+        )
+
+        updated = await service.mark_stable(
+            AgentRecipeMarkStable(
+                recipe_id=created.id,
+                expected_version=created.version,
+            )
+        )
+
+        repo = AgentRecipeRepository(session)
+        stable = await repo.get_stable_active("shop_dashboard", "overview")
+
+        assert updated is True
+        assert stable is not None
+        assert stable.id == created.id
+        assert stable.stability == "stable"

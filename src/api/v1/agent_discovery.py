@@ -5,8 +5,15 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, status
-from pydantic import BaseModel, Field
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.auth import User, current_user
 from src.auth.permissions import ShopDashboardPermission
@@ -16,6 +23,11 @@ from src.core.agent.discovery_event_store import (
     DiscoveryEventStore,
     _RUN_EVENTS as _STORE_RUN_EVENTS,
     terminal_event,
+)
+from src.domains.agent_recipe.schemas import AgentRecipeMarkStable
+from src.domains.agent_recipe.services import (
+    AgentRecipeService,
+    get_agent_recipe_service,
 )
 from src.responses.base import Response
 
@@ -27,11 +39,20 @@ _RUN_EVENTS = _STORE_RUN_EVENTS
 
 
 class AgentDiscoveryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    shop_id: str = Field(..., min_length=1)
     goal: str = Field(..., min_length=1)
     entrypoint_url: str = Field(..., min_length=1)
     namespace_hint: str | None = None
     key_hint: str | None = None
     max_steps: int | None = Field(default=None, ge=1, le=100)
+
+
+class AgentRecipeMarkStableRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_version: int = Field(..., ge=1)
 
 
 @router.post("", response_model=Response[dict[str, Any]])
@@ -48,6 +69,7 @@ async def trigger_agent_discovery(
             "current_url": payload.entrypoint_url,
             "status": "queued",
             "message": "discovery queued",
+            "shop_id": payload.shop_id,
         },
     )
     _publish_discovery_task(run_id=run_id, payload=payload)
@@ -56,6 +78,36 @@ async def trigger_agent_discovery(
             "run_id": run_id,
             "status": "queued",
             "event_sequence": 1,
+        }
+    )
+
+
+@router.post(
+    "/recipes/{recipe_id}/mark-stable",
+    response_model=Response[dict[str, Any]],
+)
+async def mark_agent_recipe_stable(
+    recipe_id: int,
+    payload: AgentRecipeMarkStableRequest,
+    _user: User = Depends(current_user),
+    _=Depends(require_permissions(_DISCOVERY_PERMISSION, bypass_superuser=True)),
+    service: AgentRecipeService = Depends(get_agent_recipe_service),
+) -> Response[dict[str, Any]]:
+    updated = await service.mark_stable(
+        AgentRecipeMarkStable(
+            recipe_id=recipe_id,
+            expected_version=payload.expected_version,
+        )
+    )
+    if not updated:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="agent recipe version conflict",
+        )
+    return Response.success(
+        data={
+            "recipe_id": recipe_id,
+            "status": "stable",
         }
     )
 
@@ -149,6 +201,7 @@ def _publish_discovery_task(
 
         run_agent_discovery.push(
             run_id=run_id,
+            shop_id=payload.shop_id,
             goal=payload.goal,
             entrypoint_url=payload.entrypoint_url,
             namespace_hint=payload.namespace_hint,

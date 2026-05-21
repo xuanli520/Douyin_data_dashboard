@@ -34,6 +34,7 @@ from src.tasks.params import CollectionTaskParams
 )
 def run_agent_discovery(
     run_id: str,
+    shop_id: str,
     goal: str,
     entrypoint_url: str,
     namespace_hint: str | None = None,
@@ -44,6 +45,7 @@ def run_agent_discovery(
     try:
         result = _run_discovery(
             run_id=run_id,
+            shop_id=shop_id,
             goal=goal,
             entrypoint_url=entrypoint_url,
             namespace_hint=namespace_hint,
@@ -66,6 +68,7 @@ def run_agent_discovery(
             raise RuntimeError("discovery recipe missing")
         replay = _replay_recipe(
             run_id=run_id,
+            shop_id=shop_id,
             recipe=recipe,
             settings=settings,
         )
@@ -83,6 +86,7 @@ def run_agent_discovery(
         return {
             "status": "completed",
             "run_id": run_id,
+            "shop_id": shop_id,
             "recipe_id": written.get("id"),
             "recipe_version": written.get("version"),
         }
@@ -104,12 +108,18 @@ def run_agent_discovery(
                 "message": message,
             },
         )
-        return {"status": "failed", "run_id": run_id, "message": message}
+        return {
+            "status": "failed",
+            "run_id": run_id,
+            "shop_id": shop_id,
+            "message": message,
+        }
 
 
 def _run_discovery(
     *,
     run_id: str,
+    shop_id: str,
     goal: str,
     entrypoint_url: str,
     namespace_hint: str | None,
@@ -129,7 +139,11 @@ def _run_discovery(
         driver=driver,
         llm_client=llm_client,
         security=_DiscoverySecurity(),
-        event_sink=lambda event: _append_agent_event(run_id, event),
+        event_sink=lambda event: _append_agent_event(
+            run_id,
+            event,
+            shop_id=shop_id,
+        ),
         max_steps=max_steps or settings.agent_max_steps,
     )
     driver.open(None, headed=bool(settings.agent_browser_headed))
@@ -143,7 +157,9 @@ def _run_discovery(
             security_policy=security_policy,
             max_steps=max_steps,
         )
-        return result.model_dump(mode="json")
+        payload = result.model_dump(mode="json")
+        payload["shop_id"] = shop_id
+        return payload
     finally:
         llm_client.close()
         driver.close()
@@ -152,14 +168,16 @@ def _run_discovery(
 def _replay_recipe(
     *,
     run_id: str,
+    shop_id: str,
     recipe: dict[str, Any],
     settings: Any,
 ):
     return ReplayRunner(
-        _DiscoveryReplayCrawler(run_id=run_id, settings=settings)
+        _DiscoveryReplayCrawler(run_id=run_id, shop_id=shop_id, settings=settings)
     ).replay(
         recipe,
-        context={"session_id": f"{run_id}-replay"},
+        input_data={"shop_id": shop_id},
+        context={"session_id": f"{run_id}-replay", "shop_id": shop_id},
     )
 
 
@@ -198,8 +216,9 @@ def _write_agent_recipe(recipe: dict[str, Any]) -> dict[str, Any]:
 
 
 class _DiscoveryReplayCrawler:
-    def __init__(self, *, run_id: str, settings: Any) -> None:
+    def __init__(self, *, run_id: str, shop_id: str, settings: Any) -> None:
         self._run_id = run_id
+        self._shop_id = shop_id
         self._settings = settings
 
     def run(
@@ -209,12 +228,16 @@ class _DiscoveryReplayCrawler:
         input_data: dict[str, Any] | None = None,
         context: dict[str, Any] | None = None,
     ) -> Any:
-        _ = input_data
+        replay_input = dict(input_data or {})
+        replay_input.setdefault("shop_id", self._shop_id)
+        replay_context = dict(context or {})
+        replay_context.setdefault("shop_id", self._shop_id)
         parsed = Recipe.model_validate(_normalize_recipe_payload(recipe))
         run_context = RunContext(
             session_id=str(
-                (context or {}).get("session_id") or f"{self._run_id}-replay"
+                replay_context.get("session_id") or f"{self._run_id}-replay"
             ),
+            input_data=replay_input,
             headed=bool(self._settings.agent_browser_headed),
         )
         driver = PlaywrightCLIDriver(
@@ -432,10 +455,19 @@ def _entrypoint_origin(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
-def _append_agent_event(run_id: str, event: Any) -> dict[str, Any] | None:
+def _append_agent_event(
+    run_id: str,
+    event: Any,
+    *,
+    shop_id: str | None = None,
+) -> dict[str, Any] | None:
     event_type = getattr(event, "event_type", None)
     if event_type == "run_finished":
         return None
+    if shop_id and hasattr(event, "model_copy"):
+        metadata = dict(getattr(event, "metadata", {}) or {})
+        metadata["shop_id"] = shop_id
+        event = event.model_copy(update={"metadata": metadata})
     return append_discovery_event(run_id, event)
 
 

@@ -169,7 +169,6 @@ class CollectionRuntimeLoader:
             "metrics": list(runtime.metrics),
             "dimensions": list(runtime.dimensions),
             "filters": dict(runtime.filters),
-            "fallback_chain": list(runtime.fallback_chain),
             "rate_limit": runtime.rate_limit,
             "overrides": dict(overrides),
             "account_id": runtime.account_id,

@@ -276,7 +276,6 @@ def test_build_business_key_supports_extended_dedupe_variables():
         ),
         rule_id=2,
         execution_id="exec-1",
-        fallback_chain=("browser_agent",),
         common_query={},
     )
     plan_unit = CollectionPlanUnit(

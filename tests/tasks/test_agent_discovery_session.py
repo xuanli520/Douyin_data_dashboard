@@ -1,5 +1,7 @@
+import asyncio
 from types import SimpleNamespace
 
+from src.domains.agent_recipe.repository import AgentRecipeRepository
 from src.tasks.collection import douyin_shop_discovery as module
 
 
@@ -26,8 +28,9 @@ def test_run_discovery_passes_run_id_to_playwright_driver(monkeypatch):
     monkeypatch.setattr(module, "PlaywrightCLIDriver", _Driver)
     monkeypatch.setattr(module, "ReActDiscoveryAgent", _Agent)
 
-    module._run_discovery(
+    result = module._run_discovery(
         run_id="run-1",
+        shop_id="shop-1",
         goal="goal",
         entrypoint_url="https://fxg.jinritemai.com",
         namespace_hint=None,
@@ -37,6 +40,7 @@ def test_run_discovery_passes_run_id_to_playwright_driver(monkeypatch):
     )
 
     assert drivers[0]["session_id"] == "run-1"
+    assert result["shop_id"] == "shop-1"
 
 
 def test_discovery_replay_passes_context_session_to_playwright_driver(monkeypatch):
@@ -51,21 +55,75 @@ def test_discovery_replay_passes_context_session_to_playwright_driver(monkeypatc
             self.driver = driver
 
         def run(self, recipe, context):
-            return {"recipe": recipe.key, "session_id": context.session_id}
+            return {
+                "recipe": recipe.key,
+                "session_id": context.session_id,
+                "shop_id": context.input_data["shop_id"],
+            }
 
     monkeypatch.setattr(module, "PlaywrightCLIDriver", _Driver)
     monkeypatch.setattr(module, "AgentCrawler", _Crawler)
 
     result = module._DiscoveryReplayCrawler(
         run_id="run-1",
+        shop_id="shop-1",
         settings=_settings(),
     ).run(
         _recipe(),
         context={"session_id": "run-1-replay"},
     )
 
-    assert result == {"recipe": "k", "session_id": "run-1-replay"}
+    assert result == {
+        "recipe": "k",
+        "session_id": "run-1-replay",
+        "shop_id": "shop-1",
+    }
     assert drivers[0]["session_id"] == "run-1-replay"
+
+
+def test_replay_recipe_passes_shop_id_to_runner(monkeypatch):
+    calls = []
+
+    class _Runner:
+        def __init__(self, crawler):
+            self.crawler = crawler
+
+        def replay(self, recipe, **kwargs):
+            calls.append({"crawler": self.crawler, "recipe": recipe, **kwargs})
+            return SimpleNamespace(success=True)
+
+    monkeypatch.setattr(module, "ReplayRunner", _Runner)
+
+    module._replay_recipe(
+        run_id="run-1",
+        shop_id="shop-1",
+        recipe=_recipe(),
+        settings=_settings(),
+    )
+
+    assert calls[0]["input_data"]["shop_id"] == "shop-1"
+    assert calls[0]["context"]["shop_id"] == "shop-1"
+    assert calls[0]["crawler"]._shop_id == "shop-1"
+
+
+def test_write_agent_recipe_persists_candidate(test_db, monkeypatch):
+    monkeypatch.setattr(
+        module.session_module,
+        "async_session_factory",
+        test_db,
+        raising=False,
+    )
+
+    written = module._write_agent_recipe(_recipe())
+
+    async def _load():
+        async with test_db() as db_session:
+            return await AgentRecipeRepository(db_session).get_by_id(written["id"])
+
+    stored = asyncio.run(_load())
+
+    assert stored is not None
+    assert stored.stability == "candidate"
 
 
 def _settings():

@@ -10,7 +10,6 @@ dependencies = [
     "fastapi>=0.115.0",
     "fastapi-pagination[sqlalchemy]>=0.15.3",
     "fastapi-users[sqlalchemy]>=15.0.1",
-    "h2>=4.3.0",
     "httpx-oauth>=0.16.1",
     "loguru>=0.7.3",
     "pydantic-settings>=2.12.0",
@@ -74,4 +73,3 @@ url = "https://mirrors.aliyun.com/pypi/simple"
 [[tool.uv.index]]
 name = "tencent"
 url = "https://mirrors.cloud.tencent.com/pypi/simple"
-

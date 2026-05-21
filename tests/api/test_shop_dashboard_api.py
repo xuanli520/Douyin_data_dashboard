@@ -105,7 +105,7 @@ async def test_shops_query_only(api_client, permission_data, test_db):
             logistics_score=4.9,
             service_score=4.8,
             shop_name="demo-shop",
-            source="script",
+            source="browser_agent",
         )
         await repo.replace_reviews(
             shop_id="shop-1",
@@ -115,7 +115,7 @@ async def test_shops_query_only(api_client, permission_data, test_db):
                     "review_id": "r-1",
                     "content": "good",
                     "is_replied": True,
-                    "source": "script",
+                    "source": "browser_agent",
                 }
             ],
         )
@@ -128,7 +128,7 @@ async def test_shops_query_only(api_client, permission_data, test_db):
                     "violation_type": "A",
                     "description": "desc",
                     "score": 1,
-                    "source": "script",
+                    "source": "browser_agent",
                 }
             ],
         )
@@ -162,7 +162,7 @@ async def test_shops_root_returns_all_shops(api_client, permission_data, test_db
             service_score=4.5,
             bad_behavior_score=0.0,
             shop_name="shop-two",
-            source="script",
+            source="browser_agent",
         )
         await repo.upsert_score(
             shop_id="shop-1",
@@ -173,7 +173,7 @@ async def test_shops_root_returns_all_shops(api_client, permission_data, test_db
             service_score=4.3,
             bad_behavior_score=0.0,
             shop_name="shop-one-old",
-            source="script",
+            source="browser_agent",
         )
         await repo.upsert_score(
             shop_id="shop-1",
@@ -184,7 +184,7 @@ async def test_shops_root_returns_all_shops(api_client, permission_data, test_db
             service_score=4.9,
             bad_behavior_score=0.0,
             shop_name="shop-one-new",
-            source="script",
+            source="browser_agent",
         )
         await session.commit()
 

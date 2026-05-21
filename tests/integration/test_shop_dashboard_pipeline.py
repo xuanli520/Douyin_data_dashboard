@@ -172,7 +172,7 @@ def _install_fake_collection_usecase(monkeypatch):
                             "rule_id": unit_runtime.rule_id,
                             "execution_id": unit_runtime.execution_id,
                             "retry_count": 0,
-                            "fallback_trace": [],
+                            "agent_trace": [],
                         }
                     )
                     continue
@@ -254,7 +254,6 @@ def _build_runtime() -> ShopDashboardRuntimeConfig:
         dedupe_key=None,
         rule_id=2,
         execution_id="exec-pipeline",
-        fallback_chain=("browser_agent",),
         common_query={},
         agent_recipe_ref={"namespace": "generic", "key": "overview"},
         account_id="acct-1",
@@ -306,7 +305,7 @@ def test_pipeline_runs_browser_agent(monkeypatch):
 
     assert result["items"][0]["source"] == "browser_agent"
     assert result["items"][0]["retry_count"] == 0
-    assert result["items"][0]["fallback_trace"] == [
+    assert result["items"][0]["agent_trace"] == [
         {"stage": "browser_agent", "status": "success"}
     ]
 
@@ -353,14 +352,13 @@ def test_pipeline_cookie_only_browser_agent_success(monkeypatch):
 
     assert result["items"][0]["source"] == "browser_agent"
     assert result["items"][0]["retry_count"] == 0
-    assert result["items"][0]["fallback_trace"] == [
+    assert result["items"][0]["agent_trace"] == [
         {"stage": "browser_agent", "status": "success"}
     ]
 
 
-def test_pipeline_rule_config_fields_flow_into_plan_and_query_context(monkeypatch):
+def test_pipeline_rule_config_fields_flow_into_plan(monkeypatch):
     _install_fake_collection_usecase(monkeypatch)
-    from src.scrapers.shop_dashboard.query_builder import build_endpoint_query_context
 
     runtime = ShopDashboardRuntimeConfig(
         shop_mode="EXACT",
@@ -389,7 +387,6 @@ def test_pipeline_rule_config_fields_flow_into_plan_and_query_context(monkeypatc
         dedupe_key="{shop_id}:{window_start}:{window_end}:{rule_id}:{execution_id}",
         rule_id=2,
         execution_id="exec-pipeline-full-fields",
-        fallback_chain=("browser_agent",),
         common_query={},
         extra_config={"cursor": "cursor-1"},
     )
@@ -409,19 +406,18 @@ def test_pipeline_rule_config_fields_flow_into_plan_and_query_context(monkeypatc
         _ = lock_manager
         _ = state_store
         _ = login_state_manager
-        context = build_endpoint_query_context(runtime_config, metric_date=metric_date)
-        assert context.params["filters"]["region"] == "east"
-        assert context.params["dimensions"] == ["shop", "category"]
-        assert context.params["metrics"] == ["overview", "analysis"]
-        assert context.params["top_n"] == 50
-        assert context.params["sort_by"] == "-total_score"
-        assert context.params["include_long_tail"] is True
-        assert context.params["session_level"] is True
+        assert runtime_config.filters["region"] == "east"
+        assert runtime_config.dimensions == ["shop", "category"]
+        assert runtime_config.metrics == ["overview", "analysis"]
+        assert runtime_config.top_n == 50
+        assert runtime_config.sort_by == "-total_score"
+        assert runtime_config.include_long_tail is True
+        assert runtime_config.session_level is True
         return {
             "status": "success",
             "shop_id": runtime_config.shop_id,
             "metric_date": metric_date,
-            "source": "script",
+            "source": "browser_agent",
             "total_score": 4.8,
             "product_score": 4.7,
             "logistics_score": 4.9,
@@ -480,7 +476,7 @@ def test_pipeline_shop_id_fanout_for_rule_8_like_config(monkeypatch):
             "status": "success",
             "shop_id": runtime_config.shop_id,
             "metric_date": metric_date,
-            "source": "script",
+            "source": "browser_agent",
             "total_score": 4.8,
             "product_score": 4.7,
             "logistics_score": 4.9,
@@ -507,38 +503,3 @@ def test_pipeline_shop_id_fanout_for_rule_8_like_config(monkeypatch):
 
     assert result["shop_count"] == 13
     assert result["planned_units"] >= 13
-
-
-def test_pipeline_sets_recommended_collection_mode_for_account_unsupported(monkeypatch):
-    monkeypatch.setattr(
-        module.sync_shop_dashboard,
-        "publisher",
-        SimpleNamespace(redis_db_frame=_FakeRedis()),
-        raising=False,
-    )
-
-    class _FakeUseCase:
-        def execute(self, **kwargs):
-            _ = kwargs
-            return {
-                "status": "success",
-                "items": [
-                    {
-                        "status": "failed",
-                        "reason": "account_shop_switch_unsupported",
-                    }
-                ],
-            }
-
-    monkeypatch.setattr(
-        "src.application.collection.usecase.CollectionUseCase",
-        _FakeUseCase,
-    )
-
-    result = module.sync_shop_dashboard(
-        data_source_id=1,
-        rule_id=2,
-        execution_id="exec-pipeline-route-unsupported",
-    )
-
-    assert result["recommended_collection_mode"] == "per_shop_account"

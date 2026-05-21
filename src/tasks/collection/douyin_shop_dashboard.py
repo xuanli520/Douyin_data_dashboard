@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import time
 import logging
-from collections.abc import Generator, Mapping
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
@@ -108,8 +108,6 @@ def sync_shop_dashboard(
     sort_by: str | None = None,
     include_long_tail: bool | None = None,
     session_level: bool | None = None,
-    fallback_chain: list[str] | str | None = None,
-    collection_path: str | None = None,
     extra_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     started_at = write_started_status_safe(
@@ -140,8 +138,6 @@ def sync_shop_dashboard(
             "sort_by": sort_by,
             "include_long_tail": include_long_tail,
             "session_level": session_level,
-            "fallback_chain": fallback_chain,
-            "collection_path": collection_path,
             "extra_config": extra_config,
         }.items()
         if value is not None
@@ -161,17 +157,8 @@ def sync_shop_dashboard(
         redis_client=redis_client,
     )
     items = result.get("items")
-    unsupported = False
-    if isinstance(items, list):
-        if "processed_rows" not in result:
-            result["processed_rows"] = len(items)
-        unsupported = any(
-            isinstance(item, Mapping)
-            and str(item.get("reason", "")).strip() == "account_shop_switch_unsupported"
-            for item in items
-        )
-    if unsupported:
-        result["recommended_collection_mode"] = "per_shop_account"
+    if isinstance(items, list) and "processed_rows" not in result:
+        result["processed_rows"] = len(items)
     return result
 
 
@@ -224,15 +211,8 @@ def _acquire_shop_lock(
             lock_manager.release_shop_lock(shop_lock_id, token)
 
 
-def _normalize_fallback_stage(stage: Any) -> str:
-    stage_name = str(stage).strip().lower()
-    if stage_name in {"browser", "browser_agent"}:
-        return "browser_agent"
-    return stage_name
-
-
-def _append_fallback_trace(
-    fallback_trace: list[dict[str, Any]],
+def _append_agent_trace(
+    agent_trace: list[dict[str, Any]],
     *,
     stage: str,
     status: str,
@@ -241,7 +221,7 @@ def _append_fallback_trace(
     entry: dict[str, Any] = {"stage": stage, "status": status}
     if error is not None:
         entry["error"] = str(error)
-    fallback_trace.append(entry)
+    agent_trace.append(entry)
 
 
 def _collect_one_day(
@@ -258,9 +238,8 @@ def _collect_one_day(
     account_id = _resolve_account_id(runtime)
     _ensure_login_state_active(account_id, login_state_manager)
     shop_lock_id = _resolve_shop_lock_id(runtime.shop_id, account_id)
-    last_error: Exception | None = None
     retry_count = 0
-    fallback_trace: list[dict[str, Any]] = []
+    agent_trace: list[dict[str, Any]] = []
     with _acquire_shop_lock(
         lock_manager,
         shop_lock_id,
@@ -272,56 +251,41 @@ def _collect_one_day(
                 metric_date,
                 reason="shop_locked",
             )
-        for stage in runtime.fallback_chain:
-            stage_name = _normalize_fallback_stage(stage)
-            if stage_name == "browser_agent":
-                try:
-                    payload = BrowserAgentAdapter(settings=settings).collect(
-                        runtime=runtime,
-                        metric_date=metric_date,
-                        state_store=state_store
-                        or SessionStateStore(base_dir=settings.runtime_state_dir),
-                        plan_unit=plan_unit,
-                    )
-                    _append_fallback_trace(
-                        fallback_trace,
-                        stage="browser_agent",
-                        status="success",
-                    )
-                    return _normalize_task_result(
-                        runtime,
-                        metric_date,
-                        payload,
-                        retry_count=retry_count,
-                        fallback_trace=fallback_trace,
-                    )
-                except LoginExpiredError as exc:
-                    _mark_login_state_expired(
-                        account_id=account_id,
-                        login_state_manager=login_state_manager,
-                        reason=str(exc).strip() or "login_expired",
-                    )
-                    raise
-                except (ScrapingFailedException, ShopDashboardScraperError) as exc:
-                    retry_count += 1
-                    last_error = exc
-                    _append_fallback_trace(
-                        fallback_trace,
-                        stage="browser_agent",
-                        status="failed",
-                        error=exc,
-                    )
-                    continue
-
-        if last_error is not None:
-            raise last_error
-        raise ScrapingFailedException(
-            "Unsupported fallback chain",
-            error_data={
-                "fallback_chain": [
-                    _normalize_fallback_stage(stage) for stage in runtime.fallback_chain
-                ]
-            },
+        try:
+            payload = BrowserAgentAdapter(settings=settings).collect(
+                runtime=runtime,
+                metric_date=metric_date,
+                state_store=state_store
+                or SessionStateStore(base_dir=settings.runtime_state_dir),
+                plan_unit=plan_unit,
+            )
+        except LoginExpiredError as exc:
+            _mark_login_state_expired(
+                account_id=account_id,
+                login_state_manager=login_state_manager,
+                reason=str(exc).strip() or "login_expired",
+            )
+            raise
+        except (ScrapingFailedException, ShopDashboardScraperError) as exc:
+            retry_count += 1
+            _append_agent_trace(
+                agent_trace,
+                stage="browser_agent",
+                status="failed",
+                error=exc,
+            )
+            raise
+        _append_agent_trace(
+            agent_trace,
+            stage="browser_agent",
+            status="success",
+        )
+        return _normalize_task_result(
+            runtime,
+            metric_date,
+            payload,
+            retry_count=retry_count,
+            agent_trace=agent_trace,
         )
 
 
@@ -382,7 +346,7 @@ def _build_expired_account_result(
         "violations": {"summary": {}, "waiting_list": []},
         "raw": {},
         "retry_count": 0,
-        "fallback_trace": [],
+        "agent_trace": [],
     }
 
 
@@ -391,7 +355,7 @@ def _normalize_task_result(
     metric_date: str,
     payload: dict[str, Any],
     retry_count: int = 0,
-    fallback_trace: list[dict[str, Any]] | None = None,
+    agent_trace: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     target_shop_id = str(runtime.shop_id or "").strip()
     actual_shop_id = str(
@@ -409,7 +373,7 @@ def _normalize_task_result(
         "metric_date": metric_date,
         "rule_id": runtime.rule_id,
         "execution_id": runtime.execution_id,
-        "source": payload.get("source", "script"),
+        "source": payload.get("source", "browser_agent"),
         "total_score": payload.get("total_score", 0.0),
         "product_score": payload.get("product_score", 0.0),
         "logistics_score": payload.get("logistics_score", 0.0),
@@ -419,7 +383,7 @@ def _normalize_task_result(
         "violations": payload.get("violations", {"summary": {}, "waiting_list": []}),
         "raw": payload.get("raw", {}),
         "retry_count": retry_count,
-        "fallback_trace": list(fallback_trace or []),
+        "agent_trace": list(agent_trace or []),
     }
     shop_name = str(payload.get("shop_name", "")).strip()
     if shop_name:

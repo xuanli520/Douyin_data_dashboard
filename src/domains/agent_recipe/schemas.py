@@ -3,9 +3,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.domains.agent_recipe.models import AGENT_RECIPE_STATUS_ACTIVE
+from src.domains.agent_recipe.models import (
+    AGENT_RECIPE_STABILITY_CANDIDATE,
+    AGENT_RECIPE_STATUS_ACTIVE,
+)
 
 AgentRecipeStatus = Literal["active", "degraded", "disabled"]
+AgentRecipeStability = Literal["candidate", "stable"]
 
 
 class AgentRecipePayload(BaseModel):
@@ -22,6 +26,7 @@ class AgentRecipeCreate(AgentRecipePayload):
     key: str = Field(..., min_length=1, max_length=200)
     version: int = Field(default=1, ge=1)
     status: AgentRecipeStatus = AGENT_RECIPE_STATUS_ACTIVE
+    stability: AgentRecipeStability = AGENT_RECIPE_STABILITY_CANDIDATE
 
 
 class AgentRecipeVersionCreate(AgentRecipePayload):
@@ -36,6 +41,11 @@ class AgentRecipeMarkDegraded(BaseModel):
     reason: str = Field(..., min_length=1, max_length=500)
 
 
+class AgentRecipeMarkStable(BaseModel):
+    recipe_id: int = Field(..., gt=0)
+    expected_version: int = Field(..., ge=1)
+
+
 class AgentRecipeResponse(AgentRecipePayload):
     model_config = ConfigDict(from_attributes=True)
 
@@ -44,5 +54,6 @@ class AgentRecipeResponse(AgentRecipePayload):
     key: str
     version: int
     status: AgentRecipeStatus
+    stability: AgentRecipeStability
     created_at: datetime
     updated_at: datetime

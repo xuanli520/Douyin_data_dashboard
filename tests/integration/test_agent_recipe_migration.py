@@ -49,6 +49,7 @@ async def test_agent_recipe_table_exists(test_db):
         "key",
         "version",
         "status",
+        "stability",
         "entrypoint",
         "steps",
         "observations",
@@ -60,7 +61,7 @@ async def test_agent_recipe_table_exists(test_db):
     }
     assert "ix_agent_recipes_namespace" in indexes
     assert "ix_agent_recipes_key" in indexes
-    assert "ix_agent_recipes_namespace_key_status_version" in indexes
+    assert "ix_agent_recipes_namespace_key_status_stability_version" in indexes
 
 
 def test_agent_recipe_migration_upgrade_and_downgrade(monkeypatch):
@@ -110,8 +111,9 @@ def test_agent_recipe_migration_upgrade_and_downgrade(monkeypatch):
 
             assert "agent_recipes" in table_names
             assert "status" in columns
+            assert "stability" in columns
             assert "ux_agent_recipes_namespace_key_version" in unique_constraints
-            assert "ix_agent_recipes_namespace_key_status_version" in index_names
+            assert "ix_agent_recipes_namespace_key_status_stability_version" in index_names
 
             command.downgrade(config, "20260325_01")
         finally:

@@ -7,6 +7,7 @@ from src.domains.agent_recipe.repository import AgentRecipeRepository
 from src.domains.agent_recipe.schemas import (
     AgentRecipeCreate,
     AgentRecipeMarkDegraded,
+    AgentRecipeMarkStable,
     AgentRecipeResponse,
     AgentRecipeVersionCreate,
 )
@@ -33,6 +34,18 @@ class AgentRecipeService:
         key: str,
     ) -> AgentRecipeResponse | None:
         recipe = await self.recipe_repo.get_active(namespace, key)
+        if recipe is None:
+            if self.session.in_transaction():
+                await self.session.rollback()
+            return None
+        return AgentRecipeResponse.model_validate(recipe)
+
+    async def get_stable_active(
+        self,
+        namespace: str,
+        key: str,
+    ) -> AgentRecipeResponse | None:
+        recipe = await self.recipe_repo.get_stable_active(namespace, key)
         if recipe is None:
             if self.session.in_transaction():
                 await self.session.rollback()
@@ -80,6 +93,18 @@ class AgentRecipeService:
             recipe_id=data.recipe_id,
             expected_version=data.expected_version,
             reason=data.reason,
+        )
+        if not updated:
+            if self.session.in_transaction():
+                await self.session.rollback()
+            return False
+        await self._commit()
+        return True
+
+    async def mark_stable(self, data: AgentRecipeMarkStable) -> bool:
+        updated = await self.recipe_repo.mark_stable(
+            recipe_id=data.recipe_id,
+            expected_version=data.expected_version,
         )
         if not updated:
             if self.session.in_transaction():

@@ -2,6 +2,8 @@ from src.domains.agent_recipe.models import (
     AGENT_RECIPE_STATUS_ACTIVE,
     AGENT_RECIPE_STATUS_DEGRADED,
     AGENT_RECIPE_STATUS_DISABLED,
+    AGENT_RECIPE_STABILITY_CANDIDATE,
+    AGENT_RECIPE_STABILITY_STABLE,
 )
 from src.domains.agent_recipe.repository import AgentRecipeRepository
 
@@ -35,6 +37,7 @@ class TestAgentRecipeRepositoryIntegration:
             assert active is not None
             assert active.id == created.id
             assert active.status == AGENT_RECIPE_STATUS_ACTIVE
+            assert active.stability == AGENT_RECIPE_STABILITY_CANDIDATE
 
     async def test_get_active_returns_highest_active_version(self, test_db):
         async with test_db() as session:
@@ -68,9 +71,38 @@ class TestAgentRecipeRepositoryIntegration:
             )
 
             active = await repo.get_active("shop_dashboard", "overview")
+            stable = await repo.get_stable_active("shop_dashboard", "overview")
 
             assert active is not None
             assert active.version == 3
+            assert stable is None
+
+    async def test_get_stable_active_returns_highest_stable_version(self, test_db):
+        async with test_db() as session:
+            repo = AgentRecipeRepository(session)
+            await repo.create(
+                {
+                    "namespace": "shop_dashboard",
+                    "key": "overview",
+                    "version": 1,
+                    "stability": AGENT_RECIPE_STABILITY_STABLE,
+                    **_recipe_payload(),
+                }
+            )
+            await repo.create(
+                {
+                    "namespace": "shop_dashboard",
+                    "key": "overview",
+                    "version": 2,
+                    **_recipe_payload(),
+                }
+            )
+
+            stable = await repo.get_stable_active("shop_dashboard", "overview")
+
+            assert stable is not None
+            assert stable.version == 1
+            assert stable.stability == AGENT_RECIPE_STABILITY_STABLE
 
     async def test_create_next_version_disables_current_active(self, test_db):
         async with test_db() as session:
@@ -102,6 +134,7 @@ class TestAgentRecipeRepositoryIntegration:
             versions = await repo.list_versions("shop_dashboard", "overview")
 
             assert next_recipe.version == 2
+            assert next_recipe.stability == AGENT_RECIPE_STABILITY_CANDIDATE
             assert previous is not None
             assert previous.status == AGENT_RECIPE_STATUS_DISABLED
             assert active is not None
@@ -132,4 +165,29 @@ class TestAgentRecipeRepositoryIntegration:
             assert updated is True
             assert stored is not None
             assert stored.status == AGENT_RECIPE_STATUS_DEGRADED
+            assert stored.stability == AGENT_RECIPE_STABILITY_CANDIDATE
             assert active is None
+
+    async def test_mark_stable_updates_current_active_version(self, test_db):
+        async with test_db() as session:
+            repo = AgentRecipeRepository(session)
+            current = await repo.create(
+                {
+                    "namespace": "shop_dashboard",
+                    "key": "overview",
+                    **_recipe_payload(),
+                }
+            )
+
+            updated = await repo.mark_stable(
+                recipe_id=current.id if current.id is not None else 0,
+                expected_version=1,
+            )
+            await session.commit()
+
+            stable = await repo.get_stable_active("shop_dashboard", "overview")
+
+            assert updated is True
+            assert stable is not None
+            assert stable.id == current.id
+            assert stable.stability == AGENT_RECIPE_STABILITY_STABLE

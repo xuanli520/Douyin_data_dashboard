@@ -28,7 +28,6 @@ def _runtime() -> ShopDashboardRuntimeConfig:
         dedupe_key=None,
         rule_id=1,
         execution_id="exec-degraded",
-        fallback_chain=("browser_agent",),
         common_query={},
         account_id="acct-1",
     )
@@ -58,7 +57,6 @@ def test_collect_one_day_uses_account_fallback_shop_lock_when_shop_id_empty(
     runtime = _runtime()
     runtime.shop_id = ""
     runtime.account_id = "acct-fallback"
-    runtime.fallback_chain = ("browser_agent",)
 
     seen_shop_ids: list[str] = []
 

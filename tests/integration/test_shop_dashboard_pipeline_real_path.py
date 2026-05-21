@@ -9,6 +9,8 @@ import pytest
 from sqlalchemy import select
 
 from src import session as db_session_module
+from src.domains.agent_recipe.models import AGENT_RECIPE_STABILITY_STABLE
+from src.domains.agent_recipe.repository import AgentRecipeRepository
 from src.domains.data_source.enums import DataSourceStatus
 from src.domains.data_source.enums import DataSourceType
 from src.domains.data_source.models import DataSource
@@ -124,74 +126,6 @@ class _FakeLoginStateManager:
         self.redis_client = redis_client
 
 
-class _FakeSessionBootstrapper:
-    def __init__(self, state_store):
-        self.state_store = state_store
-
-    async def bootstrap_shops(
-        self,
-        *,
-        runtime,
-        shop_ids,
-        verify_metric_date_by_shop=None,
-        force_serial=None,
-    ):
-        _ = verify_metric_date_by_shop
-        _ = force_serial
-        account_id = str(getattr(runtime, "account_id", "") or "").strip() or "acct-1"
-        result = {}
-        for shop_id in shop_ids:
-            shop_text = str(shop_id)
-            self.state_store.save_bundle(
-                account_id,
-                shop_text,
-                {
-                    "cookies": dict(getattr(runtime, "cookies", {}) or {}),
-                    "common_query": dict(getattr(runtime, "common_query", {}) or {}),
-                    "validated_shop_id": shop_text,
-                    "verified_actual_shop_id": shop_text,
-                    "verify_status": "passed",
-                    "verified_at": "2026-03-10T00:00:00+00:00",
-                    "session_version": "2",
-                },
-            )
-            result[shop_text] = {
-                "shop_id": shop_text,
-                "target_shop_id": shop_text,
-                "bootstrap_failed": False,
-                "bootstrap_verify_status": "passed",
-                "bootstrap_verify_actual_shop_id": shop_text,
-                "bootstrap_verify_error_code": "",
-            }
-        return result
-
-    async def bootstrap_shop(self, *, runtime, shop_id, verify_metric_date=None):
-        _ = verify_metric_date
-        account_id = str(getattr(runtime, "account_id", "") or "").strip() or "acct-1"
-        shop_text = str(shop_id)
-        self.state_store.save_bundle(
-            account_id,
-            shop_text,
-            {
-                "cookies": dict(getattr(runtime, "cookies", {}) or {}),
-                "common_query": dict(getattr(runtime, "common_query", {}) or {}),
-                "validated_shop_id": shop_text,
-                "verified_actual_shop_id": shop_text,
-                "verify_status": "passed",
-                "verified_at": "2026-03-10T00:00:00+00:00",
-                "session_version": "2",
-            },
-        )
-        return {
-            "shop_id": shop_text,
-            "target_shop_id": shop_text,
-            "bootstrap_failed": False,
-            "bootstrap_verify_status": "passed",
-            "bootstrap_verify_actual_shop_id": shop_text,
-            "bootstrap_verify_error_code": "",
-        }
-
-
 class _FakeIdempotencyHelper:
     def __init__(self, *_args, **_kwargs):
         pass
@@ -209,6 +143,31 @@ class _FakeIdempotencyHelper:
 
     def release_lock(self, _key, _token):
         return None
+
+
+def _recipe_payload() -> dict[str, Any]:
+    return {
+        "entrypoint": {"url": "https://example.test/dashboard"},
+        "steps": [{"id": "open", "action": "goto"}],
+        "observations": {"total": {"locator": ".total"}},
+        "assertions": [{"type": "exists", "observation": "total"}],
+        "recovery_policy": {"enabled": True, "max_attempts": 1},
+        "security_policy": {"allowed_origins": ["https://example.test"]},
+    }
+
+
+async def _seed_stable_agent_recipe(test_db) -> None:
+    async with test_db() as db_session:
+        repo = AgentRecipeRepository(db_session)
+        await repo.create(
+            {
+                "namespace": "generic",
+                "key": "overview",
+                "stability": AGENT_RECIPE_STABILITY_STABLE,
+                **_recipe_payload(),
+            }
+        )
+        await db_session.commit()
 
 
 async def _seed_runtime_entities(
@@ -288,12 +247,6 @@ def _install_real_pipeline_env(monkeypatch, test_db, redis_client: _FakeRedis) -
         raising=False,
     )
     monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
-    monkeypatch.setattr(
-        module,
-        "SessionBootstrapper",
-        _FakeSessionBootstrapper,
-        raising=False,
-    )
     monkeypatch.setattr(module, "LockManager", _FakeLockManager)
     monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
 
@@ -347,7 +300,7 @@ async def test_pipeline_browser_agent_runs_real_collection_usecase(
 
     assert result["items"][0]["source"] == "browser_agent"
     assert result["items"][0]["retry_count"] == 0
-    assert result["items"][0]["fallback_trace"] == [
+    assert result["items"][0]["agent_trace"] == [
         {"stage": "browser_agent", "status": "success"},
     ]
 
@@ -424,7 +377,7 @@ async def test_pipeline_cookie_only_browser_agent_persists_real_usecase_path(
 
     assert result["items"][0]["source"] == "browser_agent"
     assert result["items"][0]["retry_count"] == 0
-    assert result["items"][0]["fallback_trace"] == [
+    assert result["items"][0]["agent_trace"] == [
         {"stage": "browser_agent", "status": "success"}
     ]
 
@@ -451,10 +404,11 @@ async def test_pipeline_cookie_only_browser_agent_persists_real_usecase_path(
 
 
 @pytest.mark.asyncio
-async def test_pipeline_rule_config_fields_flow_into_real_usecase_plan_and_query_context(
+async def test_pipeline_rule_config_fields_flow_into_real_usecase_plan(
     test_db,
     monkeypatch,
 ):
+    await _seed_stable_agent_recipe(test_db)
     data_source_id, rule_id = await _seed_runtime_entities(
         test_db,
         rule_filters={"shop_id": ["shop-1", "shop-2"], "region": "east"},
@@ -467,7 +421,10 @@ async def test_pipeline_rule_config_fields_flow_into_real_usecase_plan_and_query
         include_long_tail=True,
         session_level=True,
         rule_dedupe_key="{shop_id}:{window_start}:{window_end}:{rule_id}:{execution_id}",
-        rule_extra_config={"cursor": "cursor-1"},
+        rule_extra_config={
+            "cursor": "cursor-1",
+            "agent_recipe": {"namespace": "generic", "key": "overview"},
+        },
     )
     redis_client = _FakeRedis()
     _install_real_pipeline_env(monkeypatch, test_db, redis_client)
@@ -477,8 +434,6 @@ async def test_pipeline_rule_config_fields_flow_into_real_usecase_plan_and_query
         "queue-real-pipeline-config-fields",
         raising=False,
     )
-
-    from src.scrapers.shop_dashboard.query_builder import build_endpoint_query_context
 
     seen_contexts: list[dict[str, Any]] = []
 
@@ -492,19 +447,24 @@ async def test_pipeline_rule_config_fields_flow_into_real_usecase_plan_and_query
         login_state_manager,
     ):
         _ = (plan_unit, lock_manager, state_store, login_state_manager)
-        context = build_endpoint_query_context(runtime_config, metric_date=metric_date)
         seen_contexts.append(
             {
                 "shop_id": runtime_config.shop_id,
                 "metric_date": metric_date,
-                "params": context.params,
+                "filters": runtime_config.filters,
+                "dimensions": runtime_config.dimensions,
+                "metrics": runtime_config.metrics,
+                "top_n": runtime_config.top_n,
+                "sort_by": runtime_config.sort_by,
+                "include_long_tail": runtime_config.include_long_tail,
+                "session_level": runtime_config.session_level,
             }
         )
         return {
             "status": "success",
             "shop_id": runtime_config.shop_id,
             "metric_date": metric_date,
-            "source": "script",
+            "source": "browser_agent",
             "total_score": 4.8,
             "product_score": 4.7,
             "logistics_score": 4.9,
@@ -529,11 +489,10 @@ async def test_pipeline_rule_config_fields_flow_into_real_usecase_plan_and_query
     assert len(seen_contexts) == 4
     assert {item["shop_id"] for item in seen_contexts} == {"shop-1", "shop-2"}
     for item in seen_contexts:
-        params = item["params"]
-        assert params["filters"]["region"] == "east"
-        assert params["dimensions"] == ["shop", "category"]
-        assert params["metrics"] == ["overview", "analysis"]
-        assert params["top_n"] == 50
-        assert params["sort_by"] == "-total_score"
-        assert params["include_long_tail"] is True
-        assert params["session_level"] is True
+        assert item["filters"]["region"] == "east"
+        assert item["dimensions"] == ["shop", "category"]
+        assert item["metrics"] == ["overview", "analysis"]
+        assert item["top_n"] == 50
+        assert item["sort_by"] == "-total_score"
+        assert item["include_long_tail"] is True
+        assert item["session_level"] is True

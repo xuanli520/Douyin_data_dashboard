@@ -110,7 +110,10 @@ class BrowserAgentAdapter:
             failure_message = (
                 result.failure.message if result.failure else "browser_agent_failed"
             )
-            raise DataIncompleteError(failure_message)
+            error_data = {}
+            if result.failure is not None:
+                error_data["failure_kind"] = result.failure.kind
+            raise DataIncompleteError(failure_message, error_data=error_data)
         return self._build_payload(
             runtime=runtime,
             metric_date=metric_date,
@@ -206,6 +209,7 @@ class BrowserAgentAdapter:
             "recipe_id", None
         )
         recipe_payload.pop("status", None)
+        recipe_payload.pop("stability", None)
         recipe_payload.pop("created_at", None)
         recipe_payload.pop("updated_at", None)
         if recipe_id is not None:
@@ -399,6 +403,8 @@ class BrowserAgentAdapter:
     def _recovery_enabled(self, runtime: ShopDashboardRuntimeConfig) -> bool:
         if not isinstance(runtime.extra_config, dict):
             return True
+        if runtime.extra_config.get("agent_batch_mode") is True:
+            return False
         return runtime.extra_config.get("agent_recovery_enabled") is not False
 
     def _is_login_failure(self, result: RunResult) -> bool:
@@ -672,6 +678,9 @@ def _recipe_payload_from_model(value: Any) -> dict[str, Any]:
     recipe_id = getattr(value, "id", None)
     if recipe_id is not None:
         payload["id"] = recipe_id
+    stability = getattr(value, "stability", None)
+    if stability is not None:
+        payload["stability"] = stability
     metadata = getattr(value, "metadata", None)
     if isinstance(metadata, dict):
         payload["metadata"] = dict(metadata)

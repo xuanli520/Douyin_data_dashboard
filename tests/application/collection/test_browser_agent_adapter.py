@@ -1,9 +1,12 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from src.application.collection.browser_agent_adapter import BrowserAgentAdapter
 from src.core.agent.models import Failure
 from src.core.agent.models import RunResult
+from src.scrapers.shop_dashboard.exceptions import DataIncompleteError
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
 
@@ -34,7 +37,6 @@ def _runtime(extra_config=None):
         dedupe_key=None,
         rule_id=9,
         execution_id="exec-1",
-        fallback_chain=("browser_agent",),
         common_query={},
         agent_recipe_ref={"namespace": "generic", "key": "overview"},
         extra_config=extra_config or {},
@@ -231,3 +233,47 @@ def test_browser_agent_adapter_recovers_recipe_and_records_next_version(tmp_path
     assert [call[0] for call in calls] == ["failed", "recovered"]
     assert calls[1][1] == ".new-total"
     assert written[0]["expected_version"] == 1
+
+
+def test_browser_agent_adapter_disables_recovery_in_batch_mode(tmp_path):
+    class _Model:
+        def propose_recovery(self, request, messages):
+            _ = (request, messages)
+            raise AssertionError("batch recovery should be disabled")
+
+    class _FailingCrawler:
+        def run(self, recipe, context):
+            _ = (recipe, context)
+            return RunResult(
+                status="failed",
+                failure=Failure(
+                    kind="observation_empty",
+                    message="missing total",
+                    observation_id="total",
+                    recoverable=True,
+                ),
+            )
+
+    adapter = BrowserAgentAdapter(
+        crawler_factory=lambda _path, _context: _FailingCrawler(),
+        recovery_model=_Model(),
+        settings=SimpleNamespace(
+            agent_browser_headed=False,
+            agent_allowed_origins=["https://example.test"],
+            agent_artifact_dir=str(tmp_path / "artifacts"),
+        ),
+    )
+
+    with pytest.raises(DataIncompleteError) as exc_info:
+        adapter.collect(
+            runtime=_runtime(
+                {
+                    "agent_batch_mode": True,
+                    "agent_recipe_inline": _recipe(),
+                }
+            ),
+            metric_date="2026-03-01",
+            state_store=SessionStateStore(tmp_path),
+        )
+
+    assert exc_info.value.error_data["failure_kind"] == "observation_empty"

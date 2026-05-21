@@ -28,7 +28,6 @@ def _runtime():
         dedupe_key=None,
         rule_id=9,
         execution_id="exec-1",
-        fallback_chain=("browser_agent",),
         common_query={},
         agent_recipe_ref={"namespace": "generic", "key": "overview"},
         account_id="acct-1",
@@ -86,4 +85,4 @@ def test_collect_one_day_preserves_browser_agent_recovery_metadata(monkeypatch):
     )
 
     assert result["raw"]["agent"]["recovery"]["next_version"] == 2
-    assert result["fallback_trace"] == [{"stage": "browser_agent", "status": "success"}]
+    assert result["agent_trace"] == [{"stage": "browser_agent", "status": "success"}]

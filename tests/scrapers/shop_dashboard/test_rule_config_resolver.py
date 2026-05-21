@@ -174,41 +174,7 @@ def test_resolve_rule_config_defaults_to_browser_agent_recipe_ref():
         execution_id="exec-browser-agent",
     )
 
-    assert config.fallback_chain == ("browser_agent",)
     assert config.agent_recipe_ref == {"namespace": "generic", "key": "overview"}
-
-
-def test_resolve_rule_config_keeps_selected_collection_paths():
-    data_source = _build_data_source()
-    rule = _build_rule(
-        filters={"shop_id": ["shop-1"]},
-        extra_config={"fallback_chain": "http->browser"},
-    )
-
-    config = resolve_rule_config(
-        data_source=data_source,
-        rule=rule,
-        execution_id="exec-browser-only",
-    )
-
-    assert config.fallback_chain == ("http", "browser_agent")
-
-
-def test_resolve_rule_config_accepts_collection_path_override():
-    data_source = _build_data_source()
-    rule = _build_rule(
-        filters={"shop_id": ["shop-1"]},
-        extra_config={"fallback_chain": "browser_agent"},
-    )
-
-    config = resolve_rule_config(
-        data_source=data_source,
-        rule=rule,
-        execution_id="exec-http-only",
-        overrides={"collection_path": "http"},
-    )
-
-    assert config.fallback_chain == ("http",)
 
 
 def test_resolve_rule_config_all_mode_ignores_shop_id_details():

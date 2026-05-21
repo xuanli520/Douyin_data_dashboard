@@ -8,6 +8,8 @@ from src.shared.mixins import TimestampMixin
 AGENT_RECIPE_STATUS_ACTIVE = "active"
 AGENT_RECIPE_STATUS_DEGRADED = "degraded"
 AGENT_RECIPE_STATUS_DISABLED = "disabled"
+AGENT_RECIPE_STABILITY_CANDIDATE = "candidate"
+AGENT_RECIPE_STABILITY_STABLE = "stable"
 
 
 class AgentRecipe(SQLModel, TimestampMixin, table=True):
@@ -20,10 +22,11 @@ class AgentRecipe(SQLModel, TimestampMixin, table=True):
             name="ux_agent_recipes_namespace_key_version",
         ),
         Index(
-            "ix_agent_recipes_namespace_key_status_version",
+            "ix_agent_recipes_namespace_key_status_stability_version",
             "namespace",
             "key",
             "status",
+            "stability",
             "version",
         ),
     )
@@ -33,6 +36,7 @@ class AgentRecipe(SQLModel, TimestampMixin, table=True):
     key: str = Field(max_length=200, index=True)
     version: int = Field(default=1, ge=1)
     status: str = Field(default=AGENT_RECIPE_STATUS_ACTIVE, max_length=20)
+    stability: str = Field(default=AGENT_RECIPE_STABILITY_CANDIDATE, max_length=20)
 
     entrypoint: dict[str, Any] = Field(default_factory=dict, sa_type=JSON)
     steps: list[dict[str, Any]] = Field(default_factory=list, sa_type=JSON)

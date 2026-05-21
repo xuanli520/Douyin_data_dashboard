@@ -36,7 +36,6 @@ class ShopDashboardRuntimeConfig:
     dedupe_key: str | None
     rule_id: int
     execution_id: str
-    fallback_chain: tuple[str, ...]
     common_query: dict[str, Any]
     agent_recipe_ref: dict[str, Any] | None = None
     timezone: str = "Asia/Shanghai"
@@ -89,7 +88,6 @@ def build_runtime_config(
         dedupe_key=None,
         rule_id=int(_read_source_value(rule, "id", 0) or 0),
         execution_id=execution_id,
-        fallback_chain=("browser_agent",),
         common_query={},
         agent_recipe_ref=None,
     )
@@ -158,7 +156,6 @@ def _build_runtime_from_resolved(
         dedupe_key=resolved.dedupe_key,
         rule_id=resolved.rule_id,
         execution_id=resolved.execution_id,
-        fallback_chain=tuple(resolved.fallback_chain),
         common_query=dict(resolved.common_query),
         agent_recipe_ref=dict(resolved.agent_recipe_ref)
         if resolved.agent_recipe_ref

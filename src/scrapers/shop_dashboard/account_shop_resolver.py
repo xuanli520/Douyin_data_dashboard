@@ -77,7 +77,6 @@ class AccountShopResolver:
         async with httpx.AsyncClient(
             base_url=self._base_url,
             timeout=self._timeout,
-            http2=True,
         ) as client:
             resolved_shop_ids = await self._resolve_with_client(
                 client=client,
