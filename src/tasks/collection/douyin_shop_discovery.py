@@ -21,6 +21,7 @@ from src.core.agent.replay import ReplayRunner
 from src.core.agent.security import validate_locator, validate_navigation_target
 from src.core.agent.tools import ToolCall
 from src.domains.agent_recipe.repository import AgentRecipeRepository
+from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
 from src.tasks.base import TaskStatusMixin
 from src.tasks.funboost_compat import boost
 from src.tasks.params import CollectionTaskParams
@@ -37,6 +38,7 @@ def run_agent_discovery(
     shop_id: str,
     goal: str,
     entrypoint_url: str,
+    account_id: str | None = None,
     namespace_hint: str | None = None,
     key_hint: str | None = None,
     max_steps: int | None = None,
@@ -46,6 +48,7 @@ def run_agent_discovery(
         result = _run_discovery(
             run_id=run_id,
             shop_id=shop_id,
+            account_id=account_id,
             goal=goal,
             entrypoint_url=entrypoint_url,
             namespace_hint=namespace_hint,
@@ -69,6 +72,7 @@ def run_agent_discovery(
         replay = _replay_recipe(
             run_id=run_id,
             shop_id=shop_id,
+            account_id=account_id,
             recipe=recipe,
             settings=settings,
         )
@@ -122,13 +126,16 @@ def _run_discovery(
     shop_id: str,
     goal: str,
     entrypoint_url: str,
+    account_id: str | None = None,
     namespace_hint: str | None,
     key_hint: str | None,
     max_steps: int | None,
     settings: Any,
 ) -> dict[str, Any]:
+    storage_state_path = _resolve_storage_state_path(settings, account_id)
     driver = PlaywrightCLIDriver(
         session_id=run_id,
+        storage_state_path=storage_state_path,
         artifact_dir=settings.agent_artifact_dir,
     )
     llm_client = _ConfiguredDiscoveryLLMClient(settings=settings)
@@ -171,14 +178,33 @@ def _replay_recipe(
     shop_id: str,
     recipe: dict[str, Any],
     settings: Any,
+    account_id: str | None = None,
 ):
     return ReplayRunner(
-        _DiscoveryReplayCrawler(run_id=run_id, shop_id=shop_id, settings=settings)
+        _DiscoveryReplayCrawler(
+            run_id=run_id,
+            shop_id=shop_id,
+            account_id=account_id,
+            settings=settings,
+        )
     ).replay(
         recipe,
-        input_data={"shop_id": shop_id},
-        context={"session_id": f"{run_id}-replay", "shop_id": shop_id},
+        input_data={"shop_id": shop_id, "account_id": account_id},
+        context={
+            "session_id": f"{run_id}-replay",
+            "shop_id": shop_id,
+            "account_id": account_id,
+        },
     )
+
+
+def _resolve_storage_state_path(settings: Any, account_id: str | None) -> Any:
+    normalized_account_id = str(account_id or "").strip()
+    if not normalized_account_id:
+        return None
+    state_store = SessionStateStore(base_dir=settings.runtime_state_dir)
+    path = state_store.playwright_state_path(normalized_account_id)
+    return path if path.exists() else None
 
 
 def _write_agent_recipe(recipe: dict[str, Any]) -> dict[str, Any]:
@@ -216,9 +242,17 @@ def _write_agent_recipe(recipe: dict[str, Any]) -> dict[str, Any]:
 
 
 class _DiscoveryReplayCrawler:
-    def __init__(self, *, run_id: str, shop_id: str, settings: Any) -> None:
+    def __init__(
+        self,
+        *,
+        run_id: str,
+        shop_id: str,
+        settings: Any,
+        account_id: str | None = None,
+    ) -> None:
         self._run_id = run_id
         self._shop_id = shop_id
+        self._account_id = account_id
         self._settings = settings
 
     def run(
@@ -230,18 +264,26 @@ class _DiscoveryReplayCrawler:
     ) -> Any:
         replay_input = dict(input_data or {})
         replay_input.setdefault("shop_id", self._shop_id)
+        replay_input.setdefault("account_id", self._account_id)
         replay_context = dict(context or {})
         replay_context.setdefault("shop_id", self._shop_id)
+        replay_context.setdefault("account_id", self._account_id)
         parsed = Recipe.model_validate(_normalize_recipe_payload(recipe))
+        storage_state_path = _resolve_storage_state_path(
+            self._settings,
+            str(replay_context.get("account_id") or ""),
+        )
         run_context = RunContext(
             session_id=str(
                 replay_context.get("session_id") or f"{self._run_id}-replay"
             ),
             input_data=replay_input,
+            storage_state_path=str(storage_state_path) if storage_state_path else None,
             headed=bool(self._settings.agent_browser_headed),
         )
         driver = PlaywrightCLIDriver(
             session_id=run_context.session_id,
+            storage_state_path=storage_state_path,
             artifact_dir=self._settings.agent_artifact_dir,
         )
         return AgentCrawler(driver).run(parsed, run_context)

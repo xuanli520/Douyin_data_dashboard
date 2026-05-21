@@ -27,28 +27,28 @@ login_recipe:
         - role: spinbutton
           name: 验证码
       value_from: code
-    - id: refill_phone_before_submit
-      action: fill
-      target: 手机号码
-      locators:
-        - css: "input[placeholder*='手机号']"
-        - role: spinbutton
-          name: 手机号码
-      value_from: phone
     - id: accept_doudian_policy
-      action: check
+      action: click
       target: 抖店协议
       locators:
-        - css: "input.auxo-checkbox-input"
-    - id: submit_login
-      action: click
-      target: 登录按钮
+        - css: ".auxo-checkbox"
+        - css: ".auxo-checkbox-wrapper"
+    - id: select_shop
+      action: click_js
+      target: 店铺
+      optional: true
       locators:
-        - css: "button.account-center-action-button.active"
+        - text: 抖店工作台
+        - text: 普通店
+        - text: 初始化
+    - id: submit_login
+      action: click_js
+      target: 登录按钮
+      optional: true
+      locators:
         - css: "button.account-center-action-button"
-        - css: "button:has-text('登录')"
+        - css: ".account-center-action-button"
         - role: button
           name: 登录
-        - css: button.login-btn
     - id: check_login
       action: check_login_status

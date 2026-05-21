@@ -343,6 +343,8 @@ class LoginSession:
             except (HumanInputCancelled, HumanInputTimeout):
                 raise
             except Exception as exc:
+                if bool(step.get("optional")):
+                    continue
                 return LoginResult(
                     False,
                     reason=f"recipe_step_failed: {step.get('id') or action}: {exc}",
@@ -373,6 +375,9 @@ class LoginSession:
             if step.get("id") == "send_code":
                 self._assert_verification_code_sent()
             return None
+        if action == "click_js":
+            self._try_locators(step, action="click_js")
+            return None
         if action == "check":
             self._try_locators(step, action="check")
             return None
@@ -398,6 +403,12 @@ class LoginSession:
                         result = self._driver.fill(locator, str(value or ""))
                     elif action == "check":
                         result = self._driver.check(locator)
+                    elif action == "click_js":
+                        click_js = getattr(self._driver, "click_js", None)
+                        if callable(click_js):
+                            result = click_js(locator)
+                        else:
+                            result = self._driver.click(locator)
                     else:
                         result = self._driver.click(locator)
                     self._emit_tool_finished(action, step, locator, result)

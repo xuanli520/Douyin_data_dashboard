@@ -77,6 +77,21 @@ class PlaywrightCLIDriver:
             )
         return DriverResult()
 
+    def click_js(self, locator: LocatorSpec) -> DriverResult:
+        expression = _locator_expression(locator)
+        self._capture_page_metadata(
+            self._run_code(
+                f"const target = {expression};\n"
+                "await target.waitFor({ state: 'attached', timeout: 5000 });\n"
+                "await target.evaluate(element => element.click());\n"
+                "await Promise.race([\n"
+                "  page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => null),\n"
+                "  page.waitForTimeout(3000),\n"
+                "]);"
+            ).stdout
+        )
+        return DriverResult()
+
     def check(self, locator: LocatorSpec) -> DriverResult:
         if locator.kind == "css":
             self._capture_page_metadata(self._run(["check", locator.value]).stdout)

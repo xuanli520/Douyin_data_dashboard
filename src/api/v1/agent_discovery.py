@@ -42,6 +42,7 @@ class AgentDiscoveryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     shop_id: str = Field(..., min_length=1)
+    account_id: str | None = Field(default=None, min_length=1, max_length=128)
     goal: str = Field(..., min_length=1)
     entrypoint_url: str = Field(..., min_length=1)
     namespace_hint: str | None = None
@@ -202,6 +203,7 @@ def _publish_discovery_task(
         run_agent_discovery.push(
             run_id=run_id,
             shop_id=payload.shop_id,
+            account_id=payload.account_id,
             goal=payload.goal,
             entrypoint_url=payload.entrypoint_url,
             namespace_hint=payload.namespace_hint,

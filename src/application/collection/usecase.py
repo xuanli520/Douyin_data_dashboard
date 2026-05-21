@@ -825,6 +825,27 @@ class CollectionUseCase:
                 source = str(collected.get("source", "unknown"))
                 status = str(collected.get("status", "success"))
             except Exception as exc:
+                if shop_count > 1 and self._is_recoverable_unit_failure(exc):
+                    error_code = self._extract_agent_failure_code(exc)
+                    failed_item = self._build_recoverable_unit_failed_item(
+                        runtime=unit_runtime,
+                        plan_unit=plan_unit,
+                        error_code=error_code,
+                        error=str(exc),
+                        account_id_status=account_id_status,
+                    )
+                    items.append(failed_item)
+                    source = "browser_agent"
+                    status = "failed"
+                    observe_shop_dashboard_collection(
+                        source=source,
+                        status=status,
+                        duration_seconds=time.perf_counter() - started_at,
+                        shop_mode=runtime.shop_mode,
+                        shop_resolve_source=runtime.shop_resolve_source,
+                        circuit_break_status="closed",
+                    )
+                    continue
                 if batch_agent_context.enabled and self._is_agent_recipe_failure(exc):
                     error_code = self._extract_agent_failure_code(exc)
                     await self._mark_batch_recipe_degraded(
@@ -1193,6 +1214,24 @@ class CollectionUseCase:
             )
             return {"items": [collected]}
         except Exception as exc:
+            if self._is_recoverable_unit_failure(exc):
+                error_code = self._extract_agent_failure_code(exc)
+                item = self._build_recoverable_unit_failed_item(
+                    runtime=unit_runtime,
+                    plan_unit=plan_unit,
+                    error_code=error_code,
+                    error=str(exc),
+                    account_id_status=account_id_status,
+                )
+                observe_shop_dashboard_collection(
+                    source="browser_agent",
+                    status="failed",
+                    duration_seconds=time.perf_counter() - started_at,
+                    shop_mode=runtime.shop_mode,
+                    shop_resolve_source=runtime.shop_resolve_source,
+                    circuit_break_status="closed",
+                )
+                return {"items": [item]}
             if batch_agent_context.enabled and self._is_agent_recipe_failure(exc):
                 error_code = self._extract_agent_failure_code(exc)
                 await self._mark_batch_recipe_degraded(
@@ -1397,6 +1436,51 @@ class CollectionUseCase:
             "assertion_failed",
             "browser_agent_output_missing_required_fields",
             "browser_agent_output_invalid_score_field",
+        }
+
+    def _is_recoverable_unit_failure(self, exc: Exception) -> bool:
+        if isinstance(exc, DataIncompleteError):
+            return True
+        return self._extract_agent_failure_code(exc) in {
+            "timeout",
+            "observation_empty",
+            "assertion_failed",
+            "browser_agent_output_missing_required_fields",
+            "browser_agent_output_invalid_score_field",
+        }
+
+    def _build_recoverable_unit_failed_item(
+        self,
+        *,
+        runtime: ShopDashboardRuntimeConfig,
+        plan_unit: CollectionPlanUnit,
+        error_code: str,
+        error: str,
+        account_id_status: str,
+    ) -> dict[str, Any]:
+        return {
+            "status": "failed",
+            "source": "browser_agent",
+            "reason": "data_incomplete",
+            "metric_date": plan_unit.metric_date,
+            "shop_id": runtime.shop_id,
+            "target_shop_id": plan_unit.shop_id,
+            "actual_shop_id": None,
+            "mismatch_status": "unknown",
+            "rule_id": runtime.rule_id,
+            "execution_id": runtime.execution_id,
+            "retry_count": 0,
+            "agent_trace": [
+                {
+                    "stage": "browser_agent",
+                    "status": "failed",
+                    "error": error_code,
+                }
+            ],
+            "error_code": error_code,
+            "error": error,
+            "recommended_next_step": "single_shop_recovery",
+            "account_id_status": account_id_status,
         }
 
     def _extract_agent_failure_code(self, exc: Exception) -> str:
