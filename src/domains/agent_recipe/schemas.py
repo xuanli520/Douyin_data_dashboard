@@ -57,3 +57,23 @@ class AgentRecipeResponse(AgentRecipePayload):
     stability: AgentRecipeStability
     created_at: datetime
     updated_at: datetime
+
+
+class AgentRecipeDocument(AgentRecipePayload):
+    namespace: str = Field(..., min_length=1, max_length=100)
+    key: str = Field(..., min_length=1, max_length=200)
+    version: int = Field(default=1, ge=1)
+
+
+class AgentRecipeExportPayload(BaseModel):
+    format_version: int = 1
+    recipe: AgentRecipeDocument
+
+
+class AgentRecipeImportResponse(BaseModel):
+    id: int
+    namespace: str
+    key: str
+    version: int
+    status: AgentRecipeStatus
+    stability: AgentRecipeStability

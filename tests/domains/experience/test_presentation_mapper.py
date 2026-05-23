@@ -61,7 +61,7 @@ def test_overview_dimension_scores_should_map_from_shop_dashboard_scores():
     assert dimensions["risk"] == 84.0
 
 
-def test_issues_should_use_violations_first_then_cold_reason_fallback():
+def test_issues_should_use_violations_only():
     payload = build_issues(
         shop_id=1001,
         date_range="30d",
@@ -74,8 +74,7 @@ def test_issues_should_use_violations_first_then_cold_reason_fallback():
 
     ids = {item["id"] for item in payload["items"]}
     assert "issue-1" in ids
-    assert "cold-2026-03-01-1" in ids
-    assert payload["meta"]["total"] == 2
+    assert payload["meta"]["total"] == 1
 
 
 def test_metric_detail_should_keep_contract_shape():

@@ -61,8 +61,6 @@ def test_collect_one_day_preserves_browser_agent_recovery_metadata(monkeypatch):
                 "actual_shop_id": runtime.shop_id,
                 "metric_date": metric_date,
                 "total_score": 95,
-                "reviews": {"summary": {}, "items": []},
-                "violations": {"summary": {}, "waiting_list": []},
                 "raw": {
                     "agent": {
                         "recovery": {

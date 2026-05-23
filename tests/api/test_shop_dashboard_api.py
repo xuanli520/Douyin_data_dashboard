@@ -107,31 +107,6 @@ async def test_shops_query_only(api_client, permission_data, test_db):
             shop_name="demo-shop",
             source="browser_agent",
         )
-        await repo.replace_reviews(
-            shop_id="shop-1",
-            metric_date=metric_date,
-            reviews=[
-                {
-                    "review_id": "r-1",
-                    "content": "good",
-                    "is_replied": True,
-                    "source": "browser_agent",
-                }
-            ],
-        )
-        await repo.replace_violations(
-            shop_id="shop-1",
-            metric_date=metric_date,
-            violations=[
-                {
-                    "violation_id": "v-1",
-                    "violation_type": "A",
-                    "description": "desc",
-                    "score": 1,
-                    "source": "browser_agent",
-                }
-            ],
-        )
         await session.commit()
 
     auth_headers = await get_auth_headers(

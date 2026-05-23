@@ -146,11 +146,6 @@ class ShopDashboardRepository(BaseRepository):
             "bad_behavior_score": _score_or_zero(
                 score.bad_behavior_score if score else None
             ),
-            "reviews": {"summary": {}, "items": []},
-            "violations": {"summary": {}, "waiting_list": []},
-            "violations_detail": [],
-            "arbitration_detail": [],
-            "dsr_trend": [],
             "raw": {},
         }
 
@@ -270,9 +265,6 @@ class ShopDashboardRepository(BaseRepository):
                     "bad_behavior_score": (
                         _score_value(row.bad_behavior_score) if row else None
                     ),
-                    "reviews": [],
-                    "violations": [],
-                    "cold_metrics": [],
                 }
             )
         return items

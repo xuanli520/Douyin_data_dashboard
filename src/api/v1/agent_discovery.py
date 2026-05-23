@@ -8,11 +8,14 @@ from uuid import uuid4
 from fastapi import (
     APIRouter,
     Depends,
+    File,
     HTTPException,
+    UploadFile,
     WebSocket,
     WebSocketDisconnect,
     status,
 )
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.auth import User, current_user
@@ -111,6 +114,57 @@ async def mark_agent_recipe_stable(
             "status": "stable",
         }
     )
+
+
+@router.get("/recipes/{recipe_id}/export")
+async def export_agent_recipe(
+    recipe_id: int,
+    _user: User = Depends(current_user),
+    _=Depends(require_permissions(_DISCOVERY_PERMISSION, bypass_superuser=True)),
+    service: AgentRecipeService = Depends(get_agent_recipe_service),
+) -> JSONResponse:
+    result = await service.export_recipe(recipe_id)
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="agent recipe not found",
+        )
+    payload, filename = result
+    return JSONResponse(
+        content=payload,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post(
+    "/recipes/import",
+    response_model=Response[dict[str, Any]],
+)
+async def import_agent_recipe(
+    file: UploadFile = File(...),
+    _user: User = Depends(current_user),
+    _=Depends(require_permissions(_DISCOVERY_PERMISSION, bypass_superuser=True)),
+    service: AgentRecipeService = Depends(get_agent_recipe_service),
+) -> Response[dict[str, Any]]:
+    filename = file.filename or ""
+    if not filename.endswith(".agent-recipe.json"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="file must be .agent-recipe.json",
+        )
+    try:
+        recipe = await service.import_recipe(await file.read())
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    if recipe is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="agent recipe version already exists",
+        )
+    return Response.success(data=recipe.model_dump(mode="json"))
 
 
 @router.websocket("/{run_id}/events")

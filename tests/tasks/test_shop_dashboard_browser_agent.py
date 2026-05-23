@@ -61,8 +61,6 @@ def test_collect_one_day_runs_browser_agent_stage(monkeypatch):
                 "actual_shop_id": runtime.shop_id,
                 "metric_date": metric_date,
                 "total_score": 88,
-                "reviews": {"summary": {}, "items": []},
-                "violations": {"summary": {}, "waiting_list": []},
                 "raw": {},
             }
 

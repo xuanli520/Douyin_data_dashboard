@@ -118,6 +118,7 @@ class BrowserAgentAdapter:
             runtime=runtime,
             metric_date=metric_date,
             recipe=recipe,
+            recipe_id=loaded_recipe.recipe_id,
             result=result,
             output=result.output,
             storage_state_path=storage_state_path,
@@ -129,6 +130,7 @@ class BrowserAgentAdapter:
         runtime: ShopDashboardRuntimeConfig,
         metric_date: str,
         recipe: Recipe,
+        recipe_id: int | None,
         result: RunResult,
         output: dict[str, Any],
         recovery: dict[str, Any] | None = None,
@@ -143,6 +145,7 @@ class BrowserAgentAdapter:
         raw = payload.get("raw")
         if not isinstance(raw, dict):
             raw = {}
+        resolved_recipe_id = recipe_id or _extract_int(recipe.metadata.get("recipe_id"))
         agent = {
             "recipe": {
                 "namespace": recipe.namespace,
@@ -151,6 +154,8 @@ class BrowserAgentAdapter:
             },
             "status": result.status,
         }
+        if resolved_recipe_id is not None:
+            agent["recipe"]["id"] = resolved_recipe_id
         if recovery is not None:
             agent["recovery"] = recovery
         raw["agent"] = agent
@@ -285,12 +290,14 @@ class BrowserAgentAdapter:
             self._mark_recipe_degraded(loaded_recipe, recovery)
             return None
         candidate_recipe = self._recipe_from_payload(recovery.candidate_recipe or {})
-        next_version = self._write_recovered_recipe(loaded_recipe, recovery)
+        written_recipe = self._write_recovered_recipe(loaded_recipe, recovery)
         if (
             self.recipe_version_writer is not None or loaded_recipe.db_backed
-        ) and next_version is None:
+        ) and written_recipe is None:
             self._mark_recipe_degraded(loaded_recipe, recovery)
             return None
+        next_version = _extract_version(written_recipe)
+        next_recipe_id = _extract_recipe_id(written_recipe)
         if next_version is not None:
             candidate_recipe = candidate_recipe.model_copy(
                 update={"version": next_version}
@@ -305,6 +312,7 @@ class BrowserAgentAdapter:
             runtime=runtime,
             metric_date=metric_date,
             recipe=candidate_recipe,
+            recipe_id=next_recipe_id or loaded_recipe.recipe_id,
             result=replay_result.model_copy(update={"status": "recovered"}),
             output=replay_result.output,
             recovery=recovery_metadata,
@@ -322,7 +330,7 @@ class BrowserAgentAdapter:
         self,
         loaded_recipe: _LoadedRecipe,
         recovery: RecoveryResult,
-    ) -> int | None:
+    ) -> dict[str, int] | int | None:
         candidate_recipe = recovery.candidate_recipe
         if not isinstance(candidate_recipe, dict):
             return None
@@ -335,14 +343,14 @@ class BrowserAgentAdapter:
                 candidate_recipe=candidate_recipe,
                 recovery=recovery,
             )
-            return _extract_version(written)
+            return written
         if not loaded_recipe.db_backed:
             return None
         session_factory = getattr(session_module, "async_session_factory", None)
         if session_factory is None:
             return None
 
-        async def _write() -> int | None:
+        async def _write() -> dict[str, int] | None:
             async with session_factory() as db_session:
                 repository = AgentRecipeRepository(db_session)
                 current_recipe = await repository.get_active_for_update(
@@ -358,7 +366,10 @@ class BrowserAgentAdapter:
                     data=_recipe_version_data(candidate_recipe),
                 )
                 await db_session.commit()
-                return next_recipe.version
+                return {
+                    "id": next_recipe.id or 0,
+                    "version": next_recipe.version,
+                }
 
         return session_module.run_coro(_write())
 
@@ -545,8 +556,6 @@ class BrowserAgentAdapter:
         payload.setdefault("metric_date", metric_date)
         payload.setdefault("rule_id", runtime.rule_id)
         payload.setdefault("execution_id", runtime.execution_id)
-        payload.setdefault("reviews", {"summary": {}, "items": []})
-        payload.setdefault("violations", {"summary": {}, "waiting_list": []})
         payload.setdefault("raw", {})
         return payload
 
@@ -837,6 +846,12 @@ def _extract_version(value: Any) -> int | None:
     if isinstance(value, dict):
         return _extract_int(value.get("version"))
     return _extract_int(getattr(value, "version", None))
+
+
+def _extract_recipe_id(value: Any) -> int | None:
+    if isinstance(value, dict):
+        return _extract_int(value.get("id") or value.get("recipe_id"))
+    return _extract_int(getattr(value, "id", None) or getattr(value, "recipe_id", None))
 
 
 def _extract_int(value: Any) -> int | None:

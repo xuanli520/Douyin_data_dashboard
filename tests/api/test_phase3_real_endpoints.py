@@ -143,41 +143,6 @@ async def seeded_phase3_data(test_db):
                 source="seed",
             )
 
-        await repo.replace_violations(
-            shop_id="1001",
-            metric_date=date(2026, 3, 3),
-            violations=[
-                {
-                    "violation_id": "issue_1",
-                    "violation_type": "product",
-                    "description": "product defect complaints",
-                    "score": 6,
-                    "source": "seed",
-                }
-            ],
-        )
-        await repo.replace_violations(
-            shop_id="1001",
-            metric_date=date(2026, 3, 2),
-            violations=[
-                {
-                    "violation_id": "issue_2",
-                    "violation_type": "risk",
-                    "description": "policy violation warning",
-                    "score": 3,
-                    "source": "seed",
-                }
-            ],
-        )
-        await repo.upsert_cold_metrics(
-            shop_id="1001",
-            metric_date=date(2026, 3, 1),
-            reason="cold reason fallback",
-            violations_detail=[],
-            arbitration_detail=[],
-            dsr_trend=[],
-            source="seed",
-        )
         await session.commit()
 
 
@@ -271,8 +236,8 @@ async def test_phase3_experience_and_metrics_use_seeded_rows(
         headers=headers,
     )
     issues = issues_resp.json()["data"]
-    assert issues["meta"]["total"] >= 2
-    assert any(item["id"] == "issue_1" for item in issues["items"])
+    assert issues["meta"]["total"] == 0
+    assert issues["items"] == []
 
     metric_resp = await api_client.get(
         f"/api/v1/metrics/product?shop_id=1001&date_range={SEEDED_DATE_RANGE}&period=30d",

@@ -8,6 +8,7 @@ from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import src.cache as cache_module
+from src.domains.agent_result.repository import AgentResultRepository
 from src.domains.experience.services import ExperienceQueryService
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
 from src.middleware.monitor import observe_shop_dashboard_score_upsert
@@ -76,6 +77,13 @@ class CollectionResultPersister:
             shop_id=resolved_shop_id,
             metric_date=metric_day_text,
         )
+        await self._persist_agent_result(
+            session=session,
+            payload=payload,
+            resolved_shop_id=resolved_shop_id,
+            metric_day=metric_day,
+            fallback_status=status,
+        )
         await session.commit()
         try:
             await self._invalidate_experience_cache(
@@ -110,6 +118,41 @@ class CollectionResultPersister:
             metric_date=metric_day,
         )
 
+    async def _persist_agent_result(
+        self,
+        *,
+        session: AsyncSession,
+        payload: dict[str, Any],
+        resolved_shop_id: str,
+        metric_day: date,
+        fallback_status: str,
+    ) -> None:
+        raw = payload.get("raw")
+        if not isinstance(raw, dict):
+            return
+        agent = raw.get("agent")
+        if not isinstance(agent, dict):
+            return
+        recipe = agent.get("recipe")
+        if not isinstance(recipe, dict):
+            return
+        recipe_id = _to_int_or_none(recipe.get("id") or recipe.get("recipe_id"))
+        if recipe_id is None:
+            return
+        namespace = str(recipe.get("namespace") or "").strip() or "shop_dashboard"
+        status = str(agent.get("status") or fallback_status).strip() or fallback_status
+        await AgentResultRepository(session).upsert(
+            namespace=namespace,
+            resource_key=resolved_shop_id,
+            resource_date=metric_day,
+            recipe_id=recipe_id,
+            output=_agent_result_output(payload),
+            status=status,
+            error_message=_text_or_none(
+                payload.get("reason") or payload.get("error_code")
+            ),
+        )
+
 
 def _to_float_or_none(value: Any) -> float | None:
     if value is None:
@@ -127,3 +170,38 @@ def _normalize_shop_id(value: Any) -> str:
     if normalized.isdigit():
         return str(int(normalized))
     return normalized
+
+
+def _agent_result_output(payload: dict[str, Any]) -> dict[str, Any]:
+    excluded = {
+        "actual_shop_id",
+        "shop_id",
+        "target_shop_id",
+        "shop_name",
+        "metric_date",
+        "source",
+        "status",
+        "rule_id",
+        "execution_id",
+        "total_score",
+        "product_score",
+        "logistics_score",
+        "service_score",
+        "bad_behavior_score",
+        "reason",
+        "error_code",
+        "raw",
+    }
+    return {key: value for key, value in payload.items() if key not in excluded}
+
+
+def _to_int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _text_or_none(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None

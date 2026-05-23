@@ -110,42 +110,6 @@ async def _seed_materials(repo: ShopDashboardRepository) -> None:
             source="seed",
         )
 
-    await repo.replace_violations(
-        shop_id="1001",
-        metric_date=date(2026, 3, 3),
-        violations=[
-            {
-                "violation_id": "issue_1",
-                "violation_type": "product",
-                "description": "product defect complaints",
-                "score": 18,
-                "source": "seed",
-            }
-        ],
-    )
-    await repo.replace_violations(
-        shop_id="1001",
-        metric_date=date(2026, 3, 2),
-        violations=[
-            {
-                "violation_id": "issue_2",
-                "violation_type": "risk",
-                "description": "policy violation warning",
-                "score": 11,
-                "source": "seed",
-            }
-        ],
-    )
-    await repo.upsert_cold_metrics(
-        shop_id="1001",
-        metric_date=date(2026, 3, 1),
-        reason="cold reason fallback",
-        violations_detail=[],
-        arbitration_detail=[],
-        dsr_trend=[],
-        source="seed",
-    )
-
 
 async def test_get_overview_returns_weighted_score_and_alerts(test_db):
     async with test_db() as session:
@@ -162,11 +126,11 @@ async def test_get_overview_returns_weighted_score_and_alerts(test_db):
         assert overview.shop_id == 1001
         assert len(overview.dimensions) == 4
         assert overview.overall_score == 89.9
-        assert overview.alerts.total == 3
-        assert overview.alerts.critical == 1
-        assert overview.alerts.warning == 1
-        assert overview.alerts.info == 1
-        assert overview.alerts.unread == 3
+        assert overview.alerts.total == 0
+        assert overview.alerts.critical == 0
+        assert overview.alerts.warning == 0
+        assert overview.alerts.info == 0
+        assert overview.alerts.unread == 0
 
 
 async def test_get_metric_detail_risk_contains_penalty_fields(test_db):

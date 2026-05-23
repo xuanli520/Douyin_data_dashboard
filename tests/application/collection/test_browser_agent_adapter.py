@@ -46,6 +46,7 @@ def _runtime(extra_config=None):
 
 def _recipe():
     return {
+        "id": 42,
         "namespace": "generic",
         "key": "overview",
         "version": 1,
@@ -121,6 +122,7 @@ def test_browser_agent_adapter_maps_crawler_output(tmp_path):
     assert payload["source"] == "browser_agent"
     assert payload["total_score"] == 90
     assert payload["raw"]["agent"]["recipe"] == {
+        "id": 42,
         "namespace": "generic",
         "key": "overview",
         "version": 1,
@@ -202,7 +204,7 @@ def test_browser_agent_adapter_recovers_recipe_and_records_next_version(tmp_path
 
     def recipe_version_writer(**payload):
         written.append(payload)
-        return {"version": 2}
+        return {"id": 43, "version": 2}
 
     adapter = BrowserAgentAdapter(
         recipe_loader=lambda _ref: _recipe(),
@@ -223,6 +225,7 @@ def test_browser_agent_adapter_recovers_recipe_and_records_next_version(tmp_path
     )
 
     assert payload["total_score"] == 95
+    assert payload["raw"]["agent"]["recipe"]["id"] == 43
     assert payload["raw"]["agent"]["recipe"]["version"] == 2
     assert payload["raw"]["agent"]["recovery"] == {
         "status": "success",

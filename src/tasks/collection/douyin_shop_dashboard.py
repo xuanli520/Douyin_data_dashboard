@@ -342,8 +342,6 @@ def _build_expired_account_result(
         "logistics_score": 0.0,
         "service_score": 0.0,
         "bad_behavior_score": 0.0,
-        "reviews": {"summary": {}, "items": []},
-        "violations": {"summary": {}, "waiting_list": []},
         "raw": {},
         "retry_count": 0,
         "agent_trace": [],
@@ -379,8 +377,6 @@ def _normalize_task_result(
         "logistics_score": payload.get("logistics_score", 0.0),
         "service_score": payload.get("service_score", 0.0),
         "bad_behavior_score": payload.get("bad_behavior_score", 0.0),
-        "reviews": payload.get("reviews", {"summary": {}, "items": []}),
-        "violations": payload.get("violations", {"summary": {}, "waiting_list": []}),
         "raw": payload.get("raw", {}),
         "retry_count": retry_count,
         "agent_trace": list(agent_trace or []),
@@ -390,9 +386,6 @@ def _normalize_task_result(
         result["shop_name"] = shop_name
     if "reason" in payload:
         result["reason"] = payload.get("reason")
-    for key in ("violations_detail", "arbitration_detail", "dsr_trend"):
-        if key in payload:
-            result[key] = payload.get(key)
     if not isinstance(result["raw"], dict):
         result["raw"] = {}
     return result

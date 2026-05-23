@@ -825,33 +825,6 @@ class CollectionUseCase:
                 source = str(collected.get("source", "unknown"))
                 status = str(collected.get("status", "success"))
             except Exception as exc:
-                if shop_count > 1 and self._is_recoverable_unit_failure(exc):
-                    error_code = self._extract_agent_failure_code(exc)
-                    failed_item = self._build_recoverable_unit_failed_item(
-                        runtime=unit_runtime,
-                        plan_unit=plan_unit,
-                        error_code=error_code,
-                        error=str(exc),
-                        account_id_status=account_id_status,
-                    )
-                    await self._persist_payload(
-                        session_factory=session_factory,
-                        runtime=unit_runtime,
-                        metric_date=plan_unit.metric_date,
-                        payload=failed_item,
-                    )
-                    items.append(failed_item)
-                    source = "browser_agent"
-                    status = "failed"
-                    observe_shop_dashboard_collection(
-                        source=source,
-                        status=status,
-                        duration_seconds=time.perf_counter() - started_at,
-                        shop_mode=runtime.shop_mode,
-                        shop_resolve_source=runtime.shop_resolve_source,
-                        circuit_break_status="closed",
-                    )
-                    continue
                 if batch_agent_context.enabled and self._is_agent_recipe_failure(exc):
                     error_code = self._extract_agent_failure_code(exc)
                     await self._mark_batch_recipe_degraded(
@@ -866,6 +839,33 @@ class CollectionUseCase:
                         error=str(exc),
                         recipe_status="degraded",
                         recipe_stability=batch_agent_context.recipe_stability,
+                    )
+                    items.append(failed_item)
+                    source = "browser_agent"
+                    status = "failed"
+                    observe_shop_dashboard_collection(
+                        source=source,
+                        status=status,
+                        duration_seconds=time.perf_counter() - started_at,
+                        shop_mode=runtime.shop_mode,
+                        shop_resolve_source=runtime.shop_resolve_source,
+                        circuit_break_status="closed",
+                    )
+                    continue
+                if shop_count > 1 and self._is_recoverable_unit_failure(exc):
+                    error_code = self._extract_agent_failure_code(exc)
+                    failed_item = self._build_recoverable_unit_failed_item(
+                        runtime=unit_runtime,
+                        plan_unit=plan_unit,
+                        error_code=error_code,
+                        error=str(exc),
+                        account_id_status=account_id_status,
+                    )
+                    await self._persist_payload(
+                        session_factory=session_factory,
+                        runtime=unit_runtime,
+                        metric_date=plan_unit.metric_date,
+                        payload=failed_item,
                     )
                     items.append(failed_item)
                     source = "browser_agent"
@@ -1220,30 +1220,6 @@ class CollectionUseCase:
             )
             return {"items": [collected]}
         except Exception as exc:
-            if self._is_recoverable_unit_failure(exc):
-                error_code = self._extract_agent_failure_code(exc)
-                item = self._build_recoverable_unit_failed_item(
-                    runtime=unit_runtime,
-                    plan_unit=plan_unit,
-                    error_code=error_code,
-                    error=str(exc),
-                    account_id_status=account_id_status,
-                )
-                await self._persist_payload(
-                    session_factory=session_factory,
-                    runtime=unit_runtime,
-                    metric_date=plan_unit.metric_date,
-                    payload=item,
-                )
-                observe_shop_dashboard_collection(
-                    source="browser_agent",
-                    status="failed",
-                    duration_seconds=time.perf_counter() - started_at,
-                    shop_mode=runtime.shop_mode,
-                    shop_resolve_source=runtime.shop_resolve_source,
-                    circuit_break_status="closed",
-                )
-                return {"items": [item]}
             if batch_agent_context.enabled and self._is_agent_recipe_failure(exc):
                 error_code = self._extract_agent_failure_code(exc)
                 await self._mark_batch_recipe_degraded(
@@ -1258,6 +1234,30 @@ class CollectionUseCase:
                     error=str(exc),
                     recipe_status="degraded",
                     recipe_stability=batch_agent_context.recipe_stability,
+                )
+                observe_shop_dashboard_collection(
+                    source="browser_agent",
+                    status="failed",
+                    duration_seconds=time.perf_counter() - started_at,
+                    shop_mode=runtime.shop_mode,
+                    shop_resolve_source=runtime.shop_resolve_source,
+                    circuit_break_status="closed",
+                )
+                return {"items": [item]}
+            if self._is_recoverable_unit_failure(exc):
+                error_code = self._extract_agent_failure_code(exc)
+                item = self._build_recoverable_unit_failed_item(
+                    runtime=unit_runtime,
+                    plan_unit=plan_unit,
+                    error_code=error_code,
+                    error=str(exc),
+                    account_id_status=account_id_status,
+                )
+                await self._persist_payload(
+                    session_factory=session_factory,
+                    runtime=unit_runtime,
+                    metric_date=plan_unit.metric_date,
+                    payload=item,
                 )
                 observe_shop_dashboard_collection(
                     source="browser_agent",

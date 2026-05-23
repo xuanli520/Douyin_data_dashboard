@@ -24,6 +24,7 @@ from src.api import (
     schedules_router,
     analysis_router,
     agent_discovery_router,
+    agent_results_router,
     agent_login_router,
     system_router,
     permissions_router,
@@ -115,6 +116,7 @@ def create_app() -> FastAPI:
     app.include_router(
         agent_discovery_router, prefix="/api/v1", tags=["agent-discovery"]
     )
+    app.include_router(agent_results_router, prefix="/api/v1", tags=["agent-results"])
     app.include_router(agent_login_router, prefix="/api/v1", tags=["agent-login"])
     app.include_router(system_router, prefix="/api/v1", tags=["system"])
     app.include_router(permissions_router, prefix="/api/v1", tags=["permissions"])
