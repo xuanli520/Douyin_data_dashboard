@@ -181,3 +181,92 @@ async def test_persist_should_store_agent_result_before_commit(test_db):
         assert row.recipe_id == recipe.id
         assert row.status == "recovered"
         assert row.output == {"custom_table": [{"metric": "total", "score": 80}]}
+
+
+async def test_persist_should_store_failed_agent_result_from_runtime_recipe(monkeypatch):
+    import src.application.collection.result_persister as persister_module
+
+    upserts = []
+
+    class _ShopDashboardRepository:
+        async def upsert_score(self, **_kwargs):
+            return object()
+
+    class _AgentResultRepository:
+        async def upsert(self, **kwargs):
+            upserts.append(kwargs)
+            return object()
+
+    class _Session:
+        async def commit(self):
+            return None
+
+    monkeypatch.setattr(
+        persister_module,
+        "ShopDashboardRepository",
+        lambda _session: _ShopDashboardRepository(),
+    )
+    monkeypatch.setattr(
+        persister_module,
+        "AgentResultRepository",
+        lambda _session: _AgentResultRepository(),
+    )
+    monkeypatch.setattr(
+        persister_module,
+        "sa_inspect",
+        lambda _score: SimpleNamespace(info={}),
+    )
+    monkeypatch.setattr(
+        persister_module,
+        "observe_shop_dashboard_score_upsert",
+        lambda **_kwargs: None,
+    )
+    persister_module.cache_module.cache = None
+
+    await CollectionResultPersister().persist(
+        session=_Session(),
+        runtime=SimpleNamespace(
+            shop_id="1001",
+            extra_config={
+                "agent_recipe_inline": {
+                    "id": 7,
+                    "namespace": "shop_dashboard",
+                    "key": "overview",
+                    "version": 1,
+                }
+            },
+        ),
+        metric_date="2026-03-03",
+        payload={
+            "shop_id": "1001",
+            "target_shop_id": "1001",
+            "actual_shop_id": "1001",
+            "status": "failed",
+            "source": "browser_agent",
+            "reason": "data_incomplete",
+            "error_code": "timeout",
+            "total_score": None,
+            "product_score": None,
+            "logistics_score": None,
+            "service_score": None,
+            "bad_behavior_score": None,
+            "agent_trace": [
+                {
+                    "stage": "browser_agent",
+                    "status": "failed",
+                    "error": "timeout",
+                }
+            ],
+        },
+    )
+
+    assert upserts[0]["recipe_id"] == 7
+    assert upserts[0]["status"] == "failed"
+    assert upserts[0]["error_message"] == "data_incomplete"
+    assert upserts[0]["output"]["agent_trace"] == [
+        {
+            "stage": "browser_agent",
+            "status": "failed",
+            "error": "timeout",
+        }
+    ]

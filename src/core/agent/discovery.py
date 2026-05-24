@@ -114,41 +114,14 @@ class ReActDiscoveryAgent:
                     self._llm_client.complete_tool_call(tool_request)
                 )
                 if tool_call.name == "done":
-                    recipe_request = RecipeSummaryRequest(
+                    return self._complete_with_recipe(
+                        run_id=active_run_id,
                         goal=goal,
                         entrypoint_url=entrypoint_url,
-                        trajectory=trajectory.model_dump(mode="json"),
+                        trajectory=trajectory,
+                        observation=current_observation,
                         namespace_hint=namespace_hint,
                         key_hint=key_hint,
-                    )
-                    recipe = self._recipe_generator.generate(recipe_request)
-                    if self._replay_validator is not None:
-                        self._replay_validator(recipe)
-                    trajectory.mark_completed(recipe)
-                    self._emit(
-                        run_id=active_run_id,
-                        event_type="recipe_generated",
-                        current_url=current_observation.current_url,
-                        page_title=current_observation.page_title,
-                        screenshot_artifact_id=current_observation.screenshot_artifact_id,
-                        status="completed",
-                        message="recipe generated",
-                    )
-                    self._emit(
-                        run_id=active_run_id,
-                        event_type="run_finished",
-                        current_url=current_observation.current_url,
-                        page_title=current_observation.page_title,
-                        screenshot_artifact_id=current_observation.screenshot_artifact_id,
-                        status="completed",
-                        message="discovery finished",
-                    )
-                    return DiscoveryRunResult(
-                        run_id=active_run_id,
-                        status="completed",
-                        trajectory=trajectory.model_dump(mode="json"),
-                        recipe=recipe,
-                        events=self._observation_sync.events,
                     )
                 self._emit(
                     run_id=active_run_id,
@@ -194,7 +167,15 @@ class ReActDiscoveryAgent:
                 self._emit_observation(
                     active_run_id, current_observation, "page observed"
                 )
-            raise RuntimeError("max_steps_exceeded")
+            return self._complete_with_recipe(
+                run_id=active_run_id,
+                goal=goal,
+                entrypoint_url=entrypoint_url,
+                trajectory=trajectory,
+                observation=current_observation,
+                namespace_hint=namespace_hint,
+                key_hint=key_hint,
+            )
         except Exception as exc:
             trajectory.mark_failed(str(exc))
             self._emit(
@@ -222,6 +203,54 @@ class ReActDiscoveryAgent:
                 error_message=str(exc),
                 events=self._observation_sync.events,
             )
+
+    def _complete_with_recipe(
+        self,
+        *,
+        run_id: str,
+        goal: str,
+        entrypoint_url: str,
+        trajectory: DiscoveryTrajectory,
+        observation: PageObservation,
+        namespace_hint: str | None,
+        key_hint: str | None,
+    ) -> DiscoveryRunResult:
+        recipe_request = RecipeSummaryRequest(
+            goal=goal,
+            entrypoint_url=entrypoint_url,
+            trajectory=trajectory.model_dump(mode="json"),
+            namespace_hint=namespace_hint,
+            key_hint=key_hint,
+        )
+        recipe = self._recipe_generator.generate(recipe_request)
+        if self._replay_validator is not None:
+            self._replay_validator(recipe)
+        trajectory.mark_completed(recipe)
+        self._emit(
+            run_id=run_id,
+            event_type="recipe_generated",
+            current_url=observation.current_url,
+            page_title=observation.page_title,
+            screenshot_artifact_id=observation.screenshot_artifact_id,
+            status="completed",
+            message="recipe generated",
+        )
+        self._emit(
+            run_id=run_id,
+            event_type="run_finished",
+            current_url=observation.current_url,
+            page_title=observation.page_title,
+            screenshot_artifact_id=observation.screenshot_artifact_id,
+            status="completed",
+            message="discovery finished",
+        )
+        return DiscoveryRunResult(
+            run_id=run_id,
+            status="completed",
+            trajectory=trajectory.model_dump(mode="json"),
+            recipe=recipe,
+            events=self._observation_sync.events,
+        )
 
     def _emit_observation(
         self,

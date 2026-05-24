@@ -141,58 +141,49 @@ class PlaywrightCLIDriver:
         return DriverResult()
 
     def wait_network_idle(self, timeout_seconds: float) -> DriverResult:
-        _ = timeout_seconds
+        timeout_milliseconds = max(int(float(timeout_seconds or 0) * 1000), 1)
+        self._run_code(
+            "await page.waitForLoadState('networkidle', "
+            f"{{ timeout: {timeout_milliseconds} }}).catch(() => null);"
+        )
         self._capture_page_metadata(self._run(["snapshot"]).stdout)
         return DriverResult()
 
     def scroll_down(self, amount: str | int | float | None = None) -> DriverResult:
-        command = ["scroll-down"]
-        if amount is not None:
-            command.append(str(amount))
-        self._capture_page_metadata(self._run(command).stdout)
+        scroll_amount = _scroll_amount(amount, 600)
+        self._run_code(
+            f"await page.mouse.wheel(0, {scroll_amount});\n"
+            "await page.waitForTimeout(200);"
+        )
+        self._capture_page_metadata(self._run(["snapshot"]).stdout)
         return DriverResult(data={"amount": amount})
 
     def scroll_up(self, amount: str | int | float | None = None) -> DriverResult:
-        command = ["scroll-up"]
-        if amount is not None:
-            command.append(str(amount))
-        self._capture_page_metadata(self._run(command).stdout)
+        scroll_amount = _scroll_amount(amount, 600)
+        self._run_code(
+            f"await page.mouse.wheel(0, -{scroll_amount});\n"
+            "await page.waitForTimeout(200);"
+        )
+        self._capture_page_metadata(self._run(["snapshot"]).stdout)
         return DriverResult(data={"amount": amount})
 
     def scroll_to_element(self, locator: LocatorSpec) -> DriverResult:
-        if locator.kind == "css":
-            self._capture_page_metadata(
-                self._run(["scroll-to-element", locator.value]).stdout
-            )
-        else:
-            self._capture_page_metadata(
-                self._run_code(
-                    f"await {_locator_expression(locator)}.scrollIntoViewIfNeeded();"
-                ).stdout
-            )
+        self._run_code(f"await {_locator_expression(locator)}.scrollIntoViewIfNeeded();")
+        self._capture_page_metadata(self._run(["snapshot"]).stdout)
         return DriverResult(data={"locator": locator.value})
 
     def extract_table(self, locator: LocatorSpec) -> DriverResult:
-        if locator.kind == "css":
-            text = self._run(["extract-table", locator.value]).stdout.strip()
-        else:
-            text = self.text(locator)
+        text = self.text(locator)
         return DriverResult(data={"text": text})
 
     def extract_list(self, locator: LocatorSpec) -> DriverResult:
-        if locator.kind == "css":
-            text = self._run(["extract-list", locator.value]).stdout.strip()
-        else:
-            text = self.text(locator)
+        text = self.text(locator)
         return DriverResult(
             data={"items": [item.strip() for item in text.splitlines() if item.strip()]}
         )
 
     def extract_text(self, locator: LocatorSpec) -> DriverResult:
-        if locator.kind == "css":
-            text = self._run(["extract-text", locator.value]).stdout.strip()
-        else:
-            text = self.text(locator)
+        text = self.text(locator)
         return DriverResult(data={"text": text})
 
     def screenshot(self, filename: str) -> Path:
@@ -230,8 +221,6 @@ class PlaywrightCLIDriver:
         return self.title()
 
     def text(self, locator: LocatorSpec) -> str:
-        if locator.kind == "css":
-            return self._run(["snapshot", locator.value]).stdout.strip()
         result = self._run_code(
             f"return await {_locator_expression(locator)}.innerText();"
         )
@@ -320,6 +309,13 @@ def _locator_expression(locator: LocatorSpec) -> str:
             return f"page.getByRole({json.dumps(role)}, {{ name: {json.dumps(name)} }}).first()"
         return f"page.getByRole({json.dumps(role)}).first()"
     raise BrowserDriverError(f"unsupported locator kind: {locator.kind}")
+
+
+def _scroll_amount(value: str | int | float | None, default: int) -> int:
+    try:
+        return abs(int(float(value))) if value is not None else default
+    except (TypeError, ValueError):
+        return default
 
 
 def _role_parts(value: str) -> tuple[str, str]:

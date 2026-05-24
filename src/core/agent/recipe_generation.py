@@ -1,15 +1,19 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, get_args
 from urllib.parse import urlparse
 
 from src.core.agent.llm import DiscoveryLLMClient, RecipeSummaryRequest
+from src.core.agent.models import ActionName
 from src.core.agent.models import SecurityPolicy
 from src.core.agent.tools import ToolRegistry
 
 
 class RecipeGenerationError(ValueError):
     pass
+
+
+_RECIPE_ACTIONS = set(get_args(ActionName))
 
 
 class RecipeGenerator:
@@ -106,10 +110,8 @@ class RecipeGenerator:
             action = str(step.get("action") or "").strip()
             if not action:
                 raise RecipeGenerationError("step action is required")
-            try:
-                self._registry.get(action)
-            except ValueError as exc:
-                raise RecipeGenerationError(str(exc)) from exc
+            if action not in _RECIPE_ACTIONS:
+                raise RecipeGenerationError(f"unsupported recipe action: {action}")
             target = step.get("target")
             if target is not None:
                 self._validate_locator_payload(target)
@@ -273,6 +275,8 @@ def _normalize_steps(value: Any, entrypoint_url: str) -> list[dict[str, Any]]:
             steps.append(item)
             continue
         step = dict(item)
+        if str(step.get("action") or "").strip() == "done":
+            continue
         step.setdefault("id", f"step-{index}")
         arguments = step.pop("arguments", None)
         if isinstance(arguments, Mapping):
@@ -313,7 +317,19 @@ def _normalize_observations(value: Any) -> dict[str, dict[str, Any]]:
 def _normalize_assertions(value: Any) -> list[dict[str, Any]]:
     if value is None:
         return []
-    return value
+    if not isinstance(value, list):
+        return value
+    assertions: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        assertion = dict(item)
+        if "kind" not in assertion and "type" in assertion:
+            assertion["kind"] = assertion.pop("type")
+        if "source" not in assertion and "observation" in assertion:
+            assertion["source"] = assertion.pop("observation")
+        assertions.append(assertion)
+    return assertions
 
 
 def _normalize_security_policy(value: Any, entrypoint_url: str) -> dict[str, Any]:

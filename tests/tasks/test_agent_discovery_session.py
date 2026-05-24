@@ -2,6 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 from src.domains.agent_recipe.repository import AgentRecipeRepository
+from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
 from src.tasks.collection import douyin_shop_discovery as module
 
 
@@ -104,6 +105,16 @@ def test_replay_recipe_passes_shop_id_to_runner(monkeypatch):
     assert calls[0]["input_data"]["shop_id"] == "shop-1"
     assert calls[0]["context"]["shop_id"] == "shop-1"
     assert calls[0]["crawler"]._shop_id == "shop-1"
+
+
+def test_discovery_storage_state_prefers_shop_state(tmp_path):
+    store = SessionStateStore(tmp_path)
+    account_path = store.save_playwright_state("acct-1", {"cookies": []})
+    shop_path = store.save_playwright_state("acct-1", {"cookies": []}, "shop-1")
+    settings = SimpleNamespace(runtime_state_dir=str(tmp_path))
+
+    assert module._resolve_storage_state_path(settings, "acct-1", "shop-1") == shop_path
+    assert module._resolve_storage_state_path(settings, "acct-1", "shop-2") == account_path
 
 
 def test_write_agent_recipe_persists_candidate(test_db, monkeypatch):

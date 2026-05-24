@@ -132,7 +132,7 @@ def _run_discovery(
     max_steps: int | None,
     settings: Any,
 ) -> dict[str, Any]:
-    storage_state_path = _resolve_storage_state_path(settings, account_id)
+    storage_state_path = _resolve_storage_state_path(settings, account_id, shop_id)
     driver = PlaywrightCLIDriver(
         session_id=run_id,
         storage_state_path=storage_state_path,
@@ -198,11 +198,23 @@ def _replay_recipe(
     )
 
 
-def _resolve_storage_state_path(settings: Any, account_id: str | None) -> Any:
+def _resolve_storage_state_path(
+    settings: Any,
+    account_id: str | None,
+    shop_id: str | None = None,
+) -> Any:
     normalized_account_id = str(account_id or "").strip()
     if not normalized_account_id:
         return None
     state_store = SessionStateStore(base_dir=settings.runtime_state_dir)
+    normalized_shop_id = str(shop_id or "").strip()
+    if normalized_shop_id:
+        shop_path = state_store.playwright_state_path(
+            normalized_account_id,
+            normalized_shop_id,
+        )
+        if shop_path.exists():
+            return shop_path
     path = state_store.playwright_state_path(normalized_account_id)
     return path if path.exists() else None
 
@@ -272,6 +284,7 @@ class _DiscoveryReplayCrawler:
         storage_state_path = _resolve_storage_state_path(
             self._settings,
             str(replay_context.get("account_id") or ""),
+            self._shop_id,
         )
         run_context = RunContext(
             session_id=str(

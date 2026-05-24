@@ -104,7 +104,7 @@ def test_react_discovery_agent_runs_until_done():
     ]
 
 
-def test_react_discovery_agent_returns_failed_result_when_max_steps_is_hit():
+def test_react_discovery_agent_generates_recipe_when_step_budget_is_hit():
     class _NeverDoneLLM(_FakeLLM):
         def complete_tool_call(self, _request):
             return ToolCall(
@@ -123,5 +123,6 @@ def test_react_discovery_agent_returns_failed_result_when_max_steps_is_hit():
         entrypoint_url="https://example.com/app",
     )
 
-    assert result.status == "failed"
-    assert result.error_message == "max_steps_exceeded"
+    assert result.status == "completed"
+    assert result.recipe["key"] == "auto_recipe"
+    assert result.trajectory["entries"][0]["tool_name"] == "click"

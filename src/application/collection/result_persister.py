@@ -79,6 +79,7 @@ class CollectionResultPersister:
         )
         await self._persist_agent_result(
             session=session,
+            runtime=runtime,
             payload=payload,
             resolved_shop_id=resolved_shop_id,
             metric_day=metric_day,
@@ -122,19 +123,15 @@ class CollectionResultPersister:
         self,
         *,
         session: AsyncSession,
+        runtime: ShopDashboardRuntimeConfig,
         payload: dict[str, Any],
         resolved_shop_id: str,
         metric_day: date,
         fallback_status: str,
     ) -> None:
-        raw = payload.get("raw")
-        if not isinstance(raw, dict):
-            return
-        agent = raw.get("agent")
-        if not isinstance(agent, dict):
-            return
-        recipe = agent.get("recipe")
-        if not isinstance(recipe, dict):
+        agent = _agent_metadata(payload)
+        recipe = _recipe_metadata(payload=payload, runtime=runtime)
+        if recipe is None:
             return
         recipe_id = _to_int_or_none(recipe.get("id") or recipe.get("recipe_id"))
         if recipe_id is None:
@@ -193,6 +190,36 @@ def _agent_result_output(payload: dict[str, Any]) -> dict[str, Any]:
         "raw",
     }
     return {key: value for key, value in payload.items() if key not in excluded}
+
+
+def _agent_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    raw = payload.get("raw")
+    if not isinstance(raw, dict):
+        return {}
+    agent = raw.get("agent")
+    return dict(agent) if isinstance(agent, dict) else {}
+
+
+def _recipe_metadata(
+    *,
+    payload: dict[str, Any],
+    runtime: ShopDashboardRuntimeConfig,
+) -> dict[str, Any] | None:
+    agent = _agent_metadata(payload)
+    recipe = agent.get("recipe")
+    if isinstance(recipe, dict):
+        return recipe
+    extra_config = getattr(runtime, "extra_config", None)
+    if isinstance(extra_config, dict):
+        inline_recipe = extra_config.get("agent_recipe_inline")
+        if isinstance(inline_recipe, dict):
+            return inline_recipe
+    recipe_ref = getattr(runtime, "agent_recipe_ref", None)
+    if isinstance(recipe_ref, dict):
+        recipe = recipe_ref.get("recipe")
+        if isinstance(recipe, dict):
+            return recipe
+    return None
 
 
 def _to_int_or_none(value: Any) -> int | None:

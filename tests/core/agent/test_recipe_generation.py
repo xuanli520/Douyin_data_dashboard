@@ -68,6 +68,54 @@ def test_recipe_generator_rejects_unknown_action():
         )
 
 
+def test_recipe_generator_drops_done_control_step():
+    generator = RecipeGenerator(
+        _FakeLLM(
+            _build_recipe(
+                steps=[
+                    {"id": "open", "action": "goto", "value": "https://example.com/app"},
+                    {"id": "finish", "action": "done"},
+                ]
+            )
+        )
+    )
+
+    recipe = generator.generate(
+        RecipeSummaryRequest(
+            goal="collect values",
+            entrypoint_url="https://example.com/app",
+            trajectory={"entries": []},
+        )
+    )
+
+    assert [step["action"] for step in recipe["steps"]] == ["goto"]
+
+
+def test_recipe_generator_drops_non_object_assertions():
+    generator = RecipeGenerator(
+        _FakeLLM(
+            _build_recipe(
+                assertions=[
+                    "total must exist",
+                    {"id": "assert-1", "source": "total", "kind": "not_empty"},
+                ]
+            )
+        )
+    )
+
+    recipe = generator.generate(
+        RecipeSummaryRequest(
+            goal="collect values",
+            entrypoint_url="https://example.com/app",
+            trajectory={"entries": []},
+        )
+    )
+
+    assert recipe["assertions"] == [
+        {"id": "assert-1", "source": "total", "kind": "not_empty"}
+    ]
+
+
 def test_recipe_generator_rejects_missing_assertion_source():
     generator = RecipeGenerator(
         _FakeLLM(
