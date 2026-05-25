@@ -68,6 +68,22 @@ class AgentRecipeService:
             await self.session.rollback()
         return [AgentRecipeResponse.model_validate(item) for item in recipes]
 
+    async def list_recipes(self) -> dict[str, Any]:
+        recipes = await self.recipe_repo.list_all()
+        return {
+            "items": [
+                {
+                    "id": item.id,
+                    "namespace": item.namespace,
+                    "key": item.key,
+                    "version": item.version,
+                    "status": item.status,
+                    "stability": item.stability,
+                }
+                for item in recipes
+            ]
+        }
+
     async def create_next_version(
         self,
         data: AgentRecipeVersionCreate,

@@ -132,3 +132,28 @@ def test_agent_recipe_mark_stable_calls_service():
     assert response.json()["data"] == {"recipe_id": 123, "status": "stable"}
     assert called[0].recipe_id == 123
     assert called[0].expected_version == 2
+
+
+def test_agent_recipe_list_calls_service():
+    app = _app()
+
+    class _Service:
+        async def list_recipes(self):
+            return {
+                "items": [
+                    {
+                        "id": 1,
+                        "namespace": "douyin_shop_dashboard",
+                        "key": "overview",
+                        "version": 1,
+                        "status": "active",
+                        "stability": "stable",
+                    }
+                ]
+            }
+
+    app.dependency_overrides[get_agent_recipe_service] = lambda: _Service()
+    response = TestClient(app).get("/api/v1/agent-discovery/recipes")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["items"][0]["key"] == "overview"

@@ -183,6 +183,65 @@ async def test_persist_should_store_agent_result_before_commit(test_db):
         assert row.output == {"custom_table": [{"metric": "total", "score": 80}]}
 
 
+async def test_persist_agent_result_only_skips_dashboard_score(test_db):
+    async with test_db() as session:
+        recipe = await AgentRecipeRepository(session).create(
+            {
+                "namespace": "douyin_shop_dashboard",
+                "key": "experience_score_product_detail",
+                "entrypoint": {"url": "https://example.com"},
+                "steps": [],
+                "observations": {},
+                "assertions": [],
+                "recovery_policy": {},
+                "security_policy": {},
+            }
+        )
+        await CollectionResultPersister().persist(
+            session=session,
+            runtime=SimpleNamespace(
+                shop_id="1001",
+                extra_config={
+                    "agent_result_only": True,
+                    "agent_recipe_inline": {
+                        "id": recipe.id,
+                        "namespace": "douyin_shop_dashboard",
+                        "key": "experience_score_product_detail",
+                        "version": 1,
+                    },
+                },
+            ),
+            metric_date="2026-03-03",
+            payload={
+                "shop_id": "1001",
+                "target_shop_id": "1001",
+                "actual_shop_id": "1001",
+                "source": "browser_agent",
+                "score_table": {
+                    "headers": ["metric", "score"],
+                    "rows": [["product", "100"]],
+                },
+            },
+        )
+
+        score = (
+            await session.execute(
+                select(ShopDashboardScore).where(ShopDashboardScore.shop_id == "1001")
+            )
+        ).scalar_one_or_none()
+        result = (
+            await session.execute(
+                select(AgentCollectionResult).where(
+                    AgentCollectionResult.resource_key == "1001"
+                )
+            )
+        ).scalar_one()
+
+        assert score is None
+        assert result.recipe_id == recipe.id
+        assert result.output["score_table"]["rows"] == [["product", "100"]]
+
+
 async def test_persist_should_store_failed_agent_result_from_runtime_recipe(monkeypatch):
     import src.application.collection.result_persister as persister_module
 

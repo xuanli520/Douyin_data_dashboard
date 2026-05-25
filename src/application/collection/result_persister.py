@@ -26,7 +26,6 @@ class CollectionResultPersister:
         metric_date: str,
         payload: dict[str, Any],
     ) -> None:
-        repo = ShopDashboardRepository(session)
         metric_day = date.fromisoformat(metric_date)
         metric_day_text = metric_day.isoformat()
         runtime_shop_id = _normalize_shop_id(runtime.shop_id)
@@ -57,26 +56,29 @@ class CollectionResultPersister:
             return
         source = str(payload.get("source", "browser_agent"))
         status = str(payload.get("status") or "success").strip() or "success"
-        score = await repo.upsert_score(
-            shop_id=resolved_shop_id,
-            metric_date=metric_day,
-            total_score=_to_float_or_none(payload.get("total_score")),
-            product_score=_to_float_or_none(payload.get("product_score")),
-            logistics_score=_to_float_or_none(payload.get("logistics_score")),
-            service_score=_to_float_or_none(payload.get("service_score")),
-            bad_behavior_score=_to_float_or_none(payload.get("bad_behavior_score")),
-            shop_name=str(payload.get("shop_name", "")).strip() or None,
-            source=source,
-            status=status,
-            reason=payload.get("reason"),
-            error_code=payload.get("error_code"),
-        )
-        insert_or_update = sa_inspect(score).info.get("insert_or_update", "update")
-        observe_shop_dashboard_score_upsert(
-            insert_or_update=str(insert_or_update),
-            shop_id=resolved_shop_id,
-            metric_date=metric_day_text,
-        )
+        persist_dashboard_score = _should_persist_dashboard_score(runtime)
+        if persist_dashboard_score:
+            repo = ShopDashboardRepository(session)
+            score = await repo.upsert_score(
+                shop_id=resolved_shop_id,
+                metric_date=metric_day,
+                total_score=_to_float_or_none(payload.get("total_score")),
+                product_score=_to_float_or_none(payload.get("product_score")),
+                logistics_score=_to_float_or_none(payload.get("logistics_score")),
+                service_score=_to_float_or_none(payload.get("service_score")),
+                bad_behavior_score=_to_float_or_none(payload.get("bad_behavior_score")),
+                shop_name=str(payload.get("shop_name", "")).strip() or None,
+                source=source,
+                status=status,
+                reason=payload.get("reason"),
+                error_code=payload.get("error_code"),
+            )
+            insert_or_update = sa_inspect(score).info.get("insert_or_update", "update")
+            observe_shop_dashboard_score_upsert(
+                insert_or_update=str(insert_or_update),
+                shop_id=resolved_shop_id,
+                metric_date=metric_day_text,
+            )
         await self._persist_agent_result(
             session=session,
             runtime=runtime,
@@ -86,6 +88,8 @@ class CollectionResultPersister:
             fallback_status=status,
         )
         await session.commit()
+        if not persist_dashboard_score:
+            return
         try:
             await self._invalidate_experience_cache(
                 session=session,
@@ -167,6 +171,16 @@ def _normalize_shop_id(value: Any) -> str:
     if normalized.isdigit():
         return str(int(normalized))
     return normalized
+
+
+def _should_persist_dashboard_score(runtime: ShopDashboardRuntimeConfig) -> bool:
+    extra_config = getattr(runtime, "extra_config", None)
+    if isinstance(extra_config, dict) and extra_config.get("agent_result_only") is True:
+        return False
+    return str(getattr(runtime, "target_type", "") or "").strip().upper() in {
+        "",
+        "SHOP_OVERVIEW",
+    }
 
 
 def _agent_result_output(payload: dict[str, Any]) -> dict[str, Any]:

@@ -155,6 +155,42 @@ def test_browser_agent_adapter_accepts_inline_recipe(tmp_path):
     assert payload["source"] == "browser_agent"
 
 
+def test_browser_agent_adapter_accepts_agent_result_only_output(tmp_path):
+    adapter = BrowserAgentAdapter(
+        crawler_factory=lambda _path, _context: SimpleNamespace(
+            run=lambda _recipe, _context: RunResult(
+                status="succeeded",
+                output={
+                    "actual_shop_id": "1001",
+                    "score_table": {
+                        "headers": ["metric", "score"],
+                        "rows": [["product", "100"]],
+                    },
+                },
+            )
+        ),
+        settings=SimpleNamespace(
+            agent_browser_headed=False,
+            agent_allowed_origins=["https://example.test"],
+            agent_artifact_dir=str(tmp_path / "artifacts"),
+        ),
+    )
+
+    payload = adapter.collect(
+        runtime=_runtime(
+            {
+                "agent_result_only": True,
+                "agent_recipe_inline": _recipe(),
+            }
+        ),
+        metric_date="2026-03-01",
+        state_store=SessionStateStore(tmp_path),
+    )
+
+    assert payload["score_table"]["rows"] == [["product", "100"]]
+    assert "total_score" not in payload
+
+
 def test_browser_agent_adapter_recovers_recipe_and_records_next_version(tmp_path):
     calls = []
     written = []

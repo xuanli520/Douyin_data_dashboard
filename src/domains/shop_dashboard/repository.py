@@ -213,6 +213,59 @@ class ShopDashboardRepository(BaseRepository):
 
         return items
 
+    async def list_latest_per_shop(
+        self,
+        *,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict[str, Any]]:
+        latest_metric_date_subquery = (
+            select(
+                ShopDashboardScore.shop_id.label("shop_id"),
+                func.max(ShopDashboardScore.metric_date).label("metric_date"),
+            )
+            .where(
+                ShopDashboardScore.metric_date >= start_date,
+                ShopDashboardScore.metric_date <= end_date,
+            )
+            .group_by(ShopDashboardScore.shop_id)
+            .subquery()
+        )
+        stmt = (
+            select(ShopDashboardScore)
+            .join(
+                latest_metric_date_subquery,
+                and_(
+                    ShopDashboardScore.shop_id == latest_metric_date_subquery.c.shop_id,
+                    ShopDashboardScore.metric_date
+                    == latest_metric_date_subquery.c.metric_date,
+                ),
+            )
+            .order_by(ShopDashboardScore.shop_id.asc())
+        )
+        rows = (await self.session.execute(stmt)).scalars().all()
+
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            items.append(
+                {
+                    "shop_id": row.shop_id,
+                    "shop_name": row.shop_name or "",
+                    "metric_date": row.metric_date.isoformat(),
+                    "source": row.source,
+                    "status": row.status,
+                    "reason": row.reason,
+                    "error_code": row.error_code,
+                    "total_score": _score_value(row.total_score),
+                    "product_score": _score_value(row.product_score),
+                    "logistics_score": _score_value(row.logistics_score),
+                    "service_score": _score_value(row.service_score),
+                    "bad_behavior_score": _score_value(row.bad_behavior_score),
+                }
+            )
+
+        return items
+
     async def list_display_materials(
         self,
         *,

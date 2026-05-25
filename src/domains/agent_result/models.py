@@ -15,6 +15,7 @@ class AgentCollectionResult(SQLModel, TimestampMixin, table=True):
             "namespace",
             "resource_key",
             "resource_date",
+            "recipe_id",
             name="ux_agent_collection_result",
         ),
     )

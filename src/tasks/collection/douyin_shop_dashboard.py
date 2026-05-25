@@ -372,15 +372,24 @@ def _normalize_task_result(
         "rule_id": runtime.rule_id,
         "execution_id": runtime.execution_id,
         "source": payload.get("source", "browser_agent"),
-        "total_score": payload.get("total_score", 0.0),
-        "product_score": payload.get("product_score", 0.0),
-        "logistics_score": payload.get("logistics_score", 0.0),
-        "service_score": payload.get("service_score", 0.0),
-        "bad_behavior_score": payload.get("bad_behavior_score", 0.0),
         "raw": payload.get("raw", {}),
         "retry_count": retry_count,
         "agent_trace": list(agent_trace or []),
     }
+    if _requires_dashboard_score_result(runtime):
+        result.update(
+            {
+                "total_score": payload.get("total_score", 0.0),
+                "product_score": payload.get("product_score", 0.0),
+                "logistics_score": payload.get("logistics_score", 0.0),
+                "service_score": payload.get("service_score", 0.0),
+                "bad_behavior_score": payload.get("bad_behavior_score", 0.0),
+            }
+        )
+    else:
+        for key, value in payload.items():
+            if key not in result:
+                result[key] = value
     shop_name = str(payload.get("shop_name", "")).strip()
     if shop_name:
         result["shop_name"] = shop_name
@@ -389,6 +398,16 @@ def _normalize_task_result(
     if not isinstance(result["raw"], dict):
         result["raw"] = {}
     return result
+
+
+def _requires_dashboard_score_result(runtime: ShopDashboardRuntimeConfig) -> bool:
+    extra_config = getattr(runtime, "extra_config", None)
+    if isinstance(extra_config, dict) and extra_config.get("agent_result_only") is True:
+        return False
+    return str(getattr(runtime, "target_type", "") or "").strip().upper() in {
+        "",
+        "SHOP_OVERVIEW",
+    }
 
 
 def _resolve_metric_dates(runtime: ShopDashboardRuntimeConfig) -> list[str]:

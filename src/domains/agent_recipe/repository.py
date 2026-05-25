@@ -26,6 +26,15 @@ class AgentRecipeRepository(BaseRepository):
         stmt = select(AgentRecipe).where(AgentRecipe.id == recipe_id).limit(1)
         return (await self.session.execute(stmt)).scalars().first()
 
+    async def list_all(self) -> list[AgentRecipe]:
+        stmt = select(AgentRecipe).order_by(
+            AgentRecipe.namespace.asc(),
+            AgentRecipe.key.asc(),
+            desc(AgentRecipe.version),
+            desc(AgentRecipe.id),
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def list_versions(self, namespace: str, key: str) -> list[AgentRecipe]:
         stmt = (
             select(AgentRecipe)

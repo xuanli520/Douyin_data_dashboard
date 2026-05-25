@@ -27,11 +27,18 @@ def read_observation(
         if spec.locator is None:
             raise ObservationError(f"observation {spec.id} requires locator")
         validate_locator(spec.locator)
-        text = driver.text(spec.locator)
-        value = _split_lines(text, max_items=spec.max_items)
+        if spec.kind == "table":
+            result = driver.extract_table(spec.locator)
+            value = result.data
+        else:
+            text = driver.text(spec.locator)
+            value = _split_lines(text, max_items=spec.max_items)
     else:
         raise ObservationError(f"unsupported observation kind: {spec.kind}")
-    parsed = parse_value(value, spec.parser)
+    parser = spec.parser
+    if parser is None and spec.kind in {"table", "list"}:
+        parser = "json"
+    parsed = parse_value(value, parser)
     if spec.required and _empty(parsed):
         raise ObservationError(f"observation {spec.id} is required")
     return parsed

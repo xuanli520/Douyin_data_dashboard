@@ -10,6 +10,7 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domains.agent_recipe.repository import AgentRecipeRepository
+from src.domains.agent_result.models import AgentCollectionResult
 from src.domains.agent_result.repository import AgentResultRepository
 from src.domains.agent_result.schemas import (
     AgentResultListResponse,
@@ -70,6 +71,40 @@ class AgentResultService:
             date_from=date_from,
             date_to=date_to,
         )
+        csv_content = await self._build_csv_from_rows(rows)
+        filename = (
+            f"{namespace}_{resource_key}_{date_from.isoformat()}_"
+            f"{date_to.isoformat()}.csv"
+        )
+        return csv_content, filename
+
+    async def build_csv_by_recipe_key(
+        self,
+        *,
+        namespace: str,
+        resource_key: str,
+        recipe_key: str,
+        date_from: date,
+        date_to: date,
+    ) -> tuple[str, str]:
+        rows = await self.repo.list_by_recipe_key(
+            namespace=namespace,
+            resource_key=resource_key,
+            recipe_key=recipe_key,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        csv_content = await self._build_csv_from_rows(rows)
+        filename = (
+            f"{namespace}_{resource_key}_{recipe_key}_{date_from.isoformat()}_"
+            f"{date_to.isoformat()}.csv"
+        )
+        return csv_content, filename
+
+    async def _build_csv_from_rows(
+        self,
+        rows: list[AgentCollectionResult],
+    ) -> str:
         recipe_repo = AgentRecipeRepository(self.session)
         recipe_cache: dict[int, dict[str, Any]] = {}
         csv_rows: list[dict[str, Any]] = []
@@ -98,11 +133,7 @@ class AgentResultService:
         writer = csv.DictWriter(buffer, fieldnames=headers, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(csv_rows)
-        filename = (
-            f"{namespace}_{resource_key}_{date_from.isoformat()}_"
-            f"{date_to.isoformat()}.csv"
-        )
-        return buffer.getvalue(), filename
+        return buffer.getvalue()
 
 
 async def get_agent_result_service(

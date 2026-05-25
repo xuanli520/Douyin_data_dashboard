@@ -116,6 +116,15 @@ async def mark_agent_recipe_stable(
     )
 
 
+@router.get("/recipes", response_model=Response[dict[str, Any]])
+async def list_agent_recipes(
+    _user: User = Depends(current_user),
+    _=Depends(require_permissions(_DISCOVERY_PERMISSION, bypass_superuser=True)),
+    service: AgentRecipeService = Depends(get_agent_recipe_service),
+) -> Response[dict[str, Any]]:
+    return Response.success(data=await service.list_recipes())
+
+
 @router.get("/recipes/{recipe_id}/export")
 async def export_agent_recipe(
     recipe_id: int,

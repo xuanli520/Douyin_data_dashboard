@@ -5,6 +5,7 @@ from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.domains.agent_recipe.models import AgentRecipe
 from src.domains.agent_result.models import AgentCollectionResult
 from src.exceptions import BusinessException
 from src.shared.errors import ErrorCode
@@ -52,7 +53,12 @@ class AgentResultRepository(BaseRepository):
                 postgresql_insert(AgentCollectionResult)
                 .values(**values)
                 .on_conflict_do_update(
-                    index_elements=["namespace", "resource_key", "resource_date"],
+                    index_elements=[
+                        "namespace",
+                        "resource_key",
+                        "resource_date",
+                        "recipe_id",
+                    ],
                     set_=update_values,
                 )
             )
@@ -61,7 +67,12 @@ class AgentResultRepository(BaseRepository):
                 sqlite_insert(AgentCollectionResult)
                 .values(**values)
                 .on_conflict_do_update(
-                    index_elements=["namespace", "resource_key", "resource_date"],
+                    index_elements=[
+                        "namespace",
+                        "resource_key",
+                        "resource_date",
+                        "recipe_id",
+                    ],
                     set_=update_values,
                 )
             )
@@ -80,6 +91,7 @@ class AgentResultRepository(BaseRepository):
                 AgentCollectionResult.namespace == namespace,
                 AgentCollectionResult.resource_key == resource_key,
                 AgentCollectionResult.resource_date == resource_date,
+                AgentCollectionResult.recipe_id == recipe_id,
             )
             .execution_options(populate_existing=True)
         )
@@ -102,6 +114,32 @@ class AgentResultRepository(BaseRepository):
                 AgentCollectionResult.resource_date <= date_to,
             )
             .order_by(AgentCollectionResult.resource_date.asc())
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def list_by_recipe_key(
+        self,
+        *,
+        namespace: str,
+        resource_key: str,
+        recipe_key: str,
+        date_from: date,
+        date_to: date,
+    ) -> list[AgentCollectionResult]:
+        stmt = (
+            select(AgentCollectionResult)
+            .join(AgentRecipe, AgentRecipe.id == AgentCollectionResult.recipe_id)
+            .where(
+                AgentCollectionResult.namespace == namespace,
+                AgentCollectionResult.resource_key == resource_key,
+                AgentCollectionResult.resource_date >= date_from,
+                AgentCollectionResult.resource_date <= date_to,
+                AgentRecipe.key == recipe_key,
+            )
+            .order_by(
+                AgentCollectionResult.resource_date.asc(),
+                AgentCollectionResult.id.asc(),
+            )
         )
         return list((await self.session.execute(stmt)).scalars().all())
 

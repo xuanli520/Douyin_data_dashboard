@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -25,7 +26,9 @@ class PlaywrightCLIDriver:
         run_command: Callable[[list[str]], subprocess.CompletedProcess[str]]
         | None = None,
     ) -> None:
-        self.executable = executable
+        self.executable = (
+            executable if run_command is not None else _resolve_executable(executable)
+        )
         self._session_id = str(session_id or uuid4().hex)
         self.storage_state_path = (
             Path(storage_state_path) if storage_state_path else None
@@ -173,8 +176,23 @@ class PlaywrightCLIDriver:
         return DriverResult(data={"locator": locator.value})
 
     def extract_table(self, locator: LocatorSpec) -> DriverResult:
-        text = self.text(locator)
-        return DriverResult(data={"text": text})
+        result = self._run_code(
+            "const target = "
+            f"{_locator_expression(locator)}.first();\n"
+            "await target.waitFor({ state: 'attached', timeout: 5000 });\n"
+            "return await target.evaluate(table => {\n"
+            "  const normalize = value => String(value || '').trim().replace(/\\s*\\n\\s*/g, ' | ').replace(/\\s+/g, ' ');\n"
+            "  const rows = Array.from(table.querySelectorAll('tr')).map(row =>\n"
+            "    Array.from(row.querySelectorAll('th,td')).map(cell => normalize(cell.innerText || cell.textContent))\n"
+            "  ).filter(row => row.some(Boolean));\n"
+            "  if (!rows.length) return { headers: [], rows: [] };\n"
+            "  return { headers: rows[0], rows: rows.slice(1) };\n"
+            "});"
+        )
+        value = _cli_result_value(result.stdout)
+        if isinstance(value, dict):
+            return DriverResult(data=value)
+        return DriverResult(data={"text": str(value or "")})
 
     def extract_list(self, locator: LocatorSpec) -> DriverResult:
         text = self.text(locator)
@@ -311,6 +329,19 @@ def _locator_expression(locator: LocatorSpec) -> str:
     raise BrowserDriverError(f"unsupported locator kind: {locator.kind}")
 
 
+def _resolve_executable(executable: str) -> str:
+    resolved = shutil.which(executable)
+    if resolved:
+        return resolved
+    for candidate in (
+        Path("/app/node_modules/.bin") / executable,
+        Path.cwd() / "node_modules" / ".bin" / executable,
+    ):
+        if candidate.exists():
+            return str(candidate)
+    return executable
+
+
 def _scroll_amount(value: str | int | float | None, default: int) -> int:
     try:
         return abs(int(float(value))) if value is not None else default
@@ -340,6 +371,13 @@ def _cli_error_message(result: subprocess.CompletedProcess[str]) -> str:
 
 
 def _cli_result_text(stdout: str) -> str:
+    value = _cli_result_value(stdout)
+    if value is not None:
+        return str(value)
+    return stdout.strip()
+
+
+def _cli_result_value(stdout: str) -> object | None:
     lines = stdout.splitlines()
     for index, line in enumerate(lines):
         if line.strip() != "### Result":
@@ -353,8 +391,7 @@ def _cli_result_text(stdout: str) -> str:
         if not raw:
             return ""
         try:
-            parsed = json.loads(raw)
+            return json.loads(raw)
         except json.JSONDecodeError:
             return raw
-        return str(parsed)
-    return stdout.strip()
+    return None

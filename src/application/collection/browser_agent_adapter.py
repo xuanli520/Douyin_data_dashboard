@@ -549,7 +549,8 @@ class BrowserAgentAdapter:
             shop_name = _shop_name_from_state(storage_state_path, runtime.shop_id)
             if shop_name:
                 payload["shop_name"] = shop_name
-        _validate_required_output(payload)
+        if _requires_dashboard_scores(runtime):
+            _validate_required_output(payload)
         payload.setdefault("status", "success")
         payload.setdefault("source", "browser_agent")
         payload.setdefault("shop_id", runtime.shop_id)
@@ -670,6 +671,16 @@ def _validate_required_output(payload: dict[str, Any]) -> None:
             raise DataIncompleteError(
                 f"browser_agent_output_invalid_score_field: {field}"
             ) from exc
+
+
+def _requires_dashboard_scores(runtime: ShopDashboardRuntimeConfig) -> bool:
+    extra_config = getattr(runtime, "extra_config", None)
+    if isinstance(extra_config, dict) and extra_config.get("agent_result_only") is True:
+        return False
+    return str(getattr(runtime, "target_type", "") or "").strip().upper() in {
+        "",
+        "SHOP_OVERVIEW",
+    }
 
 
 def _recipe_payload_from_model(value: Any) -> dict[str, Any]:

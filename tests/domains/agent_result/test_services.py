@@ -78,12 +78,70 @@ async def test_agent_result_service_builds_csv_from_structured_table(test_db):
         ]
 
 
-async def _create_recipe(session):
+async def test_agent_result_service_builds_csv_by_recipe_key(test_db):
+    async with test_db() as session:
+        product_recipe = await _create_recipe(
+            session,
+            namespace="douyin_shop_dashboard",
+            key="experience_score_product_detail",
+        )
+        logistics_recipe = await _create_recipe(
+            session,
+            namespace="douyin_shop_dashboard",
+            key="experience_score_logistics_detail",
+        )
+        repo = AgentResultRepository(session)
+        await repo.upsert(
+            namespace="douyin_shop_dashboard",
+            resource_key="1001",
+            resource_date=date(2026, 5, 20),
+            recipe_id=product_recipe.id,
+            output={
+                "score_table": {
+                    "headers": ["metric", "score"],
+                    "rows": [["product", 100]],
+                },
+            },
+        )
+        await repo.upsert(
+            namespace="douyin_shop_dashboard",
+            resource_key="1001",
+            resource_date=date(2026, 5, 20),
+            recipe_id=logistics_recipe.id,
+            output={
+                "score_table": {
+                    "headers": ["metric", "score"],
+                    "rows": [["logistics", 99]],
+                },
+            },
+        )
+
+        csv_content, filename = await AgentResultService(
+            session
+        ).build_csv_by_recipe_key(
+            namespace="douyin_shop_dashboard",
+            resource_key="1001",
+            recipe_key="experience_score_product_detail",
+            date_from=date(2026, 5, 20),
+            date_to=date(2026, 5, 20),
+        )
+
+        assert filename == (
+            "douyin_shop_dashboard_1001_experience_score_product_detail_"
+            "2026-05-20_2026-05-20.csv"
+        )
+        assert csv_content.splitlines() == [
+            "date,metric,score",
+            "2026-05-20,product,100",
+        ]
+
+
+async def _create_recipe(session, namespace="shop_dashboard", key="overview"):
     repo = AgentRecipeRepository(session)
     return await repo.create(
         {
-            "namespace": "shop_dashboard",
-            "key": "overview",
+            "namespace": namespace,
+            "key": key,
             "entrypoint": {"url": "https://example.com"},
             "steps": [],
             "observations": {
