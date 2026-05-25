@@ -193,23 +193,7 @@ class ShopDashboardRepository(BaseRepository):
 
         items: list[dict[str, Any]] = []
         for row in rows:
-            items.append(
-                {
-                    "shop_id": row.shop_id,
-                    "shop_name": row.shop_name or "",
-                    "metric_date": row.metric_date.isoformat(),
-                    "source": row.source,
-                    "status": row.status,
-                    "reason": row.reason,
-                    "error_code": row.error_code,
-                    "total_score": _score_value(row.total_score),
-                    "product_score": _score_value(row.product_score),
-                    "logistics_score": _score_value(row.logistics_score),
-                    "service_score": _score_value(row.service_score),
-                    "bad_behavior_score": _score_value(row.bad_behavior_score),
-                    "updated_at": row.updated_at.isoformat(),
-                }
-            )
+            items.append(_score_row_item(row, include_updated_at=True))
 
         return items
 
@@ -247,22 +231,7 @@ class ShopDashboardRepository(BaseRepository):
 
         items: list[dict[str, Any]] = []
         for row in rows:
-            items.append(
-                {
-                    "shop_id": row.shop_id,
-                    "shop_name": row.shop_name or "",
-                    "metric_date": row.metric_date.isoformat(),
-                    "source": row.source,
-                    "status": row.status,
-                    "reason": row.reason,
-                    "error_code": row.error_code,
-                    "total_score": _score_value(row.total_score),
-                    "product_score": _score_value(row.product_score),
-                    "logistics_score": _score_value(row.logistics_score),
-                    "service_score": _score_value(row.service_score),
-                    "bad_behavior_score": _score_value(row.bad_behavior_score),
-                }
-            )
+            items.append(_score_row_item(row))
 
         return items
 
@@ -301,26 +270,52 @@ class ShopDashboardRepository(BaseRepository):
         for metric_date in metric_dates:
             row = latest_score_by_day.get(metric_date)
             items.append(
-                {
-                    "shop_id": shop_id,
-                    "shop_name": (row.shop_name if row else None) or "",
-                    "metric_date": metric_date.isoformat(),
-                    "source": row.source if row else "",
-                    "status": row.status if row else "missing",
-                    "reason": row.reason if row else None,
-                    "error_code": row.error_code if row else None,
-                    "total_score": _score_value(row.total_score) if row else None,
-                    "product_score": _score_value(row.product_score) if row else None,
-                    "logistics_score": (
-                        _score_value(row.logistics_score) if row else None
-                    ),
-                    "service_score": _score_value(row.service_score) if row else None,
-                    "bad_behavior_score": (
-                        _score_value(row.bad_behavior_score) if row else None
-                    ),
-                }
+                _score_row_item(row)
+                if row is not None
+                else _missing_score_item(shop_id=shop_id, metric_date=metric_date)
             )
         return items
+
+
+def _score_row_item(
+    row: ShopDashboardScore,
+    *,
+    include_updated_at: bool = False,
+) -> dict[str, Any]:
+    item = {
+        "shop_id": row.shop_id,
+        "shop_name": row.shop_name or "",
+        "metric_date": row.metric_date.isoformat(),
+        "source": row.source,
+        "status": row.status,
+        "reason": row.reason,
+        "error_code": row.error_code,
+        "total_score": _score_value(row.total_score),
+        "product_score": _score_value(row.product_score),
+        "logistics_score": _score_value(row.logistics_score),
+        "service_score": _score_value(row.service_score),
+        "bad_behavior_score": _score_value(row.bad_behavior_score),
+    }
+    if include_updated_at:
+        item["updated_at"] = row.updated_at.isoformat()
+    return item
+
+
+def _missing_score_item(*, shop_id: str, metric_date: date) -> dict[str, Any]:
+    return {
+        "shop_id": shop_id,
+        "shop_name": "",
+        "metric_date": metric_date.isoformat(),
+        "source": "",
+        "status": "missing",
+        "reason": None,
+        "error_code": None,
+        "total_score": None,
+        "product_score": None,
+        "logistics_score": None,
+        "service_score": None,
+        "bad_behavior_score": None,
+    }
 
 
 def _score_value(value: Any) -> float | None:

@@ -153,8 +153,8 @@ def _run_discovery(
         ),
         max_steps=max_steps or settings.agent_max_steps,
     )
-    driver.open(None, headed=bool(settings.agent_browser_headed))
     try:
+        driver.open(None, headed=bool(settings.agent_browser_headed))
         result = agent.run(
             goal=goal,
             entrypoint_url=entrypoint_url,
@@ -299,7 +299,12 @@ class _DiscoveryReplayCrawler:
             storage_state_path=storage_state_path,
             artifact_dir=self._settings.agent_artifact_dir,
         )
-        return AgentCrawler(driver).run(parsed, run_context)
+        try:
+            return AgentCrawler(driver).run(parsed, run_context)
+        finally:
+            close = getattr(driver, "close", None)
+            if callable(close):
+                close()
 
 
 class _DiscoverySecurity:

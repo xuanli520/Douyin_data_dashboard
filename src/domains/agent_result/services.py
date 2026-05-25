@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from collections.abc import AsyncGenerator
 from datetime import date
 from typing import Any
@@ -72,10 +73,7 @@ class AgentResultService:
             date_to=date_to,
         )
         csv_content = await self._build_csv_from_rows(rows)
-        filename = (
-            f"{namespace}_{resource_key}_{date_from.isoformat()}_"
-            f"{date_to.isoformat()}.csv"
-        )
+        filename = _export_filename(namespace, resource_key, date_from, date_to)
         return csv_content, filename
 
     async def build_csv_by_recipe_key(
@@ -95,9 +93,12 @@ class AgentResultService:
             date_to=date_to,
         )
         csv_content = await self._build_csv_from_rows(rows)
-        filename = (
-            f"{namespace}_{resource_key}_{recipe_key}_{date_from.isoformat()}_"
-            f"{date_to.isoformat()}.csv"
+        filename = _export_filename(
+            namespace,
+            resource_key,
+            recipe_key,
+            date_from,
+            date_to,
         )
         return csv_content, filename
 
@@ -205,3 +206,12 @@ def _row_from_cells(
         for header, cell in zip(headers, cells, strict=False)
         if header
     }
+
+
+def _export_filename(*parts: Any) -> str:
+    return "_".join(_filename_part(part) for part in parts) + ".csv"
+
+
+def _filename_part(value: Any) -> str:
+    text = str(value or "").strip()
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", text).strip("._") or "export"

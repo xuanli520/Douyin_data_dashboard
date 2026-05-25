@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from datetime import UTC, datetime
 from typing import Any
 
 from redis import Redis
+from starlette.websockets import WebSocketDisconnect
 
 from src.config import get_settings
 
@@ -136,6 +138,42 @@ class DiscoveryEventStore:
 
 def terminal_event(event: dict[str, Any]) -> bool:
     return event.get("event_type") == "run_finished"
+
+
+async def stream_events(
+    *,
+    websocket: Any,
+    store: DiscoveryEventStore,
+    run_id: str,
+    missing_event: dict[str, Any],
+) -> None:
+    pubsub = store.pubsub(run_id)
+    last_sequence = 0
+    try:
+        events = store.list(run_id)
+        if not events:
+            await websocket.send_json(missing_event)
+            await websocket.close()
+            return
+        while True:
+            events = store.list(run_id, after_sequence=last_sequence)
+            for event in events:
+                await websocket.send_json(event)
+                last_sequence = max(last_sequence, int(event.get("sequence") or 0))
+                if terminal_event(event):
+                    await websocket.close()
+                    return
+            if pubsub is None:
+                await asyncio.sleep(1)
+                continue
+            message = await asyncio.to_thread(pubsub.get_message, timeout=1)
+            if message is None:
+                continue
+    except WebSocketDisconnect:
+        return
+    finally:
+        if pubsub is not None:
+            pubsub.close()
 
 
 def _public_event(

@@ -1,5 +1,6 @@
 from collections.abc import AsyncGenerator
 import json
+import re
 from typing import Any
 
 from fastapi import Depends
@@ -156,9 +157,7 @@ class AgentRecipeService:
             security_policy=recipe.security_policy,
         )
         payload = AgentRecipeExportPayload(recipe=document).model_dump(mode="json")
-        filename = (
-            f"{recipe.namespace}_{recipe.key}_v{recipe.version}.agent-recipe.json"
-        )
+        filename = _recipe_filename(recipe.namespace, recipe.key, recipe.version)
         return payload, filename
 
     async def import_recipe(
@@ -250,3 +249,12 @@ def _normalize_recipe_document(recipe: dict[str, Any]) -> dict[str, Any]:
         normalized_entrypoint["url"] = normalized_entrypoint.pop("url_template")
         payload["entrypoint"] = normalized_entrypoint
     return payload
+
+
+def _recipe_filename(namespace: str, key: str, version: int) -> str:
+    return f"{_filename_part(namespace)}_{_filename_part(key)}_v{version}.agent-recipe.json"
+
+
+def _filename_part(value: Any) -> str:
+    text = str(value or "").strip()
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", text).strip("._") or "recipe"

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 from uuid import uuid4
 
@@ -8,7 +7,6 @@ from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import WebSocket
-from fastapi import WebSocketDisconnect
 from fastapi import status
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -22,7 +20,7 @@ from src.cache import resolve_sync_redis_client
 from src.config import get_settings
 from src.core.agent.discovery_event_store import DiscoveryEventStore
 from src.core.agent.discovery_event_store import _RUN_EVENTS as _STORE_RUN_EVENTS
-from src.core.agent.discovery_event_store import terminal_event
+from src.core.agent.discovery_event_store import stream_events
 from src.core.agent.login import HumanInputBroker
 from src.core.agent.login import HumanInputBrokerUnavailable
 from src.responses.base import Response
@@ -123,44 +121,21 @@ async def stream_agent_login_events(
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
     await websocket.accept()
-    pubsub = _EVENT_STORE.pubsub(session_id)
-    last_sequence = 0
-    try:
-        events = _EVENT_STORE.list(session_id)
-        if not events:
-            await websocket.send_json(
-                {
-                    "run_id": session_id,
-                    "sequence": 1,
-                    "event_type": "login_failed",
-                    "current_url": "",
-                    "page_title": "",
-                    "screenshot_artifact_id": None,
-                    "status": "failed",
-                    "message": "login session not found",
-                }
-            )
-            await websocket.close()
-            return
-        while True:
-            events = _EVENT_STORE.list(session_id, after_sequence=last_sequence)
-            for event in events:
-                await websocket.send_json(event)
-                last_sequence = max(last_sequence, int(event.get("sequence") or 0))
-                if terminal_event(event):
-                    await websocket.close()
-                    return
-            if pubsub is None:
-                await asyncio.sleep(1)
-                continue
-            message = await asyncio.to_thread(pubsub.get_message, timeout=1)
-            if message is None:
-                continue
-    except WebSocketDisconnect:
-        return
-    finally:
-        if pubsub is not None:
-            pubsub.close()
+    await stream_events(
+        websocket=websocket,
+        store=_EVENT_STORE,
+        run_id=session_id,
+        missing_event={
+            "run_id": session_id,
+            "sequence": 1,
+            "event_type": "login_failed",
+            "current_url": "",
+            "page_title": "",
+            "screenshot_artifact_id": None,
+            "status": "failed",
+            "message": "login session not found",
+        },
+    )
 
 
 def append_login_event(session_id: str, event: dict[str, Any] | Any) -> dict[str, Any]:

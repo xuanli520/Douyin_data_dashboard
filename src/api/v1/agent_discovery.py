@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -12,7 +11,6 @@ from fastapi import (
     HTTPException,
     UploadFile,
     WebSocket,
-    WebSocketDisconnect,
     status,
 )
 from fastapi.responses import JSONResponse
@@ -25,7 +23,7 @@ from src.api.v1.agent_auth import authorize_agent_websocket
 from src.core.agent.discovery_event_store import (
     DiscoveryEventStore,
     _RUN_EVENTS as _STORE_RUN_EVENTS,
-    terminal_event,
+    stream_events,
 )
 from src.domains.agent_recipe.schemas import AgentRecipeMarkStable
 from src.domains.agent_recipe.services import (
@@ -185,44 +183,21 @@ async def stream_agent_discovery_events(
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
     await websocket.accept()
-    pubsub = _EVENT_STORE.pubsub(run_id)
-    last_sequence = 0
-    try:
-        events = _EVENT_STORE.list(run_id)
-        if not events:
-            await websocket.send_json(
-                _event(
-                    run_id=run_id,
-                    sequence=1,
-                    event_type="run_failed",
-                    current_url="",
-                    page_title="",
-                    screenshot_artifact_id=None,
-                    status="failed",
-                    message="discovery run not found",
-                )
-            )
-            await websocket.close()
-            return
-        while True:
-            events = _EVENT_STORE.list(run_id, after_sequence=last_sequence)
-            for event in events:
-                await websocket.send_json(event)
-                last_sequence = max(last_sequence, int(event.get("sequence") or 0))
-                if terminal_event(event):
-                    await websocket.close()
-                    return
-            if pubsub is None:
-                await asyncio.sleep(1)
-                continue
-            message = await asyncio.to_thread(pubsub.get_message, timeout=1)
-            if message is None:
-                continue
-    except WebSocketDisconnect:
-        return
-    finally:
-        if pubsub is not None:
-            pubsub.close()
+    await stream_events(
+        websocket=websocket,
+        store=_EVENT_STORE,
+        run_id=run_id,
+        missing_event=_event(
+            run_id=run_id,
+            sequence=1,
+            event_type="run_failed",
+            current_url="",
+            page_title="",
+            screenshot_artifact_id=None,
+            status="failed",
+            message="discovery run not found",
+        ),
+    )
 
 
 def append_discovery_event(run_id: str, event: dict[str, Any] | Any) -> dict[str, Any]:
