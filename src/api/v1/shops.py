@@ -69,6 +69,9 @@ async def query_shop_dashboard(
     if shop_id is None and start_date is None and end_date is None:
         return await service.list_shops()
 
+    if shop_id is None and start_date is not None and end_date is not None:
+        return await service.list_shops(start_date=start_date, end_date=end_date)
+
     if shop_id is None or start_date is None or end_date is None:
         raise HTTPException(
             status_code=422,

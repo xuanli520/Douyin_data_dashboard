@@ -1,4 +1,19 @@
+from typing import Any
+
 from pydantic_settings import BaseSettings
+
+
+def resolve_llm_endpoint(settings: Any) -> str:
+    endpoint = str(getattr(settings, "llm_endpoint", "") or "").strip()
+    if endpoint:
+        return endpoint
+    base_url = str(getattr(settings, "llm_base_url", "") or "").strip().rstrip("/")
+    if not base_url:
+        return ""
+    provider = str(getattr(settings, "llm_provider", "claude") or "").strip().lower()
+    if provider == "openai":
+        return f"{base_url}/chat/completions"
+    return base_url
 
 
 class ShopDashboardSettings(BaseSettings):
@@ -16,6 +31,7 @@ class ShopDashboardSettings(BaseSettings):
     llm_retry_times: int = 3
     llm_provider: str = "claude"
     llm_endpoint: str | None = None
+    llm_base_url: str | None = None
     llm_model: str | None = None
     llm_api_key: str | None = None
     agent_artifact_dir: str = ".runtime/agent_artifacts"
@@ -44,3 +60,6 @@ class ShopDashboardSettings(BaseSettings):
     shop_mismatch_failure_threshold_degraded_accounts: str = ""
     shop_mismatch_failure_window_seconds: int = 21600
     shop_mismatch_circuit_open_seconds: int = 21600
+
+    def resolved_llm_endpoint(self) -> str:
+        return resolve_llm_endpoint(self)

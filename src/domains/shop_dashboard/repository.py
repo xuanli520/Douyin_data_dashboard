@@ -168,14 +168,23 @@ class ShopDashboardRepository(BaseRepository):
         )
         return (await self.session.execute(stmt)).scalar_one()
 
-    async def list_shops(self) -> list[dict[str, Any]]:
-        latest_metric_date_subquery = (
-            select(
-                ShopDashboardScore.shop_id.label("shop_id"),
-                func.max(ShopDashboardScore.metric_date).label("metric_date"),
+    async def list_shops(
+        self,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[dict[str, Any]]:
+        latest_metric_date_stmt = select(
+            ShopDashboardScore.shop_id.label("shop_id"),
+            func.max(ShopDashboardScore.metric_date).label("metric_date"),
+        )
+        if start_date is not None and end_date is not None:
+            latest_metric_date_stmt = latest_metric_date_stmt.where(
+                ShopDashboardScore.metric_date >= start_date,
+                ShopDashboardScore.metric_date <= end_date,
             )
-            .group_by(ShopDashboardScore.shop_id)
-            .subquery()
+        latest_metric_date_subquery = (
+            latest_metric_date_stmt.group_by(ShopDashboardScore.shop_id).subquery()
         )
         stmt = (
             select(ShopDashboardScore)

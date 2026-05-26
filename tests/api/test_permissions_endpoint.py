@@ -6,12 +6,29 @@ from sqlmodel import SQLModel
 from src.cache import LocalCache, get_cache
 from src.session import get_session
 from src.auth.captcha import get_captcha_service
+from src.auth.models import User
+from src.auth.rbac import get_permission_service
+from src.api.v1 import permissions as permissions_api
 from src.main import app
 
 
 class MockCaptchaService:
     async def verify(self, captcha_verify_param: str) -> bool:
         return True
+
+
+class MockPermissionRepository:
+    async def get_user_permissions(self, user_id: int) -> set[str]:
+        assert user_id == 1
+        return {"dashboard:view", "user:read"}
+
+    async def get_user_roles(self, user_id: int) -> set[str]:
+        assert user_id == 1
+        return {"admin"}
+
+
+class MockPermissionService:
+    repository = MockPermissionRepository()
 
 
 _engine = None
@@ -70,3 +87,26 @@ def rbac_client(db_session):
 def test_get_current_user_permissions_requires_auth(rbac_client):
     response = rbac_client.get("/api/v1/permissions/me")
     assert response.status_code == 401
+
+
+def test_get_current_user_permissions_includes_superuser_flag(rbac_client):
+    async def override_current_user():
+        return User(
+            id=1,
+            username="devadmin",
+            email="devadmin@example.com",
+            hashed_password="hashed",
+            is_active=True,
+            is_superuser=True,
+        )
+
+    app.dependency_overrides[permissions_api.current_user] = override_current_user
+    app.dependency_overrides[get_permission_service] = lambda: MockPermissionService()
+
+    response = rbac_client.get("/api/v1/permissions/me")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert set(data["permissions"]) == {"dashboard:view", "user:read"}
+    assert set(data["roles"]) == {"admin"}
+    assert data["is_superuser"] is True

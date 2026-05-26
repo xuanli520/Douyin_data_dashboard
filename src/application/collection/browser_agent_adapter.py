@@ -18,6 +18,7 @@ from src.core.agent.models import LocatorSpec
 from src.core.agent.drivers import PlaywrightCLIDriver
 from src.core.agent.recovery import RecoveryResult
 from src.core.agent.recovery import RecoveryService
+from src.config.shop_dashboard import resolve_llm_endpoint
 from src.domains.agent_recipe.repository import AgentRecipeRepository
 from src.scrapers.shop_dashboard.exceptions import DataIncompleteError
 from src.scrapers.shop_dashboard.exceptions import LoginExpiredError
@@ -320,7 +321,7 @@ class BrowserAgentAdapter:
         )
 
     def _build_recovery_model(self) -> Any | None:
-        endpoint = str(getattr(self.settings, "llm_endpoint", "") or "").strip()
+        endpoint = resolve_llm_endpoint(self.settings)
         model = str(getattr(self.settings, "llm_model", "") or "").strip()
         if not endpoint or not model:
             return None
@@ -753,7 +754,7 @@ class _ConfiguredRecoveryModel:
         request: Any,
         messages: list[dict[str, str]],
     ) -> dict[str, Any]:
-        endpoint = str(getattr(self._settings, "llm_endpoint", "") or "").strip()
+        endpoint = resolve_llm_endpoint(self._settings)
         model = str(getattr(self._settings, "llm_model", "") or "").strip()
         if not endpoint or not model:
             return {}

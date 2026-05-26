@@ -9,6 +9,7 @@ import httpx
 from src import session as session_module
 from src.api.v1.agent_discovery import append_discovery_event
 from src.config import get_settings
+from src.config.shop_dashboard import resolve_llm_endpoint
 from src.core.agent import AgentCrawler
 from src.core.agent import Recipe
 from src.core.agent import RunContext
@@ -402,7 +403,7 @@ class _ConfiguredDiscoveryLLMClient:
         )
 
     def _post(self, messages: list[dict[str, str]]) -> dict[str, Any]:
-        endpoint = str(self._settings.llm_endpoint or "").strip()
+        endpoint = resolve_llm_endpoint(self._settings)
         model = str(self._settings.llm_model or "").strip()
         if not endpoint or not model:
             raise RuntimeError("agent_discovery_llm_not_configured")

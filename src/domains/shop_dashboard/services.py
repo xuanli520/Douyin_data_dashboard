@@ -17,8 +17,18 @@ class ShopDashboardQueryService:
     def __init__(self, repo: ShopDashboardRepository):
         self.repo = repo
 
-    async def list_shops(self) -> dict[str, Any]:
-        items = await self.repo.list_shops()
+    async def list_shops(
+        self,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> dict[str, Any]:
+        query_start = min(start_date, end_date) if start_date and end_date else None
+        query_end = max(start_date, end_date) if start_date and end_date else None
+        items = await self.repo.list_shops(
+            start_date=query_start,
+            end_date=query_end,
+        )
         return {"items": items}
 
     async def query(
