@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class UserRead(schemas.BaseUser[int]):
+    email: str
     username: str
     gender: str | None = None
     phone: str | None = None
