@@ -307,7 +307,7 @@ async def validate_connection(
     user_agent, ip = extract_client_info(request)
     await audit_service.log(
         action=AuditAction.DATA_SOURCE_SYNC,
-        result=AuditResult.SUCCESS if result.get("success") else AuditResult.FAILURE,
+        result=AuditResult.SUCCESS if result.get("valid") else AuditResult.FAILURE,
         actor_id=user.id,
         resource_type="data_source",
         resource_id=str(ds_id),

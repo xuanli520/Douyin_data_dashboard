@@ -31,7 +31,6 @@ router = APIRouter(prefix="/data-import", tags=["data-import"])
 MAX_FILE_SIZE = 100 * 1024 * 1024
 ALLOWED_CONTENT_TYPES = {
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    ".xls": "application/vnd.ms-excel",
     ".csv": "text/csv",
 }
 
@@ -89,7 +88,7 @@ async def upload_file(
 
     batch_no = f"IMP-{uuid.uuid4().hex[:8].upper()}"
 
-    file_type = "excel" if file_ext in (".xlsx", ".xls") else "csv"
+    file_type = "excel" if file_ext == ".xlsx" else "csv"
 
     try:
         record = await service.upload_file(
@@ -178,7 +177,7 @@ async def apply_mapping(
     return Response.success(
         data=ImportMappingResponse(
             id=import_id or 0,
-            status="mapped",
+            status=record.status,
         )
     )
 
@@ -354,7 +353,9 @@ async def cancel_import(
 
     return Response.success(
         data=ImportCancelResponse(
-            id=import_id, status="cancelled", message="Import cancelled successfully"
+            id=import_id,
+            status=ImportStatus.CANCELLED,
+            message="Import cancelled successfully",
         )
     )
 
