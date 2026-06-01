@@ -62,7 +62,11 @@ def test_agent_login_start_queues_task(monkeypatch):
 
     response = client.post(
         "/api/v1/agent-login/start",
-        json={"phone": "13800138000", "account_id": "acct-1"},
+        json={
+            "phone": "13800138000",
+            "account_id": "acct-1",
+            "data_source_id": 7,
+        },
     )
 
     assert response.status_code == 200
@@ -74,6 +78,8 @@ def test_agent_login_start_queues_task(monkeypatch):
         "session_id": body["session_id"],
         "phone": "13800138000",
         "account_id": "acct-1",
+        "data_source_id": 7,
+        "user_id": 1,
     }
 
 
@@ -86,6 +92,7 @@ def test_agent_login_start_rejects_shop_id():
         json={
             "phone": "13800138000",
             "account_id": "acct-1",
+            "data_source_id": 7,
             "shop_id": "1001",
         },
     )

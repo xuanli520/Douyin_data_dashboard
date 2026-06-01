@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from src import session as session_module
 from src.cache import resolve_sync_redis_client
 from src.config import get_settings
 from src.core.agent.drivers import PlaywrightCLIDriver
@@ -28,6 +29,8 @@ def run_login_session(
     session_id: str,
     phone: str,
     account_id: str,
+    data_source_id: int,
+    user_id: int,
 ) -> dict[str, Any]:
     settings = get_settings().shop_dashboard
     try:
@@ -59,6 +62,12 @@ def run_login_session(
             code_timeout_seconds=settings.agent_login_code_timeout_seconds,
             max_steps=settings.agent_login_max_steps,
             debug_events=bool(settings.agent_login_debug_events),
+            state_persist_callback=lambda state: _persist_data_source_login_state(
+                data_source_id=data_source_id,
+                account_id=account_id,
+                storage_state=state,
+                user_id=user_id,
+            ),
         ).run()
         return result.to_dict()
     except Exception as exc:
@@ -92,3 +101,29 @@ def append_login_event(session_id: str, event: dict[str, Any] | Any) -> dict[str
     from src.api.v1.agent_login import append_login_event as append_event
 
     return append_event(session_id, event)
+
+
+async def _persist_data_source_login_state(
+    *,
+    data_source_id: int,
+    account_id: str,
+    storage_state: dict[str, Any],
+    user_id: int,
+) -> None:
+    from src.domains.data_source.repository import DataSourceRepository
+    from src.domains.data_source.services import DataSourceService
+
+    session_factory = session_module.async_session_factory
+    if session_factory is None:
+        raise RuntimeError("Database not initialized. Call init_db() first.")
+    async with session_factory() as db_session:
+        service = DataSourceService(
+            ds_repo=DataSourceRepository(db_session),
+            session=db_session,
+        )
+        await service.update_shop_dashboard_login_state(
+            data_source_id,
+            account_id=account_id,
+            storage_state=storage_state,
+            user_id=user_id,
+        )

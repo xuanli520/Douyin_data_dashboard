@@ -6,6 +6,7 @@ from src.tasks.collection import douyin_shop_login as module
 
 def test_run_login_session_wires_dependencies(monkeypatch):
     captured = {}
+    persisted = []
 
     class _Driver:
         def __init__(self, **kwargs):
@@ -26,9 +27,12 @@ def test_run_login_session_wires_dependencies(monkeypatch):
     class _Session:
         def __init__(self, **kwargs):
             captured["session"] = kwargs
+            self.kwargs = kwargs
 
         def run(self):
-            return LoginResult(True, status="succeeded")
+            state = {"cookies": [], "origins": []}
+            self.kwargs["state_persist_callback"](state)
+            return LoginResult(True, status="succeeded", state=state)
 
     settings = SimpleNamespace(
         agent_artifact_dir=".runtime/artifacts",
@@ -52,11 +56,18 @@ def test_run_login_session_wires_dependencies(monkeypatch):
     monkeypatch.setattr(module, "LoginStateManager", _LoginStateManager)
     monkeypatch.setattr(module, "HumanInputBroker", _Broker)
     monkeypatch.setattr(module, "LoginSession", _Session)
+    monkeypatch.setattr(
+        module,
+        "_persist_data_source_login_state",
+        lambda **kwargs: persisted.append(kwargs),
+    )
 
     result = module.run_login_session(
         session_id="session-1",
         phone="13800138000",
         account_id="acct-1",
+        data_source_id=7,
+        user_id=1,
     )
 
     assert result["logged_in"] is True
@@ -69,6 +80,15 @@ def test_run_login_session_wires_dependencies(monkeypatch):
     assert captured["session"]["account_id"] == "acct-1"
     assert captured["session"]["phone"] == "13800138000"
     assert captured["session"]["headed"] is True
+    assert callable(captured["session"]["state_persist_callback"])
+    assert persisted == [
+        {
+            "data_source_id": 7,
+            "account_id": "acct-1",
+            "storage_state": {"cookies": [], "origins": []},
+            "user_id": 1,
+        }
+    ]
     assert "llm_client" not in captured["session"]
 
 
@@ -98,6 +118,8 @@ def test_run_login_session_records_startup_failure(monkeypatch):
         session_id="session-2",
         phone="13800138000",
         account_id="acct-1",
+        data_source_id=7,
+        user_id=1,
     )
 
     assert result["logged_in"] is False

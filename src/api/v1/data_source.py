@@ -1,7 +1,9 @@
 import json
+from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
+from pydantic import BaseModel
 
 from src.audit import AuditService, get_audit_service
 from src.audit.schemas import AuditAction, AuditResult
@@ -21,12 +23,24 @@ from src.domains.data_source.services import (
     DataSourceService,
     get_data_source_service,
 )
+from src.application.collection.shop_catalog_reader import (
+    ShopDashboardShopCatalogReader,
+    get_shop_dashboard_shop_catalog_reader,
+)
 from src.responses.base import Response
 from src.exceptions import BusinessException
 from src.shared.errors import ErrorCode
 from src.shared.schemas import PaginatedData, PaginationParams
 
 router = APIRouter(prefix="/data-sources", tags=["data-source"])
+
+
+class ShopDashboardShopCatalogResponse(BaseModel):
+    data_source_id: int
+    account_id: str
+    shop_ids: list[str]
+    catalog_stale: bool
+    resolve_source: str
 
 
 @router.get("", response_model=PaginatedData[DataSourceResponse])
@@ -211,6 +225,26 @@ async def clear_shop_dashboard_login_state(
         },
     )
     return Response.success(data=ds)
+
+
+@router.get(
+    "/{ds_id}/shop-dashboard/shop-catalog",
+    response_model=Response[ShopDashboardShopCatalogResponse],
+)
+async def get_shop_dashboard_shop_catalog(
+    ds_id: int,
+    force_refresh: bool = Query(False),
+    service: ShopDashboardShopCatalogReader = Depends(
+        get_shop_dashboard_shop_catalog_reader
+    ),
+    _user: User = Depends(current_user),
+    _=Depends(require_permissions(DataSourcePermission.VIEW, bypass_superuser=True)),
+) -> Response[ShopDashboardShopCatalogResponse]:
+    catalog = await service.get_for_data_source(
+        ds_id,
+        force_refresh=force_refresh,
+    )
+    return Response.success(data=ShopDashboardShopCatalogResponse(**asdict(catalog)))
 
 
 @router.delete("/{ds_id}", response_model=Response[None])

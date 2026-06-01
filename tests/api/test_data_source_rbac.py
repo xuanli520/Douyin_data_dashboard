@@ -112,6 +112,11 @@ def test_clear_shop_dashboard_login_state_requires_permission(rbac_client):
     assert response.status_code == 401
 
 
+def test_get_shop_dashboard_shop_catalog_requires_permission(rbac_client):
+    response = rbac_client.get("/api/v1/data-sources/1/shop-dashboard/shop-catalog")
+    assert response.status_code == 401
+
+
 def test_data_source_router_should_not_expose_scraping_rule_endpoints():
     from src.api.v1 import data_source as module
 

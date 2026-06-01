@@ -51,6 +51,7 @@ def test_login_session_runs_deterministic_recipe_and_saves_state():
     broker.resolve("login-1", "123456")
     state_store = _StateStore()
     manager = _LoginStateManager()
+    persisted = []
     events = []
 
     result = LoginSession(
@@ -62,10 +63,12 @@ def test_login_session_runs_deterministic_recipe_and_saves_state():
         state_store=state_store,
         login_state_manager=manager,
         event_sink=events.append,
+        state_persist_callback=lambda state: persisted.append(state),
     ).run()
 
     assert result.logged_in is True
     assert state_store.saved[0][0] == "acct-1"
+    assert persisted == [state_store.saved[0][1]]
     assert manager.active == ["acct-1"]
     assert ("fill", "input[placeholder*='手机号']", "13800138000") in driver.commands
     assert ("fill", "input[placeholder*='验证码']", "123456") in driver.commands

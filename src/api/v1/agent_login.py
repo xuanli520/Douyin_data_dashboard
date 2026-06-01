@@ -38,6 +38,7 @@ class AgentLoginStartRequest(BaseModel):
 
     phone: str = Field(..., min_length=5, max_length=32)
     account_id: str = Field(..., min_length=1, max_length=128)
+    data_source_id: int = Field(..., gt=0)
 
 
 class AgentLoginCodeRequest(BaseModel):
@@ -49,7 +50,7 @@ class AgentLoginCodeRequest(BaseModel):
 @router.post("/start", response_model=Response[dict[str, Any]])
 async def start_agent_login(
     payload: AgentLoginStartRequest,
-    _user: User = Depends(current_user),
+    user: User = Depends(current_user),
     _=Depends(require_permissions(_LOGIN_PERMISSION, bypass_superuser=True)),
 ) -> Response[dict[str, Any]]:
     session_id = uuid4().hex
@@ -61,7 +62,11 @@ async def start_agent_login(
             "message": "login queued",
         },
     )
-    queued = _publish_login_task(session_id=session_id, payload=payload)
+    queued = _publish_login_task(
+        session_id=session_id,
+        payload=payload,
+        user_id=user.id,
+    )
     return Response.success(
         data={
             "session_id": session_id,
@@ -146,6 +151,7 @@ def _publish_login_task(
     *,
     session_id: str,
     payload: AgentLoginStartRequest,
+    user_id: int,
 ) -> bool:
     try:
         from src.tasks.collection.douyin_shop_login import run_login_session
@@ -154,6 +160,8 @@ def _publish_login_task(
             session_id=session_id,
             phone=payload.phone,
             account_id=payload.account_id,
+            data_source_id=payload.data_source_id,
+            user_id=user_id,
         )
         return True
     except Exception:

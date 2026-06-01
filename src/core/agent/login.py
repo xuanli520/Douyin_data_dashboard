@@ -243,6 +243,7 @@ class LoginSession:
         code_timeout_seconds: int = 300,
         max_steps: int = 20,
         debug_events: bool = False,
+        state_persist_callback: Any | None = None,
     ) -> None:
         self._session_id = str(session_id)
         self._account_id = str(account_id)
@@ -259,6 +260,7 @@ class LoginSession:
         self._code_timeout_seconds = max(int(code_timeout_seconds), 1)
         self._max_steps = max(int(max_steps), 1)
         self._debug_events = bool(debug_events)
+        self._state_persist_callback = state_persist_callback
         self._verification_code: str | None = None
         self._registry = build_login_tool_registry()
         self._security_policy = SecurityPolicy(allowed_origins=self._allowed_origins)
@@ -593,6 +595,11 @@ class LoginSession:
             )
         try:
             self._state_store.save_playwright_state(self._account_id, result.state)
+            callback = self._state_persist_callback
+            if callable(callback):
+                persisted = callback(result.state)
+                if inspect.isawaitable(persisted):
+                    session_module.run_coro(persisted)
             marker = getattr(self._login_state_manager, "mark_active", None)
             if callable(marker):
                 marked = marker(self._account_id)
