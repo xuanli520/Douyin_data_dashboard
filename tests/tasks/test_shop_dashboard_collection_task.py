@@ -119,82 +119,16 @@ class _FakeLoginStateManager:
         self.redis_client = redis_client
 
 
-class _FakeSessionBootstrapper:
-    def __init__(self, state_store):
-        self.state_store = state_store
-
-    async def bootstrap_shops(
-        self,
-        *,
-        runtime,
-        shop_ids,
-        verify_metric_date_by_shop=None,
-        force_serial=None,
-    ):
-        _ = verify_metric_date_by_shop
-        _ = force_serial
-        account_id = str(getattr(runtime, "account_id", "") or "").strip() or "acct-1"
-        result = {}
-        for shop_id in shop_ids:
-            shop_text = str(shop_id)
-            self.state_store.save_bundle(
-                account_id,
-                shop_text,
-                {
-                    "cookies": dict(getattr(runtime, "cookies", {}) or {}),
-                    "common_query": dict(getattr(runtime, "common_query", {}) or {}),
-                    "validated_shop_id": shop_text,
-                    "verified_actual_shop_id": shop_text,
-                    "verify_status": "passed",
-                    "verified_at": "2026-03-10T00:00:00+00:00",
-                    "session_version": "2",
-                },
-            )
-            result[shop_text] = {
-                "shop_id": shop_text,
-                "target_shop_id": shop_text,
-                "bootstrap_failed": False,
-                "bootstrap_verify_status": "passed",
-                "bootstrap_verify_actual_shop_id": shop_text,
-                "bootstrap_verify_error_code": "",
-            }
-        return result
-
-    async def bootstrap_shop(self, *, runtime, shop_id, verify_metric_date=None):
-        _ = verify_metric_date
-        account_id = str(getattr(runtime, "account_id", "") or "").strip() or "acct-1"
-        shop_text = str(shop_id)
-        self.state_store.save_bundle(
-            account_id,
-            shop_text,
-            {
-                "cookies": dict(getattr(runtime, "cookies", {}) or {}),
-                "common_query": dict(getattr(runtime, "common_query", {}) or {}),
-                "validated_shop_id": shop_text,
-                "verified_actual_shop_id": shop_text,
-                "verify_status": "passed",
-                "verified_at": "2026-03-10T00:00:00+00:00",
-                "session_version": "2",
-            },
-        )
-        return {
-            "shop_id": shop_text,
-            "target_shop_id": shop_text,
-            "bootstrap_failed": False,
-            "bootstrap_verify_status": "passed",
-            "bootstrap_verify_actual_shop_id": shop_text,
-            "bootstrap_verify_error_code": "",
-        }
-
-
 def _collect_success(
     runtime_config,
     metric_date: str,
     *,
+    plan_unit=None,
     lock_manager,
     state_store,
     login_state_manager,
 ) -> dict[str, Any]:
+    _ = plan_unit
     _ = lock_manager
     _ = state_store
     _ = login_state_manager
@@ -204,7 +138,7 @@ def _collect_success(
         "metric_date": metric_date,
         "rule_id": runtime_config.rule_id,
         "execution_id": runtime_config.execution_id,
-        "source": "script",
+        "source": "browser_agent",
         "total_score": 4.8,
         "product_score": 4.7,
         "logistics_score": 4.9,
@@ -254,12 +188,6 @@ async def test_collection_usecase_should_be_idempotent_by_queue_task_id(
     )
     monkeypatch.setattr(module, "_collect_one_day", _collect_success)
     monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
-    monkeypatch.setattr(
-        module,
-        "SessionBootstrapper",
-        _FakeSessionBootstrapper,
-        raising=False,
-    )
     monkeypatch.setattr(module, "LockManager", _FakeLockManager)
     monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
     monkeypatch.setattr(
@@ -377,12 +305,6 @@ async def test_sync_shop_dashboard_should_persist_started_at_for_system_executio
     monkeypatch.setattr(module, "resolve_sync_redis_client", lambda: _FakeRedis())
     monkeypatch.setattr(module, "_collect_one_day", _collect_success)
     monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
-    monkeypatch.setattr(
-        module,
-        "SessionBootstrapper",
-        _FakeSessionBootstrapper,
-        raising=False,
-    )
     monkeypatch.setattr(module, "LockManager", _FakeLockManager)
     monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
     monkeypatch.setattr(
@@ -412,44 +334,8 @@ async def test_sync_shop_dashboard_should_persist_started_at_for_system_executio
     assert execution.started_at == started_at.replace(tzinfo=None)
 
 
-def test_sync_shop_dashboard_sets_recommended_mode_for_unsupported(monkeypatch):
-    monkeypatch.setattr(module.fct, "task_id", 123, raising=False)
-    monkeypatch.setattr(
-        module.sync_shop_dashboard,
-        "publisher",
-        SimpleNamespace(redis_db_frame=_FakeRedis()),
-        raising=False,
-    )
-
-    class _FakeUseCase:
-        def execute(self, **kwargs):
-            _ = kwargs
-            return {
-                "status": "success",
-                "items": [
-                    {
-                        "status": "failed",
-                        "reason": "account_shop_switch_unsupported",
-                    }
-                ],
-            }
-
-    monkeypatch.setattr(
-        "src.application.collection.usecase.CollectionUseCase",
-        _FakeUseCase,
-    )
-
-    result = module.sync_shop_dashboard(
-        data_source_id=11,
-        rule_id=22,
-        execution_id="exec-forward",
-    )
-
-    assert result["recommended_collection_mode"] == "per_shop_account"
-
-
 @pytest.mark.asyncio
-async def test_collection_usecase_should_persist_shop_name_from_http_chain(
+async def test_collection_usecase_should_persist_shop_name_from_browser_agent_chain(
     test_db,
     monkeypatch,
 ):
@@ -461,29 +347,21 @@ async def test_collection_usecase_should_persist_shop_name_from_http_chain(
         raising=False,
     )
 
-    class _FakeHttpScraper:
-        def __init__(self, **_kwargs):
-            pass
+    class _FakeBrowserAgentAdapter:
+        def __init__(self, settings):
+            self.settings = settings
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, _exc_type, _exc_val, _exc_tb):
-            return None
-
-        def close(self):
-            return None
-
-        def fetch_dashboard_with_context(self, runtime_config, metric_date):
+        def collect(self, *, runtime, metric_date, state_store, plan_unit=None):
+            _ = (state_store, plan_unit)
             return {
                 "status": "success",
-                "shop_id": runtime_config.shop_id,
-                "actual_shop_id": runtime_config.shop_id,
+                "shop_id": runtime.shop_id,
+                "actual_shop_id": runtime.shop_id,
                 "shop_name": "demo-shop",
                 "metric_date": metric_date,
-                "rule_id": runtime_config.rule_id,
-                "execution_id": runtime_config.execution_id,
-                "source": "script",
+                "rule_id": runtime.rule_id,
+                "execution_id": runtime.execution_id,
+                "source": "browser_agent",
                 "total_score": 4.8,
                 "product_score": 4.7,
                 "logistics_score": 4.9,
@@ -494,14 +372,8 @@ async def test_collection_usecase_should_persist_shop_name_from_http_chain(
                 "raw": {},
             }
 
-    monkeypatch.setattr(module, "HttpScraper", _FakeHttpScraper)
+    monkeypatch.setattr(module, "BrowserAgentAdapter", _FakeBrowserAgentAdapter)
     monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
-    monkeypatch.setattr(
-        module,
-        "SessionBootstrapper",
-        _FakeSessionBootstrapper,
-        raising=False,
-    )
     monkeypatch.setattr(module, "LockManager", _FakeLockManager)
     monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
     monkeypatch.setattr(

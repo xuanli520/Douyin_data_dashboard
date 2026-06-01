@@ -21,7 +21,9 @@ from src.domains.data_source.schemas import (
     DataSourceType,
     DataSourceUpdate,
 )
+from src.config import get_settings
 from src.exceptions import BusinessException
+from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
 from src.session import get_session
 from src.shared.errors import ErrorCode
 
@@ -323,9 +325,11 @@ class DataSourceService:
         self,
         ds_repo: DataSourceRepository,
         session: AsyncSession,
+        runtime_state_store: SessionStateStore | None = None,
     ):
         self.ds_repo = ds_repo
         self.session = session
+        self.runtime_state_store = runtime_state_store
 
     async def _commit(self) -> None:
         try:
@@ -463,6 +467,11 @@ class DataSourceService:
                 {
                     "extra_config": extra_config,
                     "updated_by_id": user_id,
+                    "last_error_at": None,
+                    "last_error_msg": None,
+                    "status": ModelDataSourceStatus.ACTIVE
+                    if ds.status == ModelDataSourceStatus.ERROR
+                    else ds.status,
                 },
             )
         )
@@ -483,8 +492,10 @@ class DataSourceService:
         self._ensure_shop_dashboard_source_type(ds)
 
         extra_config = dict(ds.extra_config or {})
+        account_ids = self._shop_dashboard_runtime_account_ids(extra_config)
         extra_config.pop("shop_dashboard_login_state", None)
         extra_config.pop("shop_dashboard_login_state_meta", None)
+        self._clear_shop_dashboard_runtime_state(account_ids)
 
         ds = self._require_data_source(
             await self.ds_repo.update(
@@ -600,8 +611,39 @@ class DataSourceService:
 
     def _build_data_source_config(self, ds: DataSource) -> dict[str, Any]:
         config = dict(ds.extra_config or {})
+        if not _has_valid_storage_state_cookies(config):
+            config.pop("shop_dashboard_login_state_meta", None)
         config.pop("shop_dashboard_login_state", None)
         return config
+
+    def _shop_dashboard_runtime_account_ids(self, config: dict[str, Any]) -> list[str]:
+        values: list[Any] = []
+        meta = config.get("shop_dashboard_login_state_meta")
+        if isinstance(meta, dict):
+            values.append(meta.get("account_id"))
+        login_state = config.get("shop_dashboard_login_state")
+        if isinstance(login_state, dict):
+            values.append(login_state.get("account_id"))
+        values.append(config.get("account_id"))
+
+        account_ids: list[str] = []
+        for value in values:
+            account_id = str(value or "").strip()
+            if account_id and account_id not in account_ids:
+                account_ids.append(account_id)
+        return account_ids
+
+    def _clear_shop_dashboard_runtime_state(self, account_ids: list[str]) -> None:
+        if not account_ids:
+            return
+        state_store = self.runtime_state_store
+        if state_store is None:
+            state_store = SessionStateStore(
+                base_dir=get_settings().shop_dashboard.runtime_state_dir,
+                create=False,
+            )
+        for account_id in account_ids:
+            state_store.invalidate_account(account_id)
 
     def _build_data_source_response(self, ds: DataSource) -> DataSourceResponse:
         return DataSourceResponse(

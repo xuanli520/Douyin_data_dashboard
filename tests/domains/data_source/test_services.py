@@ -109,6 +109,25 @@ class TestDataSourceServiceUnit:
         assert result.id == 1
         assert result.name == "Test DS"
 
+    async def test_get_by_id_hides_stale_login_state_meta(self, mock_session):
+        mock_ds_repo = AsyncMock()
+        mock_ds_repo.get_by_id.return_value = MockDataSource(
+            id=1,
+            name="Test DS",
+            extra_config={
+                "shop_dashboard_login_state_meta": {
+                    "account_id": "acct-1",
+                    "cookie_count": 37,
+                    "state_version": "v1",
+                },
+            },
+        )
+
+        service = DataSourceService(mock_ds_repo, mock_session)
+        result = await service.get_by_id(1)
+
+        assert "shop_dashboard_login_state_meta" not in result.config
+
     async def test_get_by_id_not_found(self, mock_session):
         mock_ds_repo = AsyncMock()
         mock_ds_repo.get_by_id.return_value = None
@@ -241,6 +260,56 @@ class TestDataSourceServiceUnit:
         assert isinstance(saved_login_state["storage_state"], dict)
         assert saved_login_state["storage_state"]["cookies"][0]["name"] == "sid"
         assert "cookies" not in saved_login_state
+        assert update_payload["last_error_at"] is None
+        assert update_payload["last_error_msg"] is None
+
+    async def test_update_shop_dashboard_login_state_recovers_error_status(
+        self, mock_session
+    ):
+        mock_ds_repo = AsyncMock()
+
+        mock_ds_repo.get_by_id.return_value = MockDataSource(
+            id=1,
+            source_type=ModelDataSourceType.DOUYIN_SHOP,
+            status=DataSourceStatus.ERROR,
+            last_error_at=datetime.now(timezone.utc),
+            last_error_msg="Missing shop dashboard login state cookies",
+        )
+        mock_ds_repo.update.return_value = MockDataSource(
+            id=1,
+            source_type=ModelDataSourceType.DOUYIN_SHOP,
+            status=DataSourceStatus.ACTIVE,
+            extra_config={
+                "shop_dashboard_login_state": {
+                    "storage_state": {
+                        "cookies": [{"name": "sid", "value": "token"}],
+                        "origins": [],
+                    },
+                    "state_version": "v1",
+                },
+                "shop_dashboard_login_state_meta": {
+                    "account_id": "acct-1",
+                    "cookie_count": 1,
+                    "state_version": "v1",
+                },
+            },
+        )
+
+        service = DataSourceService(mock_ds_repo, mock_session)
+        await service.update_shop_dashboard_login_state(
+            1,
+            account_id="acct-1",
+            storage_state={
+                "cookies": [{"name": "sid", "value": "token"}],
+                "origins": [],
+            },
+            user_id=1,
+        )
+
+        update_payload = mock_ds_repo.update.await_args.args[1]
+        assert update_payload["status"] == DataSourceStatus.ACTIVE
+        assert update_payload["last_error_at"] is None
+        assert update_payload["last_error_msg"] is None
 
     async def test_clear_shop_dashboard_login_state_removes_raw_and_meta(
         self, mock_session

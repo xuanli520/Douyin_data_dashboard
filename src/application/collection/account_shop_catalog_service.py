@@ -29,6 +29,7 @@ class AccountShopCatalogResult:
 
 
 class AccountShopCatalogService:
+    _CATALOG_SCHEMA_VERSION = 2
     _RELEASE_SCRIPT = """
     if redis.call('get', KEYS[1]) == ARGV[1] then
         return redis.call('del', KEYS[1])
@@ -203,6 +204,7 @@ class AccountShopCatalogService:
     def _save_catalog_cache(self, key: str, shop_ids: list[str]) -> None:
         payload = json.dumps(
             {
+                "schema_version": self._CATALOG_SCHEMA_VERSION,
                 "shop_ids": list(shop_ids),
                 "updated_at": int(time.time()),
             },
@@ -253,6 +255,8 @@ class AccountShopCatalogService:
         except ValueError:
             return []
         if not isinstance(payload, dict):
+            return []
+        if payload.get("schema_version") != self._CATALOG_SCHEMA_VERSION:
             return []
         shop_ids = normalize_shop_ids(payload.get("shop_ids"))
         if not shop_ids:

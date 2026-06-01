@@ -87,6 +87,9 @@ class ResponseWrapperMiddleware(BaseHTTPMiddleware):
             return True
         if any(path.startswith(prefix) for prefix in self.AUTH_SKIP_PREFIXES):
             return True
+        content_disposition = response.headers.get("content-disposition") or ""
+        if "attachment" in content_disposition.lower():
+            return True
 
         return False
 

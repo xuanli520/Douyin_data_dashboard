@@ -59,6 +59,18 @@ class LoginStateManager:
         )
         return True
 
+    async def mark_active(self, account_id: str) -> None:
+        now = int(time.time())
+        await self._set_state(
+            account_id,
+            {
+                "status": "active",
+                "reason": "",
+                "last_probe_at": str(now),
+                "updated_at": str(now),
+            },
+        )
+
     async def mark_expired(self, account_id: str, reason: str) -> None:
         now = int(time.time())
         await self._set_state(

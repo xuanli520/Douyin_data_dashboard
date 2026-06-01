@@ -303,7 +303,6 @@ def _build_issue_rows(
     materials: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     deduped: dict[str, dict[str, Any]] = {}
-    fallback_rows: list[dict[str, Any]] = []
 
     for material in _sorted_materials(materials):
         day = material["metric_date"]
@@ -334,29 +333,8 @@ def _build_issue_rows(
                 previous = deduped.get(issue_id)
                 if previous is None or issue["occurred_at"] >= previous["occurred_at"]:
                     deduped[issue_id] = issue
-        else:
-            cold_metrics = material.get("cold_metrics", [])
-            for index, cold in enumerate(cold_metrics, start=1):
-                reason = str(cold.get("reason", "")).strip()
-                if not reason:
-                    continue
-                fallback_rows.append(
-                    {
-                        "id": f"cold-{day}-{index}",
-                        "shop_id": shop_id,
-                        "dimension": "risk",
-                        "title": reason,
-                        "deduct_points": 0.0,
-                        "impact_score": 0.0,
-                        "status": "pending",
-                        "owner": "",
-                        "occurred_at": occurred_at,
-                        "deadline_at": None,
-                        "date_range": date_range,
-                    }
-                )
 
-    rows = list(deduped.values()) + fallback_rows
+    rows = list(deduped.values())
     rows.sort(key=lambda item: (item["occurred_at"], item["id"]), reverse=True)
     return rows
 

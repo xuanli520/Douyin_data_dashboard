@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from typing import Any
 from types import SimpleNamespace
 
@@ -9,6 +11,12 @@ from sqlalchemy import select
 from src import session as db_session_module
 from src.application.collection.runtime_loader import CollectionRuntimeLoader
 from src.application.collection.usecase import CollectionUseCase
+from src.config import get_settings
+from src.domains.agent_recipe.models import (
+    AGENT_RECIPE_STATUS_DEGRADED,
+    AGENT_RECIPE_STABILITY_STABLE,
+)
+from src.domains.agent_recipe.repository import AgentRecipeRepository
 from src.domains.data_source.enums import DataSourceStatus
 from src.domains.data_source.enums import DataSourceType
 from src.domains.data_source.models import DataSource
@@ -16,7 +24,9 @@ from src.domains.scraping_rule.models import ScrapingRule
 from src.domains.scraping_rule.repository import ScrapingRuleRepository
 from src.domains.task.enums import TaskExecutionStatus
 from src.domains.task.models import TaskExecution
+from src.domains.task.exceptions import ScrapingFailedException
 from src.domains.task.exceptions import ShopDashboardNoTargetShopsException
+from src.scrapers.shop_dashboard.exceptions import DataIncompleteError
 from src.scrapers.shop_dashboard.exceptions import LoginExpiredError
 from src.tasks.collection import douyin_shop_dashboard as module
 from src.tasks.exceptions import ShopDashboardCookieExpiredException
@@ -114,221 +124,16 @@ class _FakeLoginStateManager:
         return None
 
 
-class _RecordingLoginStateManager(_FakeLoginStateManager):
-    marked_expired: list[tuple[str, str]] = []
-
-    async def mark_expired(self, account_id: str, reason: str) -> None:
-        type(self).marked_expired.append((account_id, reason))
-
-
-class _FakeSessionBootstrapper:
-    def __init__(self, state_store):
-        self.state_store = state_store
-
-    async def bootstrap_shops(
-        self,
-        *,
-        runtime,
-        shop_ids,
-        verify_metric_date_by_shop=None,
-        force_serial=None,
-    ):
-        _ = verify_metric_date_by_shop
-        _ = force_serial
-        results: dict[str, dict[str, Any]] = {}
-        account_id = str(getattr(runtime, "account_id", "") or "").strip() or "acct-1"
-        for shop_id in shop_ids:
-            shop_text = str(shop_id)
-            self.state_store.save_bundle(
-                account_id,
-                shop_text,
-                {
-                    "cookies": dict(getattr(runtime, "cookies", {}) or {}),
-                    "common_query": dict(getattr(runtime, "common_query", {}) or {}),
-                    "validated_shop_id": shop_text,
-                    "verified_actual_shop_id": shop_text,
-                    "verify_status": "passed",
-                    "verified_at": "2026-03-10T00:00:00+00:00",
-                    "session_version": "2",
-                },
-            )
-            results[shop_text] = {
-                "shop_id": shop_text,
-                "target_shop_id": shop_text,
-                "bootstrap_failed": False,
-                "bootstrap_verify_status": "passed",
-                "bootstrap_verify_actual_shop_id": shop_text,
-                "bootstrap_verify_error_code": "",
-            }
-        return results
-
-    async def bootstrap_shop(self, *, runtime, shop_id, verify_metric_date=None):
-        _ = verify_metric_date
-        account_id = str(getattr(runtime, "account_id", "") or "").strip() or "acct-1"
-        shop_text = str(shop_id)
-        self.state_store.save_bundle(
-            account_id,
-            shop_text,
-            {
-                "cookies": dict(getattr(runtime, "cookies", {}) or {}),
-                "common_query": dict(getattr(runtime, "common_query", {}) or {}),
-                "validated_shop_id": shop_text,
-                "verified_actual_shop_id": shop_text,
-                "verify_status": "passed",
-                "verified_at": "2026-03-10T00:00:00+00:00",
-                "session_version": "2",
-            },
-        )
-        return {
-            "shop_id": shop_text,
-            "target_shop_id": shop_text,
-            "bootstrap_failed": False,
-            "bootstrap_verify_status": "passed",
-            "bootstrap_verify_actual_shop_id": shop_text,
-            "bootstrap_verify_error_code": "",
-        }
-
-
-class _BootstrapVerifyRequestFailed:
-    def __init__(self, state_store):
-        self.state_store = state_store
-
-    async def bootstrap_shops(
-        self,
-        *,
-        runtime,
-        shop_ids,
-        verify_metric_date_by_shop=None,
-        force_serial=None,
-    ):
-        _ = (runtime, verify_metric_date_by_shop, force_serial)
-        return {
-            str(shop_id): {
-                "shop_id": str(shop_id),
-                "target_shop_id": str(shop_id),
-                "bootstrap_failed": True,
-                "error_code": "verify_request_failed",
-                "error": "verify_request_failed",
-                "bootstrap_choose_status": "passed",
-                "bootstrap_verify_status": "failed",
-                "bootstrap_verify_actual_shop_id": "",
-                "bootstrap_verify_error_code": "verify_request_failed",
-            }
-            for shop_id in shop_ids
-        }
-
-    async def bootstrap_shop(self, *, runtime, shop_id, verify_metric_date=None):
-        _ = (runtime, shop_id, verify_metric_date)
-        return {
-            "shop_id": str(shop_id),
-            "target_shop_id": str(shop_id),
-            "bootstrap_failed": True,
-            "error_code": "verify_request_failed",
-            "error": "verify_request_failed",
-            "bootstrap_choose_status": "passed",
-            "bootstrap_verify_status": "failed",
-            "bootstrap_verify_actual_shop_id": "",
-            "bootstrap_verify_error_code": "verify_request_failed",
-        }
-
-
-class _BootstrapVerifyLoginExpired:
-    def __init__(self, state_store):
-        self.state_store = state_store
-
-    async def bootstrap_shops(
-        self,
-        *,
-        runtime,
-        shop_ids,
-        verify_metric_date_by_shop=None,
-        force_serial=None,
-    ):
-        _ = (runtime, verify_metric_date_by_shop, force_serial)
-        return {
-            str(shop_id): {
-                "shop_id": str(shop_id),
-                "target_shop_id": str(shop_id),
-                "bootstrap_failed": True,
-                "error_code": "verify_login_expired",
-                "error": "http_401",
-                "bootstrap_choose_status": "passed",
-                "bootstrap_verify_status": "failed",
-                "bootstrap_verify_actual_shop_id": "",
-                "bootstrap_verify_error_code": "verify_login_expired",
-            }
-            for shop_id in shop_ids
-        }
-
-    async def bootstrap_shop(self, *, runtime, shop_id, verify_metric_date=None):
-        _ = (runtime, shop_id, verify_metric_date)
-        return {
-            "shop_id": str(shop_id),
-            "target_shop_id": str(shop_id),
-            "bootstrap_failed": True,
-            "error_code": "verify_login_expired",
-            "error": "http_401",
-            "bootstrap_choose_status": "passed",
-            "bootstrap_verify_status": "failed",
-            "bootstrap_verify_actual_shop_id": "",
-            "bootstrap_verify_error_code": "verify_login_expired",
-        }
-
-
-class _BootstrapVerifyMismatch:
-    def __init__(self, state_store):
-        self.state_store = state_store
-
-    async def bootstrap_shops(
-        self,
-        *,
-        runtime,
-        shop_ids,
-        verify_metric_date_by_shop=None,
-        force_serial=None,
-    ):
-        _ = (runtime, verify_metric_date_by_shop, force_serial)
-        return {
-            str(shop_id): {
-                "shop_id": str(shop_id),
-                "target_shop_id": str(shop_id),
-                "bootstrap_failed": True,
-                "error_code": "verify_shop_mismatch",
-                "error": "verify_shop_mismatch",
-                "actual_shop_id": "shop-fixed",
-                "bootstrap_choose_status": "passed",
-                "bootstrap_verify_status": "failed",
-                "bootstrap_verify_actual_shop_id": "shop-fixed",
-                "bootstrap_verify_error_code": "verify_shop_mismatch",
-            }
-            for shop_id in shop_ids
-        }
-
-    async def bootstrap_shop(self, *, runtime, shop_id, verify_metric_date=None):
-        _ = (runtime, shop_id, verify_metric_date)
-        return {
-            "shop_id": str(shop_id),
-            "target_shop_id": str(shop_id),
-            "bootstrap_failed": True,
-            "error_code": "verify_shop_mismatch",
-            "error": "verify_shop_mismatch",
-            "actual_shop_id": "shop-fixed",
-            "bootstrap_choose_status": "passed",
-            "bootstrap_verify_status": "failed",
-            "bootstrap_verify_actual_shop_id": "shop-fixed",
-            "bootstrap_verify_error_code": "verify_shop_mismatch",
-        }
-
-
 def _collect_mismatch(
     runtime_config,
     metric_date: str,
     *,
+    plan_unit=None,
     lock_manager,
     state_store,
     login_state_manager,
 ) -> dict[str, Any]:
-    _ = (lock_manager, state_store, login_state_manager)
+    _ = (plan_unit, lock_manager, state_store, login_state_manager)
     return {
         "status": "success",
         "shop_id": runtime_config.shop_id,
@@ -336,7 +141,7 @@ def _collect_mismatch(
         "metric_date": metric_date,
         "rule_id": runtime_config.rule_id,
         "execution_id": runtime_config.execution_id,
-        "source": "script",
+        "source": "browser_agent",
         "total_score": 4.8,
         "product_score": 4.7,
         "logistics_score": 4.9,
@@ -384,6 +189,45 @@ async def _seed_entities(
             data_source.id if data_source.id is not None else 0,
             rule.id if rule.id is not None else 0,
         )
+
+
+def _recipe_payload() -> dict[str, Any]:
+    return {
+        "entrypoint": {"url": "https://example.test/dashboard"},
+        "steps": [{"id": "open", "action": "goto"}],
+        "observations": {
+            "total": {
+                "id": "total",
+                "kind": "text",
+                "locator": {"kind": "css", "value": ".total"},
+            }
+        },
+        "assertions": [{"id": "total_exists", "kind": "exists", "source": "total"}],
+        "recovery_policy": {"enabled": True, "max_attempts": 1},
+        "security_policy": {"allowed_origins": ["https://example.test"]},
+    }
+
+
+async def _seed_agent_recipe(
+    test_db,
+    *,
+    stability: str = "candidate",
+    version: int = 1,
+    payload: dict[str, Any] | None = None,
+):
+    async with test_db() as db_session:
+        repo = AgentRecipeRepository(db_session)
+        recipe = await repo.create(
+            {
+                "namespace": "shop_dashboard",
+                "key": "overview",
+                "version": version,
+                "stability": stability,
+                **(payload or _recipe_payload()),
+            }
+        )
+        await db_session.commit()
+        return recipe
 
 
 @pytest.mark.asyncio
@@ -544,12 +388,6 @@ async def test_collection_usecase_should_map_login_expired_to_task_exception(
         _raise_login_expired,
     )
     monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
-    monkeypatch.setattr(
-        module,
-        "SessionBootstrapper",
-        _FakeSessionBootstrapper,
-        raising=False,
-    )
     monkeypatch.setattr(module, "LockManager", _FakeLockManager)
     monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
     monkeypatch.setattr(
@@ -598,12 +436,6 @@ async def test_failed_collection_should_backfill_rule_last_execution_fields(
     )
     monkeypatch.setattr(module, "_collect_one_day", _raise_login_expired)
     monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
-    monkeypatch.setattr(
-        module,
-        "SessionBootstrapper",
-        _FakeSessionBootstrapper,
-        raising=False,
-    )
     monkeypatch.setattr(module, "LockManager", _FakeLockManager)
     monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
     monkeypatch.setattr(
@@ -641,107 +473,6 @@ def _raise_login_expired(*_args, **_kwargs):
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_verify_request_failed_not_counted_as_shop_mismatch(
-    test_db,
-    monkeypatch,
-):
-    data_source_id, rule_id = await _seed_entities(test_db)
-    monkeypatch.setattr(
-        db_session_module,
-        "async_session_factory",
-        test_db,
-        raising=False,
-    )
-    monkeypatch.setattr(module, "_collect_one_day", _raise_login_expired)
-    monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
-    monkeypatch.setattr(
-        module,
-        "SessionBootstrapper",
-        _BootstrapVerifyRequestFailed,
-        raising=False,
-    )
-    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
-    monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
-    monkeypatch.setattr(
-        module,
-        "_materialize_runtime_storage_state",
-        lambda runtime, _store: runtime,
-    )
-    monkeypatch.setattr(
-        CollectionUseCase,
-        "_raise_when_all_units_failed",
-        lambda self, result: None,
-    )
-
-    usecase = CollectionUseCase()
-    result = await usecase._execute_async(
-        data_source_id=data_source_id,
-        rule_id=rule_id,
-        execution_id="exec-bootstrap-request-failed",
-        queue_task_id="queue-bootstrap-request-failed",
-        triggered_by=1,
-        overrides={},
-        redis_client=_FakeRedis(),
-    )
-
-    assert result["bootstrap_verify_failed_count"] == 1
-    assert result["shop_mismatch_count"] == 0
-    assert result["items"][0]["reason"] == "bootstrap_verify_failed"
-    assert result["items"][0]["error_code"] == "verify_request_failed"
-
-
-@pytest.mark.asyncio
-async def test_bootstrap_verify_login_expired_marks_login_state_expired(
-    test_db,
-    monkeypatch,
-):
-    _RecordingLoginStateManager.marked_expired = []
-    data_source_id, rule_id = await _seed_entities(test_db)
-    monkeypatch.setattr(
-        db_session_module,
-        "async_session_factory",
-        test_db,
-        raising=False,
-    )
-    monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
-    monkeypatch.setattr(
-        module,
-        "SessionBootstrapper",
-        _BootstrapVerifyLoginExpired,
-        raising=False,
-    )
-    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
-    monkeypatch.setattr(module, "LoginStateManager", _RecordingLoginStateManager)
-    monkeypatch.setattr(
-        module,
-        "_materialize_runtime_storage_state",
-        lambda runtime, _store: runtime,
-    )
-    monkeypatch.setattr(
-        CollectionUseCase,
-        "_raise_when_all_units_failed",
-        lambda self, result: None,
-    )
-
-    usecase = CollectionUseCase()
-    result = await usecase._execute_async(
-        data_source_id=data_source_id,
-        rule_id=rule_id,
-        execution_id="exec-bootstrap-login-expired",
-        queue_task_id="queue-bootstrap-login-expired",
-        triggered_by=1,
-        overrides={},
-        redis_client=_FakeRedis(),
-    )
-
-    assert result["bootstrap_verify_failed_count"] == 1
-    assert result["items"][0]["error_code"] == "verify_login_expired"
-    assert _RecordingLoginStateManager.marked_expired == [
-        (f"rule_{rule_id}", "verify_login_expired")
-    ]
-
-
-@pytest.mark.asyncio
 async def test_collect_mismatch_reaches_threshold_then_hits_circuit_break(
     test_db,
     monkeypatch,
@@ -759,12 +490,6 @@ async def test_collect_mismatch_reaches_threshold_then_hits_circuit_break(
     )
     monkeypatch.setattr(module, "_collect_one_day", _collect_mismatch)
     monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
-    monkeypatch.setattr(
-        module,
-        "SessionBootstrapper",
-        _FakeSessionBootstrapper,
-        raising=False,
-    )
     monkeypatch.setattr(module, "LockManager", _FakeLockManager)
     monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
     monkeypatch.setattr(
@@ -795,13 +520,14 @@ async def test_collect_mismatch_reaches_threshold_then_hits_circuit_break(
 
 
 @pytest.mark.asyncio
-async def test_account_shop_switch_unsupported_short_circuit(
-    test_db,
-    monkeypatch,
-):
+async def test_batch_collection_rejects_candidate_agent_recipe(test_db, monkeypatch):
+    await _seed_agent_recipe(test_db)
     data_source_id, rule_id = await _seed_entities(
         test_db,
-        rule_filters={"shop_id": ["shop-1", "shop-2", "shop-3", "shop-4"]},
+        ds_extra_config={
+            "agent_recipe": {"namespace": "shop_dashboard", "key": "overview"}
+        },
+        rule_filters={"shop_id": ["shop-1", "shop-2"]},
     )
     monkeypatch.setattr(
         db_session_module,
@@ -809,14 +535,251 @@ async def test_account_shop_switch_unsupported_short_circuit(
         test_db,
         raising=False,
     )
-    monkeypatch.setattr(module, "_collect_one_day", _collect_mismatch)
-    monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
+
+    with pytest.raises(ScrapingFailedException) as exc_info:
+        await CollectionUseCase()._execute_async(
+            data_source_id=data_source_id,
+            rule_id=rule_id,
+            execution_id="exec-batch-candidate",
+            queue_task_id="queue-batch-candidate",
+            triggered_by=1,
+            overrides={},
+            redis_client=_FakeRedis(),
+        )
+
+    assert exc_info.value.error_data["reason"] == "agent_recipe_not_stable_for_batch"
+
+
+@pytest.mark.asyncio
+async def test_all_mode_batch_collection_rejects_candidate_agent_recipe(
+    test_db,
+    monkeypatch,
+):
+    await _seed_agent_recipe(test_db)
+    data_source_id, rule_id = await _seed_entities(
+        test_db,
+        ds_extra_config={
+            "agent_recipe": {"namespace": "shop_dashboard", "key": "overview"}
+        },
+        rule_filters={},
+    )
     monkeypatch.setattr(
-        module,
-        "SessionBootstrapper",
-        _BootstrapVerifyMismatch,
+        db_session_module,
+        "async_session_factory",
+        test_db,
         raising=False,
     )
+
+    class _CatalogService:
+        async def get_shop_catalog(self, **_kwargs):
+            return SimpleNamespace(
+                shop_ids=["shop-1", "shop-2"],
+                catalog_stale=False,
+                resolve_source="live",
+            )
+
+    usecase = CollectionUseCase(
+        runtime_loader=CollectionRuntimeLoader(
+            account_shop_catalog_service=_CatalogService()
+        )
+    )
+    with pytest.raises(ScrapingFailedException) as exc_info:
+        await usecase._execute_async(
+            data_source_id=data_source_id,
+            rule_id=rule_id,
+            execution_id="exec-all-candidate",
+            queue_task_id="queue-all-candidate",
+            triggered_by=1,
+            overrides={"all": True},
+            redis_client=_FakeRedis(),
+        )
+
+    assert exc_info.value.error_data["reason"] == "agent_recipe_not_stable_for_batch"
+
+
+@pytest.mark.asyncio
+async def test_batch_collection_allows_stable_recipe_and_disables_recovery(
+    test_db,
+    monkeypatch,
+):
+    await _seed_agent_recipe(test_db, stability=AGENT_RECIPE_STABILITY_STABLE)
+    data_source_id, rule_id = await _seed_entities(
+        test_db,
+        ds_extra_config={
+            "agent_recipe": {"namespace": "shop_dashboard", "key": "overview"}
+        },
+        rule_filters={"shop_id": ["shop-1", "shop-2"]},
+    )
+    seen_extra_config = []
+    monkeypatch.setattr(
+        db_session_module,
+        "async_session_factory",
+        test_db,
+        raising=False,
+    )
+
+    def _collect_success(runtime_config, metric_date, **kwargs):
+        _ = kwargs
+        seen_extra_config.append(dict(runtime_config.extra_config or {}))
+        return {
+            "status": "success",
+            "shop_id": runtime_config.shop_id,
+            "actual_shop_id": runtime_config.shop_id,
+            "metric_date": metric_date,
+            "rule_id": runtime_config.rule_id,
+            "execution_id": runtime_config.execution_id,
+            "source": "browser_agent",
+            "total_score": 4.8,
+            "product_score": 4.7,
+            "logistics_score": 4.9,
+            "service_score": 4.6,
+            "bad_behavior_score": 0.0,
+            "reviews": {"summary": {}, "items": []},
+            "violations": {"summary": {}, "waiting_list": []},
+            "raw": {},
+        }
+
+    monkeypatch.setattr(module, "_collect_one_day", _collect_success)
+    monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
+    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
+    monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
+    monkeypatch.setattr(
+        module,
+        "_materialize_runtime_storage_state",
+        lambda runtime, _store: runtime,
+    )
+
+    result = await CollectionUseCase()._execute_async(
+        data_source_id=data_source_id,
+        rule_id=rule_id,
+        execution_id="exec-batch-stable",
+        queue_task_id="queue-batch-stable",
+        triggered_by=1,
+        overrides={},
+        redis_client=_FakeRedis(),
+    )
+
+    assert result["completed_units"] == 2
+    assert len(seen_extra_config) == 2
+    assert seen_extra_config[0]["agent_batch_mode"] is True
+    assert seen_extra_config[0]["agent_recovery_enabled"] is False
+    assert seen_extra_config[0]["agent_recipe_inline"]["stability"] == "stable"
+
+
+@pytest.mark.asyncio
+async def test_batch_collection_falls_back_to_older_valid_stable_recipe(
+    test_db,
+    monkeypatch,
+):
+    await _seed_agent_recipe(
+        test_db,
+        stability=AGENT_RECIPE_STABILITY_STABLE,
+        version=1,
+    )
+    await _seed_agent_recipe(
+        test_db,
+        stability=AGENT_RECIPE_STABILITY_STABLE,
+        version=2,
+        payload={
+            "entrypoint": {"url": "https://example.test/dashboard"},
+            "steps": [{"id": "open", "action": "goto"}],
+            "observations": {},
+            "assertions": [],
+            "recovery_policy": {"enabled": True, "max_attempts": 1},
+            "security_policy": {"allowed_origins": ["https://example.test"]},
+        },
+    )
+    data_source_id, rule_id = await _seed_entities(
+        test_db,
+        ds_extra_config={
+            "agent_recipe": {"namespace": "shop_dashboard", "key": "overview"}
+        },
+        rule_filters={"shop_id": ["shop-1", "shop-2"]},
+    )
+    seen_extra_config = []
+    monkeypatch.setattr(
+        db_session_module,
+        "async_session_factory",
+        test_db,
+        raising=False,
+    )
+
+    def _collect_success(runtime_config, metric_date, **kwargs):
+        _ = kwargs
+        seen_extra_config.append(dict(runtime_config.extra_config or {}))
+        return {
+            "status": "success",
+            "shop_id": runtime_config.shop_id,
+            "actual_shop_id": runtime_config.shop_id,
+            "metric_date": metric_date,
+            "rule_id": runtime_config.rule_id,
+            "execution_id": runtime_config.execution_id,
+            "source": "browser_agent",
+            "total_score": 4.8,
+            "product_score": 4.7,
+            "logistics_score": 4.9,
+            "service_score": 4.6,
+            "bad_behavior_score": 0.0,
+            "reviews": {"summary": {}, "items": []},
+            "violations": {"summary": {}, "waiting_list": []},
+            "raw": {},
+        }
+
+    monkeypatch.setattr(module, "_collect_one_day", _collect_success)
+    monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
+    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
+    monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
+    monkeypatch.setattr(
+        module,
+        "_materialize_runtime_storage_state",
+        lambda runtime, _store: runtime,
+    )
+
+    result = await CollectionUseCase()._execute_async(
+        data_source_id=data_source_id,
+        rule_id=rule_id,
+        execution_id="exec-batch-stable-fallback",
+        queue_task_id="queue-batch-stable-fallback",
+        triggered_by=1,
+        overrides={},
+        redis_client=_FakeRedis(),
+    )
+
+    assert result["completed_units"] == 2
+    assert len(seen_extra_config) == 2
+    assert seen_extra_config[0]["agent_recipe_inline"]["version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_batch_agent_recipe_failure_marks_stable_recipe_degraded(
+    test_db,
+    monkeypatch,
+):
+    recipe = await _seed_agent_recipe(test_db, stability=AGENT_RECIPE_STABILITY_STABLE)
+    data_source_id, rule_id = await _seed_entities(
+        test_db,
+        ds_extra_config={
+            "agent_recipe": {"namespace": "shop_dashboard", "key": "overview"}
+        },
+        rule_filters={"shop_id": ["shop-1", "shop-2"]},
+    )
+    calls = []
+    monkeypatch.setattr(
+        db_session_module,
+        "async_session_factory",
+        test_db,
+        raising=False,
+    )
+
+    def _collect_failed(runtime_config, *_args, **_kwargs):
+        calls.append(runtime_config.shop_id)
+        raise DataIncompleteError(
+            "missing total",
+            error_data={"failure_kind": "observation_empty"},
+        )
+
+    monkeypatch.setattr(module, "_collect_one_day", _collect_failed)
+    monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
     monkeypatch.setattr(module, "LockManager", _FakeLockManager)
     monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
     monkeypatch.setattr(
@@ -830,42 +793,105 @@ async def test_account_shop_switch_unsupported_short_circuit(
         lambda self, result: None,
     )
 
-    usecase = CollectionUseCase()
-    result = await usecase._execute_async(
+    result = await CollectionUseCase()._execute_async(
         data_source_id=data_source_id,
         rule_id=rule_id,
-        execution_id="exec-account-unsupported",
-        queue_task_id="queue-account-unsupported",
+        execution_id="exec-batch-degraded",
+        queue_task_id="queue-batch-degraded",
         triggered_by=1,
         overrides={},
         redis_client=_FakeRedis(),
     )
 
-    assert result["account_switch_unsupported_count"] >= 1
-    assert any(
-        str(item.get("reason", "")) == "account_shop_switch_unsupported"
-        for item in result["items"]
+    assert calls == ["shop-1"]
+    assert result["failed_units"] == 2
+    assert result["items"][0]["reason"] == "agent_recipe_failed"
+    assert result["items"][0]["error_code"] == "observation_empty"
+    assert "raw" not in result["items"][0]
+    async with test_db() as db_session:
+        repo = AgentRecipeRepository(db_session)
+        stored = await repo.get_by_id(recipe.id if recipe.id is not None else 0)
+        versions = await repo.list_versions("shop_dashboard", "overview")
+
+    assert stored is not None
+    assert stored.status == AGENT_RECIPE_STATUS_DEGRADED
+    assert stored.stability == "candidate"
+    assert len(versions) == 1
+
+
+@pytest.mark.asyncio
+async def test_stable_batch_collection_runs_parallel_when_enabled(test_db, monkeypatch):
+    await _seed_agent_recipe(test_db, stability=AGENT_RECIPE_STABILITY_STABLE)
+    data_source_id, rule_id = await _seed_entities(
+        test_db,
+        ds_extra_config={
+            "agent_recipe": {"namespace": "shop_dashboard", "key": "overview"}
+        },
+        rule_filters={"shop_id": ["shop-1", "shop-2"]},
+    )
+    settings = get_settings()
+    monkeypatch.setattr(
+        settings.shop_dashboard,
+        "agent_batch_concurrency_limit",
+        2,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        db_session_module,
+        "async_session_factory",
+        test_db,
+        raising=False,
+    )
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+
+    def _collect_success(runtime_config, metric_date, **kwargs):
+        nonlocal active, max_active
+        _ = kwargs
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.05)
+        with lock:
+            active -= 1
+        return {
+            "status": "success",
+            "shop_id": runtime_config.shop_id,
+            "actual_shop_id": runtime_config.shop_id,
+            "metric_date": metric_date,
+            "rule_id": runtime_config.rule_id,
+            "execution_id": runtime_config.execution_id,
+            "source": "browser_agent",
+            "total_score": 4.8,
+            "product_score": 4.7,
+            "logistics_score": 4.9,
+            "service_score": 4.6,
+            "bad_behavior_score": 0.0,
+            "reviews": {"summary": {}, "items": []},
+            "violations": {"summary": {}, "waiting_list": []},
+            "raw": {},
+        }
+
+    monkeypatch.setattr(module, "_collect_one_day", _collect_success)
+    monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
+    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
+    monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
+    monkeypatch.setattr(
+        module,
+        "_materialize_runtime_storage_state",
+        lambda runtime, _store: runtime,
     )
 
+    result = await CollectionUseCase()._execute_async(
+        data_source_id=data_source_id,
+        rule_id=rule_id,
+        execution_id="exec-batch-parallel",
+        queue_task_id="queue-batch-parallel",
+        triggered_by=1,
+        overrides={},
+        redis_client=_FakeRedis(),
+    )
 
-def test_raise_when_all_units_failed_skips_exception_for_account_switch_unsupported():
-    usecase = CollectionUseCase()
-    result = {
-        "planned_units": 2,
-        "completed_units": 0,
-        "failed_units": 2,
-        "items": [
-            {
-                "status": "failed",
-                "reason": "account_shop_switch_unsupported",
-            },
-            {
-                "status": "failed",
-                "reason": "account_shop_switch_unsupported",
-            },
-        ],
-    }
-
-    usecase._raise_when_all_units_failed(result)
-
-    assert result["recommended_collection_mode"] == "per_shop_account"
+    assert result["completed_units"] == 2
+    assert max_active == 2

@@ -1,23 +1,26 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from typing import Mapping
 
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 
 from src import session
-from src.application.collection.contracts import Bootstrapper
 from src.application.collection.contracts import SessionFactory
 from src.application.collection.executor import CollectionExecutor
 from src.application.collection.executor import TaskModuleCollectionExecutor
+from src.application.collection.browser_agent_adapter import (
+    _recipe_payload_from_model,
+)
+from src.application.collection.browser_agent_adapter import load_agent_recipe_from_db
 from src.application.collection.plan_builder_impl import CollectionPlanUnit
 from src.application.collection.plan_builder_impl import build_collection_plan
 from src.application.collection.redis_client import RedisClient
@@ -25,10 +28,11 @@ from src.application.collection.redis_client import resolve_collection_redis_cli
 from src.application.collection.result_persister import CollectionResultPersister
 from src.application.collection.runtime_loader import CollectionRuntimeLoader
 from src.application.collection.runtime_loader import LoadedCollectionRuntime
-from src.application.collection.shop_switch_capability import (
-    ShopSwitchCapabilityService,
-)
 from src.config import get_settings
+from src.core.agent import Recipe
+from src.core.agent.exceptions import RecipeValidationError
+from src.domains.agent_recipe.validation import is_shop_score_recipe
+from src.domains.agent_recipe.validation import validate_stable_recipe
 from src.domains.task.exceptions import ScrapingFailedException
 from src.domains.task.exceptions import ShopDashboardNoTargetShopsException
 from src.domains.task.exceptions import ShopDashboardCookieExpiredException
@@ -38,11 +42,10 @@ from src.domains.task.exceptions import ShopDashboardShopMismatchException
 from src.domains.task.enums import TaskExecutionStatus
 from src.domains.task.enums import TaskTriggerMode
 from src.domains.task.enums import TaskType
+from src.domains.agent_recipe.repository import AgentRecipeRepository
 from src.domains.scraping_rule.repository import ScrapingRuleRepository
 from src.domains.task.repository import TaskDefinitionRepository
 from src.domains.task.repository import TaskExecutionRepository
-from src.middleware.monitor import observe_shop_dashboard_account_switch_unsupported
-from src.middleware.monitor import observe_shop_dashboard_bootstrap_verify_failed
 from src.middleware.monitor import observe_shop_dashboard_collection
 from src.scrapers.shop_dashboard.exceptions import DataIncompleteError
 from src.scrapers.shop_dashboard.exceptions import LoginExpiredError
@@ -54,6 +57,17 @@ from src.shared.redis_keys import redis_keys
 logger = logging.getLogger(__name__)
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+@dataclass(slots=True)
+class _BatchAgentContext:
+    enabled: bool = False
+    recipe_id: int | None = None
+    recipe_version: int | None = None
+    recipe_stability: str | None = None
+    degraded: bool = False
+    degraded_reason: str = ""
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 def _ensure_db_initialized() -> None:
@@ -78,6 +92,13 @@ def _resolve_state_store_base_dir() -> Path:
     if state_dir.is_absolute():
         return state_dir
     return _REPO_ROOT / state_dir
+
+
+def _runtime_recipe_payload_from_model(value: Any) -> dict[str, Any]:
+    payload = _recipe_payload_from_model(value)
+    payload.pop("id", None)
+    payload.pop("stability", None)
+    return payload
 
 
 class CollectionUseCase:
@@ -452,6 +473,7 @@ class CollectionUseCase:
                 execution,
                 {
                     "status": TaskExecutionStatus.SUCCESS,
+                    "completed_at": completed_at,
                     "processed_rows": processed_rows,
                     "effective_config_snapshot": snapshot,
                     "error_message": "",
@@ -483,10 +505,12 @@ class CollectionUseCase:
             execution = await execution_repo.get_by_id(execution_id)
             if execution is None:
                 return
+            completed_at = execution.completed_at or datetime.now(tz=UTC)
             await execution_repo.update(
                 execution,
                 {
                     "status": TaskExecutionStatus.FAILED,
+                    "completed_at": completed_at,
                     "error_message": error_message[:1000],
                 },
             )
@@ -494,7 +518,7 @@ class CollectionUseCase:
             rule = await rule_repo.get_by_id(rule_id)
             if rule is not None:
                 normalized_execution_id = str(rule_execution_id or "").strip()
-                rule.last_executed_at = execution.completed_at or datetime.now(tz=UTC)
+                rule.last_executed_at = completed_at
                 rule.last_execution_id = (
                     normalized_execution_id[:100] if normalized_execution_id else None
                 )
@@ -522,6 +546,13 @@ class CollectionUseCase:
                     "reason": "empty_target_shops",
                 },
             )
+        shop_count = len({unit.shop_id for unit in plan_units})
+        runtime, batch_agent_context = await self._prepare_agent_recipe_context(
+            runtime=runtime,
+            plan_units=plan_units,
+            shop_count=shop_count,
+            session_factory=session_factory,
+        )
 
         helper = self.executor.create_idempotency_helper(
             redis_client=redis_client,
@@ -549,81 +580,83 @@ class CollectionUseCase:
             state_store=state_store,
             redis_client=redis_client,
         )
-        bootstrapper = self.executor.create_bootstrapper(
-            state_store=state_store,
-        )
         rate_limiter = self.executor.create_rate_limiter(runtime.rate_limit)
         items: list[dict[str, Any]] = []
         requested_shop_ids = list(runtime.resolved_shop_ids)
         if not requested_shop_ids:
             requested_shop_ids = list({plan_unit.shop_id for plan_unit in plan_units})
-        verify_metric_date_by_shop: dict[str, str] = {}
-        for plan_unit in plan_units:
-            if plan_unit.shop_id in verify_metric_date_by_shop:
-                continue
-            verify_metric_date_by_shop[plan_unit.shop_id] = plan_unit.metric_date
-        bootstrap_results = await self._bootstrap_shops(
-            bootstrapper=bootstrapper,
-            runtime=runtime,
-            shop_ids=requested_shop_ids,
-            verify_metric_date_by_shop=verify_metric_date_by_shop,
-        )
-        capability_service = ShopSwitchCapabilityService(redis_client=redis_client)
-        bootstrap_rebuild_count = 0
-        bootstrap_verify_failed_count = 0
         shop_mismatch_count = 0
         shop_circuit_break_count = 0
-        account_switch_unsupported_count = 0
+
+        if self._should_run_parallel_agent_batch(runtime, batch_agent_context):
+            parallel_result = await self._collect_agent_batch_parallel(
+                plan_units=plan_units,
+                runtime=runtime,
+                runtimes_by_shop=runtimes_by_shop,
+                helper=helper,
+                state_store=state_store,
+                lock_manager=lock_manager,
+                login_state_manager=login_state_manager,
+                rate_limiter=rate_limiter,
+                redis_client=redis_client,
+                session_factory=session_factory,
+                queue_task_id=queue_task_id,
+                batch_agent_context=batch_agent_context,
+            )
+            items = list(parallel_result["items"])
+            return {
+                "status": "success",
+                "data_source_id": data_source_id,
+                "rule_id": rule_id,
+                "execution_id": execution_id,
+                "requested_shop_count": len(requested_shop_ids),
+                "resolved_shop_count": shop_count,
+                "shop_mismatch_count": int(
+                    parallel_result.get("shop_mismatch_count", 0)
+                ),
+                "shop_circuit_break_count": int(
+                    parallel_result.get("shop_circuit_break_count", 0)
+                ),
+                "catalog_stale": bool(runtime.catalog_stale),
+                "shop_count": shop_count,
+                "planned_units": len(plan_units),
+                "completed_units": sum(
+                    1
+                    for item in items
+                    if str(item.get("status", "success")) == "success"
+                ),
+                "failed_units": sum(
+                    1
+                    for item in items
+                    if str(item.get("status", "success")) != "success"
+                ),
+                "items": items,
+            }
 
         for plan_unit in plan_units:
+            if batch_agent_context.degraded:
+                items.append(
+                    self._build_agent_recipe_failed_item(
+                        runtime=runtimes_by_shop[plan_unit.shop_id],
+                        plan_unit=plan_unit,
+                        error_code="agent_recipe_degraded",
+                        error=batch_agent_context.degraded_reason,
+                        recipe_status="degraded",
+                        recipe_stability=batch_agent_context.recipe_stability,
+                    )
+                )
+                continue
             rate_limiter.wait()
             unit_runtime = runtimes_by_shop[plan_unit.shop_id]
             storage_account_id = self._resolve_storage_account_id(
                 runtime=unit_runtime,
                 shop_id=plan_unit.shop_id,
             )
-            capability_account_id = capability_service.resolve_capability_account_id(
-                str(unit_runtime.account_id or "").strip()
-            )
             account_id_status = (
-                "stable" if capability_account_id else "account_id_unstable"
+                "stable"
+                if str(unit_runtime.account_id or "").strip()
+                else "account_id_unstable"
             )
-            if (
-                capability_account_id
-                and capability_service.is_unsupported_http_shop_switch(
-                    capability_account_id
-                )
-            ):
-                account_switch_unsupported_count += 1
-                observe_shop_dashboard_account_switch_unsupported()
-                unsupported_item = {
-                    "status": "failed",
-                    "reason": "account_shop_switch_unsupported",
-                    "metric_date": plan_unit.metric_date,
-                    "shop_id": unit_runtime.shop_id,
-                    "target_shop_id": plan_unit.shop_id,
-                    "actual_shop_id": None,
-                    "mismatch_status": "unsupported",
-                    "rule_id": unit_runtime.rule_id,
-                    "execution_id": unit_runtime.execution_id,
-                    "retry_count": 0,
-                    "fallback_trace": [],
-                    "error_code": "account_shop_switch_unsupported",
-                    "recommended_collection_mode": "per_shop_account",
-                    "account_id": capability_account_id,
-                    "account_id_status": account_id_status,
-                }
-                items.append(unsupported_item)
-                observe_shop_dashboard_collection(
-                    source="capability",
-                    status="failed",
-                    duration_seconds=0.0,
-                    shop_mode=runtime.shop_mode,
-                    shop_resolve_source=runtime.shop_resolve_source,
-                    bootstrap_status="skipped",
-                    circuit_break_status="closed",
-                )
-                continue
             if self._is_shop_circuit_open(
                 redis_client=redis_client,
                 account_id=storage_account_id,
@@ -641,7 +674,7 @@ class CollectionUseCase:
                     "rule_id": unit_runtime.rule_id,
                     "execution_id": unit_runtime.execution_id,
                     "retry_count": 0,
-                    "fallback_trace": [],
+                    "agent_trace": [],
                     "account_id_status": account_id_status,
                 }
                 items.append(circuit_item)
@@ -651,132 +684,7 @@ class CollectionUseCase:
                     duration_seconds=0.0,
                     shop_mode=runtime.shop_mode,
                     shop_resolve_source=runtime.shop_resolve_source,
-                    bootstrap_status="skipped",
                     circuit_break_status="open",
-                )
-                continue
-            bundle = state_store.load_bundle(storage_account_id, plan_unit.shop_id)
-            if not bundle:
-                bootstrap_result = await self._bootstrap_shop(
-                    bootstrapper=bootstrapper,
-                    runtime=unit_runtime,
-                    shop_id=plan_unit.shop_id,
-                    verify_metric_date=plan_unit.metric_date,
-                )
-                bootstrap_results[plan_unit.shop_id] = bootstrap_result
-                bootstrap_rebuild_count += 1
-                bundle = state_store.load_bundle(storage_account_id, plan_unit.shop_id)
-            if bundle:
-                bundle_cookies = bundle.get("cookies")
-                bundle_common_query = bundle.get("common_query")
-                if isinstance(bundle_cookies, dict):
-                    unit_runtime = replace(unit_runtime, cookies=dict(bundle_cookies))
-                if isinstance(bundle_common_query, dict):
-                    merged_common_query = dict(unit_runtime.common_query)
-                    merged_common_query.update(bundle_common_query)
-                    unit_runtime = replace(
-                        unit_runtime,
-                        common_query=merged_common_query,
-                    )
-            bootstrap_result = bootstrap_results.get(plan_unit.shop_id)
-            if isinstance(bootstrap_result, dict) and bool(
-                bootstrap_result.get("bootstrap_failed")
-            ):
-                bootstrap_error_code = str(
-                    bootstrap_result.get("error_code") or "verify_request_failed"
-                ).strip()
-                bootstrap_error = str(bootstrap_result.get("error") or "").strip()
-                if bootstrap_error_code == "verify_login_expired":
-                    mark_expired = getattr(login_state_manager, "mark_expired", None)
-                    if callable(mark_expired):
-                        await mark_expired(
-                            storage_account_id,
-                            reason=bootstrap_error_code,
-                        )
-                bootstrap_verify_failed_count += 1
-                observe_shop_dashboard_bootstrap_verify_failed(
-                    error_code=bootstrap_error_code
-                )
-                mismatch_state: dict[str, Any] | None = None
-                actual_shop_id = str(
-                    bootstrap_result.get("actual_shop_id")
-                    or bootstrap_result.get("bootstrap_verify_actual_shop_id")
-                    or ""
-                ).strip()
-                if bootstrap_error_code == "verify_shop_mismatch":
-                    shop_mismatch_count += 1
-                    mismatch_state = self._record_shop_mismatch_failure(
-                        redis_client=redis_client,
-                        account_id=storage_account_id,
-                        shop_id=plan_unit.shop_id,
-                    )
-                    if bool(mismatch_state.get("circuit_open")):
-                        shop_circuit_break_count += 1
-                    if capability_account_id and actual_shop_id:
-                        capability_evidence = (
-                            capability_service.record_mismatch_evidence(
-                                account_id=capability_account_id,
-                                target_shop_id=plan_unit.shop_id,
-                                actual_shop_id=actual_shop_id,
-                            )
-                        )
-                        if bool(capability_evidence.get("unsupported")):
-                            account_switch_unsupported_count += 1
-                            observe_shop_dashboard_account_switch_unsupported()
-                failed_item = {
-                    "status": "failed",
-                    "reason": "bootstrap_verify_failed",
-                    "metric_date": plan_unit.metric_date,
-                    "shop_id": unit_runtime.shop_id,
-                    "target_shop_id": plan_unit.shop_id,
-                    "actual_shop_id": actual_shop_id or None,
-                    "mismatch_status": (
-                        "mismatched"
-                        if bootstrap_error_code == "verify_shop_mismatch"
-                        else "unknown"
-                    ),
-                    "rule_id": unit_runtime.rule_id,
-                    "execution_id": unit_runtime.execution_id,
-                    "retry_count": 0,
-                    "fallback_trace": [],
-                    "error_code": bootstrap_error_code,
-                    "bootstrap_choose_status": str(
-                        bootstrap_result.get("bootstrap_choose_status") or "unknown"
-                    ),
-                    "bootstrap_verify_status": str(
-                        bootstrap_result.get("bootstrap_verify_status") or "failed"
-                    ),
-                    "bootstrap_verify_actual_shop_id": str(
-                        bootstrap_result.get("bootstrap_verify_actual_shop_id") or ""
-                    ),
-                    "bootstrap_verify_error_code": str(
-                        bootstrap_result.get("bootstrap_verify_error_code")
-                        or bootstrap_error_code
-                    ),
-                    "account_id_status": account_id_status,
-                }
-                if mismatch_state is not None:
-                    failed_item["error_data"] = {
-                        "mismatch_fail_count": mismatch_state.get("count", 0),
-                        "circuit_open": bool(mismatch_state.get("circuit_open", False)),
-                    }
-                if bootstrap_error:
-                    failed_item["error"] = bootstrap_error
-                items.append(failed_item)
-                observe_shop_dashboard_collection(
-                    source="bootstrap",
-                    status="failed",
-                    duration_seconds=0.0,
-                    shop_mode=runtime.shop_mode,
-                    shop_resolve_source=runtime.shop_resolve_source,
-                    bootstrap_status="failed",
-                    circuit_break_status=(
-                        "open"
-                        if bool(
-                            mismatch_state and mismatch_state.get("circuit_open", False)
-                        )
-                        else "closed"
-                    ),
                 )
                 continue
             business_key = self.executor.build_business_key(
@@ -789,6 +697,12 @@ class CollectionUseCase:
             if cached:
                 if isinstance(cached, dict) and "account_id_status" not in cached:
                     cached["account_id_status"] = account_id_status
+                await self._persist_payload(
+                    session_factory=session_factory,
+                    runtime=unit_runtime,
+                    metric_date=plan_unit.metric_date,
+                    payload=cached,
+                )
                 items.append(cached)
                 observe_shop_dashboard_collection(
                     source=str(cached.get("source", "cache")),
@@ -796,7 +710,6 @@ class CollectionUseCase:
                     duration_seconds=0.0,
                     shop_mode=runtime.shop_mode,
                     shop_resolve_source=runtime.shop_resolve_source,
-                    bootstrap_status="cached",
                     circuit_break_status="closed",
                 )
                 continue
@@ -817,7 +730,7 @@ class CollectionUseCase:
                     "rule_id": unit_runtime.rule_id,
                     "execution_id": unit_runtime.execution_id,
                     "retry_count": 0,
-                    "fallback_trace": [],
+                    "agent_trace": [],
                     "account_id_status": account_id_status,
                 }
                 items.append(skipped_result)
@@ -827,7 +740,6 @@ class CollectionUseCase:
                     duration_seconds=0.0,
                     shop_mode=runtime.shop_mode,
                     shop_resolve_source=runtime.shop_resolve_source,
-                    bootstrap_status="unknown",
                     circuit_break_status="closed",
                 )
                 continue
@@ -836,13 +748,14 @@ class CollectionUseCase:
             source = "unknown"
             status = "failed"
             try:
-                collected = await asyncio.to_thread(
-                    self._collect_one_unit_payload,
+                collected = await self._collect_unit_payload(
                     runtime=unit_runtime,
                     metric_date=plan_unit.metric_date,
+                    plan_unit=plan_unit,
                     lock_manager=lock_manager,
                     state_store=state_store,
                     login_state_manager=login_state_manager,
+                    session_factory=session_factory,
                 )
                 target_shop_id = plan_unit.shop_id
                 actual_shop_id = self._resolve_actual_shop_id(
@@ -852,54 +765,6 @@ class CollectionUseCase:
                 mismatch_status = (
                     "matched" if actual_shop_id == target_shop_id else "mismatched"
                 )
-                if mismatch_status == "mismatched":
-                    shop_mismatch_count += 1
-                    state_store.invalidate_bundle(storage_account_id, target_shop_id)
-                    bootstrap_retry = await self._bootstrap_shop(
-                        bootstrapper=bootstrapper,
-                        runtime=unit_runtime,
-                        shop_id=target_shop_id,
-                        verify_metric_date=plan_unit.metric_date,
-                    )
-                    bootstrap_rebuild_count += 1
-                    bootstrap_results[target_shop_id] = bootstrap_retry
-                    if not bool(bootstrap_retry.get("bootstrap_failed")):
-                        bundle = state_store.load_bundle(
-                            storage_account_id,
-                            target_shop_id,
-                        )
-                        if bundle:
-                            bundle_cookies = bundle.get("cookies")
-                            bundle_common_query = bundle.get("common_query")
-                            if isinstance(bundle_cookies, dict):
-                                unit_runtime = replace(
-                                    unit_runtime,
-                                    cookies=dict(bundle_cookies),
-                                )
-                            if isinstance(bundle_common_query, dict):
-                                merged_common_query = dict(unit_runtime.common_query)
-                                merged_common_query.update(bundle_common_query)
-                                unit_runtime = replace(
-                                    unit_runtime,
-                                    common_query=merged_common_query,
-                                )
-                        collected = await asyncio.to_thread(
-                            self._collect_one_unit_payload,
-                            runtime=unit_runtime,
-                            metric_date=plan_unit.metric_date,
-                            lock_manager=lock_manager,
-                            state_store=state_store,
-                            login_state_manager=login_state_manager,
-                        )
-                        actual_shop_id = self._resolve_actual_shop_id(
-                            collected=collected,
-                            fallback_shop_id=target_shop_id,
-                        )
-                        mismatch_status = (
-                            "matched"
-                            if actual_shop_id == target_shop_id
-                            else "mismatched"
-                        )
                 collected["target_shop_id"] = target_shop_id
                 collected["actual_shop_id"] = actual_shop_id
                 collected["mismatch_status"] = mismatch_status
@@ -914,17 +779,6 @@ class CollectionUseCase:
                         account_id=storage_account_id,
                         shop_id=target_shop_id,
                     )
-                    if capability_account_id:
-                        capability_evidence = (
-                            capability_service.record_mismatch_evidence(
-                                account_id=capability_account_id,
-                                target_shop_id=target_shop_id,
-                                actual_shop_id=actual_shop_id,
-                            )
-                        )
-                        if bool(capability_evidence.get("unsupported")):
-                            account_switch_unsupported_count += 1
-                            observe_shop_dashboard_account_switch_unsupported()
                     if bool(mismatch_state.get("circuit_open")):
                         shop_circuit_break_count += 1
                     mismatch_result = {
@@ -940,7 +794,7 @@ class CollectionUseCase:
                         "rule_id": unit_runtime.rule_id,
                         "execution_id": unit_runtime.execution_id,
                         "retry_count": int(collected.get("retry_count", 0)),
-                        "fallback_trace": list(collected.get("fallback_trace", [])),
+                        "agent_trace": list(collected.get("agent_trace", [])),
                         "account_id_status": account_id_status,
                         "error_data": {
                             "mismatch_fail_count": mismatch_state.get("count", 0),
@@ -959,7 +813,6 @@ class CollectionUseCase:
                         duration_seconds=time.perf_counter() - started_at,
                         shop_mode=runtime.shop_mode,
                         shop_resolve_source=runtime.shop_resolve_source,
-                        bootstrap_status="done",
                         circuit_break_status=(
                             "open"
                             if bool(mismatch_state.get("circuit_open", False))
@@ -972,28 +825,78 @@ class CollectionUseCase:
                     account_id=storage_account_id,
                     shop_id=target_shop_id,
                 )
-                if capability_account_id:
-                    capability_service.clear_observation(capability_account_id)
-                async with session_factory() as persist_session:
-                    await self.result_persister.persist(
-                        session=persist_session,
-                        runtime=unit_runtime,
-                        metric_date=plan_unit.metric_date,
-                        payload=collected,
-                    )
-                if str(collected.get("status", "success")).strip().lower() == "success":
+                await self._persist_payload(
+                    session_factory=session_factory,
+                    runtime=unit_runtime,
+                    metric_date=plan_unit.metric_date,
+                    payload=collected,
+                )
+                if self._is_success_payload(collected):
                     helper.cache_result(business_key, collected)
                 items.append(collected)
                 source = str(collected.get("source", "unknown"))
                 status = str(collected.get("status", "success"))
-            except Exception:
+            except Exception as exc:
+                if batch_agent_context.enabled and self._is_agent_recipe_failure(exc):
+                    error_code = self._extract_agent_failure_code(exc)
+                    await self._mark_batch_recipe_degraded(
+                        context=batch_agent_context,
+                        reason=error_code,
+                        session_factory=session_factory,
+                    )
+                    failed_item = self._build_agent_recipe_failed_item(
+                        runtime=unit_runtime,
+                        plan_unit=plan_unit,
+                        error_code=error_code,
+                        error=str(exc),
+                        recipe_status="degraded",
+                        recipe_stability=batch_agent_context.recipe_stability,
+                    )
+                    items.append(failed_item)
+                    source = "browser_agent"
+                    status = "failed"
+                    observe_shop_dashboard_collection(
+                        source=source,
+                        status=status,
+                        duration_seconds=time.perf_counter() - started_at,
+                        shop_mode=runtime.shop_mode,
+                        shop_resolve_source=runtime.shop_resolve_source,
+                        circuit_break_status="closed",
+                    )
+                    continue
+                if shop_count > 1 and self._is_recoverable_unit_failure(exc):
+                    error_code = self._extract_agent_failure_code(exc)
+                    failed_item = self._build_recoverable_unit_failed_item(
+                        runtime=unit_runtime,
+                        plan_unit=plan_unit,
+                        error_code=error_code,
+                        error=str(exc),
+                        account_id_status=account_id_status,
+                    )
+                    await self._persist_payload(
+                        session_factory=session_factory,
+                        runtime=unit_runtime,
+                        metric_date=plan_unit.metric_date,
+                        payload=failed_item,
+                    )
+                    items.append(failed_item)
+                    source = "browser_agent"
+                    status = "failed"
+                    observe_shop_dashboard_collection(
+                        source=source,
+                        status=status,
+                        duration_seconds=time.perf_counter() - started_at,
+                        shop_mode=runtime.shop_mode,
+                        shop_resolve_source=runtime.shop_resolve_source,
+                        circuit_break_status="closed",
+                    )
+                    continue
                 observe_shop_dashboard_collection(
                     source=source,
                     status=status,
                     duration_seconds=time.perf_counter() - started_at,
                     shop_mode=runtime.shop_mode,
                     shop_resolve_source=runtime.shop_resolve_source,
-                    bootstrap_status="done",
                     circuit_break_status="closed",
                 )
                 raise
@@ -1004,7 +907,6 @@ class CollectionUseCase:
                     duration_seconds=time.perf_counter() - started_at,
                     shop_mode=runtime.shop_mode,
                     shop_resolve_source=runtime.shop_resolve_source,
-                    bootstrap_status="done",
                     circuit_break_status="closed",
                 )
             finally:
@@ -1016,14 +918,11 @@ class CollectionUseCase:
             "rule_id": rule_id,
             "execution_id": execution_id,
             "requested_shop_count": len(requested_shop_ids),
-            "resolved_shop_count": len({plan_unit.shop_id for plan_unit in plan_units}),
-            "bootstrap_rebuild_count": bootstrap_rebuild_count,
-            "bootstrap_verify_failed_count": bootstrap_verify_failed_count,
+            "resolved_shop_count": shop_count,
             "shop_mismatch_count": shop_mismatch_count,
             "shop_circuit_break_count": shop_circuit_break_count,
-            "account_switch_unsupported_count": account_switch_unsupported_count,
             "catalog_stale": bool(runtime.catalog_stale),
-            "shop_count": len({plan_unit.shop_id for plan_unit in plan_units}),
+            "shop_count": shop_count,
             "planned_units": len(plan_units),
             "completed_units": sum(
                 1 for item in items if str(item.get("status", "success")) == "success"
@@ -1033,6 +932,662 @@ class CollectionUseCase:
             ),
             "items": items,
         }
+
+    def _should_run_parallel_agent_batch(
+        self,
+        runtime: ShopDashboardRuntimeConfig,
+        context: _BatchAgentContext,
+    ) -> bool:
+        if not context.enabled:
+            return False
+        limit = int(get_settings().shop_dashboard.agent_batch_concurrency_limit or 1)
+        return limit > 1
+
+    async def _collect_agent_batch_parallel(
+        self,
+        *,
+        plan_units: list[CollectionPlanUnit],
+        runtime: ShopDashboardRuntimeConfig,
+        runtimes_by_shop: dict[str, ShopDashboardRuntimeConfig],
+        helper: Any,
+        state_store: Any,
+        lock_manager: Any,
+        login_state_manager: Any,
+        rate_limiter: Any,
+        redis_client: RedisClient,
+        session_factory: SessionFactory,
+        queue_task_id: str,
+        batch_agent_context: _BatchAgentContext,
+    ) -> dict[str, Any]:
+        limit = max(
+            int(get_settings().shop_dashboard.agent_batch_concurrency_limit or 1),
+            1,
+        )
+        queue: asyncio.Queue[CollectionPlanUnit] = asyncio.Queue()
+        for plan_unit in plan_units:
+            queue.put_nowait(plan_unit)
+        results: list[tuple[int, dict[str, Any]]] = []
+        counts = {
+            "shop_mismatch_count": 0,
+            "shop_circuit_break_count": 0,
+        }
+        errors: list[Exception] = []
+
+        async def worker() -> None:
+            while not errors:
+                try:
+                    plan_unit = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
+                try:
+                    outcome = await self._collect_agent_batch_unit(
+                        runtime=runtime,
+                        unit_runtime=runtimes_by_shop[plan_unit.shop_id],
+                        plan_unit=plan_unit,
+                        helper=helper,
+                        state_store=state_store,
+                        lock_manager=lock_manager,
+                        login_state_manager=login_state_manager,
+                        rate_limiter=rate_limiter,
+                        redis_client=redis_client,
+                        session_factory=session_factory,
+                        queue_task_id=queue_task_id,
+                        batch_agent_context=batch_agent_context,
+                    )
+                    for item in outcome["items"]:
+                        results.append((plan_unit.plan_index, item))
+                    for key in counts:
+                        counts[key] += int(outcome.get(key, 0) or 0)
+                except Exception as exc:
+                    errors.append(exc)
+                finally:
+                    queue.task_done()
+
+        worker_count = min(limit, len(plan_units))
+        workers = [asyncio.create_task(worker()) for _ in range(worker_count)]
+        await asyncio.gather(*workers)
+        if errors:
+            raise errors[0]
+        ordered_items = [item for _, item in sorted(results, key=lambda pair: pair[0])]
+        return {"items": ordered_items, **counts}
+
+    async def _collect_agent_batch_unit(
+        self,
+        *,
+        runtime: ShopDashboardRuntimeConfig,
+        unit_runtime: ShopDashboardRuntimeConfig,
+        plan_unit: CollectionPlanUnit,
+        helper: Any,
+        state_store: Any,
+        lock_manager: Any,
+        login_state_manager: Any,
+        rate_limiter: Any,
+        redis_client: RedisClient,
+        session_factory: SessionFactory,
+        queue_task_id: str,
+        batch_agent_context: _BatchAgentContext,
+    ) -> dict[str, Any]:
+        if batch_agent_context.degraded:
+            return {
+                "items": [
+                    self._build_agent_recipe_failed_item(
+                        runtime=unit_runtime,
+                        plan_unit=plan_unit,
+                        error_code="agent_recipe_degraded",
+                        error=batch_agent_context.degraded_reason,
+                        recipe_status="degraded",
+                        recipe_stability=batch_agent_context.recipe_stability,
+                    )
+                ]
+            }
+        await asyncio.to_thread(rate_limiter.wait)
+        storage_account_id = self._resolve_storage_account_id(
+            runtime=unit_runtime,
+            shop_id=plan_unit.shop_id,
+        )
+        account_id_status = (
+            "stable"
+            if str(unit_runtime.account_id or "").strip()
+            else "account_id_unstable"
+        )
+        if self._is_shop_circuit_open(
+            redis_client=redis_client,
+            account_id=storage_account_id,
+            shop_id=plan_unit.shop_id,
+        ):
+            item = {
+                "status": "failed",
+                "reason": "shop_circuit_break",
+                "metric_date": plan_unit.metric_date,
+                "shop_id": unit_runtime.shop_id,
+                "target_shop_id": plan_unit.shop_id,
+                "actual_shop_id": None,
+                "mismatch_status": "circuit_break",
+                "rule_id": unit_runtime.rule_id,
+                "execution_id": unit_runtime.execution_id,
+                "retry_count": 0,
+                "agent_trace": [],
+                "account_id_status": account_id_status,
+            }
+            observe_shop_dashboard_collection(
+                source="circuit_break",
+                status="failed",
+                duration_seconds=0.0,
+                shop_mode=runtime.shop_mode,
+                shop_resolve_source=runtime.shop_resolve_source,
+                circuit_break_status="open",
+            )
+            return {"items": [item], "shop_circuit_break_count": 1}
+
+        business_key = self.executor.build_business_key(
+            unit_runtime,
+            plan_unit.metric_date,
+            plan_unit=plan_unit,
+            queue_task_id=queue_task_id,
+        )
+        cached = helper.get_cached_result(business_key)
+        if cached:
+            if isinstance(cached, dict) and "account_id_status" not in cached:
+                cached["account_id_status"] = account_id_status
+            await self._persist_payload(
+                session_factory=session_factory,
+                runtime=unit_runtime,
+                metric_date=plan_unit.metric_date,
+                payload=cached,
+            )
+            observe_shop_dashboard_collection(
+                source=str(cached.get("source", "cache")),
+                status=str(cached.get("status", "success")),
+                duration_seconds=0.0,
+                shop_mode=runtime.shop_mode,
+                shop_resolve_source=runtime.shop_resolve_source,
+                circuit_break_status="closed",
+            )
+            return {"items": [cached]}
+
+        token = helper.acquire_lock(
+            business_key,
+            ttl=get_settings().shop_dashboard.lock_ttl_seconds,
+        )
+        if not token:
+            item = {
+                "status": "skipped",
+                "reason": "running",
+                "metric_date": plan_unit.metric_date,
+                "shop_id": unit_runtime.shop_id,
+                "target_shop_id": unit_runtime.shop_id,
+                "actual_shop_id": None,
+                "mismatch_status": "unknown",
+                "rule_id": unit_runtime.rule_id,
+                "execution_id": unit_runtime.execution_id,
+                "retry_count": 0,
+                "agent_trace": [],
+                "account_id_status": account_id_status,
+            }
+            observe_shop_dashboard_collection(
+                source="lock",
+                status="skipped",
+                duration_seconds=0.0,
+                shop_mode=runtime.shop_mode,
+                shop_resolve_source=runtime.shop_resolve_source,
+                circuit_break_status="closed",
+            )
+            return {"items": [item]}
+
+        started_at = time.perf_counter()
+        source = "unknown"
+        status = "failed"
+        try:
+            collected = await self._collect_unit_payload(
+                runtime=unit_runtime,
+                metric_date=plan_unit.metric_date,
+                plan_unit=plan_unit,
+                lock_manager=lock_manager,
+                state_store=state_store,
+                login_state_manager=login_state_manager,
+                session_factory=session_factory,
+            )
+            target_shop_id = plan_unit.shop_id
+            actual_shop_id = self._resolve_actual_shop_id(
+                collected=collected,
+                fallback_shop_id=target_shop_id,
+            )
+            mismatch_status = (
+                "matched" if actual_shop_id == target_shop_id else "mismatched"
+            )
+            collected["target_shop_id"] = target_shop_id
+            collected["actual_shop_id"] = actual_shop_id
+            collected["mismatch_status"] = mismatch_status
+            collected["catalog_stale"] = bool(runtime.catalog_stale)
+            collected["effective_filters_snapshot"] = dict(plan_unit.effective_filters)
+            collected["account_id_status"] = account_id_status
+            source = str(collected.get("source", "unknown"))
+            status = str(collected.get("status", "success"))
+            if mismatch_status == "mismatched":
+                mismatch_state = self._record_shop_mismatch_failure(
+                    redis_client=redis_client,
+                    account_id=storage_account_id,
+                    shop_id=target_shop_id,
+                )
+                item = {
+                    "status": "failed",
+                    "reason": "shop_mismatch",
+                    "metric_date": plan_unit.metric_date,
+                    "shop_id": target_shop_id,
+                    "target_shop_id": target_shop_id,
+                    "actual_shop_id": actual_shop_id,
+                    "mismatch_status": "mismatched",
+                    "catalog_stale": bool(runtime.catalog_stale),
+                    "effective_filters_snapshot": dict(plan_unit.effective_filters),
+                    "rule_id": unit_runtime.rule_id,
+                    "execution_id": unit_runtime.execution_id,
+                    "retry_count": int(collected.get("retry_count", 0)),
+                    "agent_trace": list(collected.get("agent_trace", [])),
+                    "account_id_status": account_id_status,
+                    "error_data": {
+                        "mismatch_fail_count": mismatch_state.get("count", 0),
+                        "circuit_open": bool(mismatch_state.get("circuit_open", False)),
+                    },
+                }
+                helper.cache_result(business_key, item)
+                observe_shop_dashboard_collection(
+                    source=source,
+                    status="failed",
+                    duration_seconds=time.perf_counter() - started_at,
+                    shop_mode=runtime.shop_mode,
+                    shop_resolve_source=runtime.shop_resolve_source,
+                    circuit_break_status=(
+                        "open"
+                        if bool(mismatch_state.get("circuit_open", False))
+                        else "closed"
+                    ),
+                )
+                return {
+                    "items": [item],
+                    "shop_mismatch_count": 1,
+                    "shop_circuit_break_count": int(
+                        bool(mismatch_state.get("circuit_open", False))
+                    ),
+                }
+            self._clear_shop_mismatch_failure(
+                redis_client=redis_client,
+                account_id=storage_account_id,
+                shop_id=target_shop_id,
+            )
+            await self._persist_payload(
+                session_factory=session_factory,
+                runtime=unit_runtime,
+                metric_date=plan_unit.metric_date,
+                payload=collected,
+            )
+            if self._is_success_payload(collected):
+                helper.cache_result(business_key, collected)
+            observe_shop_dashboard_collection(
+                source=source,
+                status=status,
+                duration_seconds=time.perf_counter() - started_at,
+                shop_mode=runtime.shop_mode,
+                shop_resolve_source=runtime.shop_resolve_source,
+                circuit_break_status="closed",
+            )
+            return {"items": [collected]}
+        except Exception as exc:
+            if batch_agent_context.enabled and self._is_agent_recipe_failure(exc):
+                error_code = self._extract_agent_failure_code(exc)
+                await self._mark_batch_recipe_degraded(
+                    context=batch_agent_context,
+                    reason=error_code,
+                    session_factory=session_factory,
+                )
+                item = self._build_agent_recipe_failed_item(
+                    runtime=unit_runtime,
+                    plan_unit=plan_unit,
+                    error_code=error_code,
+                    error=str(exc),
+                    recipe_status="degraded",
+                    recipe_stability=batch_agent_context.recipe_stability,
+                )
+                observe_shop_dashboard_collection(
+                    source="browser_agent",
+                    status="failed",
+                    duration_seconds=time.perf_counter() - started_at,
+                    shop_mode=runtime.shop_mode,
+                    shop_resolve_source=runtime.shop_resolve_source,
+                    circuit_break_status="closed",
+                )
+                return {"items": [item]}
+            if self._is_recoverable_unit_failure(exc):
+                error_code = self._extract_agent_failure_code(exc)
+                item = self._build_recoverable_unit_failed_item(
+                    runtime=unit_runtime,
+                    plan_unit=plan_unit,
+                    error_code=error_code,
+                    error=str(exc),
+                    account_id_status=account_id_status,
+                )
+                await self._persist_payload(
+                    session_factory=session_factory,
+                    runtime=unit_runtime,
+                    metric_date=plan_unit.metric_date,
+                    payload=item,
+                )
+                observe_shop_dashboard_collection(
+                    source="browser_agent",
+                    status="failed",
+                    duration_seconds=time.perf_counter() - started_at,
+                    shop_mode=runtime.shop_mode,
+                    shop_resolve_source=runtime.shop_resolve_source,
+                    circuit_break_status="closed",
+                )
+                return {"items": [item]}
+            observe_shop_dashboard_collection(
+                source=source,
+                status=status,
+                duration_seconds=time.perf_counter() - started_at,
+                shop_mode=runtime.shop_mode,
+                shop_resolve_source=runtime.shop_resolve_source,
+                circuit_break_status="closed",
+            )
+            raise
+        finally:
+            helper.release_lock(business_key, token)
+
+    async def _prepare_agent_recipe_context(
+        self,
+        *,
+        runtime: ShopDashboardRuntimeConfig,
+        plan_units: list[CollectionPlanUnit],
+        shop_count: int,
+        session_factory: SessionFactory,
+    ) -> tuple[ShopDashboardRuntimeConfig, _BatchAgentContext]:
+        extra_config = dict(runtime.extra_config or {})
+        lifecycle_single_reason = self._agent_lifecycle_single_shop_reason(extra_config)
+        if lifecycle_single_reason and shop_count != 1:
+            raise ScrapingFailedException(
+                lifecycle_single_reason,
+                error_data={
+                    "reason": lifecycle_single_reason,
+                    "shop_count": shop_count,
+                    "planned_units": len(plan_units),
+                },
+            )
+        if shop_count <= 1:
+            return runtime, _BatchAgentContext()
+
+        recipe_ref = runtime.agent_recipe_ref
+        if not isinstance(recipe_ref, dict):
+            raise self._agent_batch_rejected(
+                reason="agent_recipe_missing_for_batch",
+                shop_count=shop_count,
+                recipe_ref=None,
+            )
+        namespace, key = self._recipe_ref_namespace_key(recipe_ref)
+        if not namespace or not key:
+            raise self._agent_batch_rejected(
+                reason="agent_recipe_missing_for_batch",
+                shop_count=shop_count,
+                recipe_ref=recipe_ref,
+            )
+
+        async with session_factory() as db_session:
+            repository = AgentRecipeRepository(db_session)
+            version = self._recipe_ref_version(recipe_ref)
+            stable_recipe = (
+                await repository.get_stable_active_version(namespace, key, version)
+                if version is not None
+                else await repository.get_stable_active(namespace, key)
+            )
+            if version is None and stable_recipe is not None:
+                try:
+                    validate_stable_recipe(
+                        Recipe.model_validate(
+                            _runtime_recipe_payload_from_model(stable_recipe)
+                        )
+                    )
+                except (ValidationError, RecipeValidationError, ValueError):
+                    stable_recipe = await self._find_valid_stable_recipe(
+                        repository,
+                        namespace,
+                        key,
+                    )
+            if stable_recipe is None:
+                active_recipe = (
+                    await repository.get_active_version(namespace, key, version)
+                    if version is not None
+                    else await repository.get_active(namespace, key)
+                )
+                versions = []
+                if active_recipe is None:
+                    versions = await repository.list_versions(namespace, key)
+                reason = (
+                    "agent_recipe_missing_for_batch"
+                    if active_recipe is None and not versions
+                    else "agent_recipe_not_stable_for_batch"
+                )
+                raise self._agent_batch_rejected(
+                    reason=reason,
+                    shop_count=shop_count,
+                    recipe_ref=recipe_ref,
+                )
+            if is_shop_score_recipe(stable_recipe.namespace, stable_recipe.key):
+                try:
+                    validate_stable_recipe(
+                        Recipe.model_validate(
+                            _runtime_recipe_payload_from_model(stable_recipe)
+                        )
+                    )
+                except (ValidationError, RecipeValidationError, ValueError) as exc:
+                    raise self._agent_batch_rejected(
+                        reason=str(exc),
+                        shop_count=shop_count,
+                        recipe_ref=recipe_ref,
+                    ) from exc
+
+        extra_config["agent_recovery_enabled"] = False
+        extra_config["agent_batch_mode"] = True
+        extra_config["agent_recipe_inline"] = _recipe_payload_from_model(stable_recipe)
+        return replace(runtime, extra_config=extra_config), _BatchAgentContext(
+            enabled=True,
+            recipe_id=stable_recipe.id,
+            recipe_version=stable_recipe.version,
+            recipe_stability=stable_recipe.stability,
+        )
+
+    async def _find_valid_stable_recipe(
+        self,
+        repository: AgentRecipeRepository,
+        namespace: str,
+        key: str,
+    ):
+        recipes = await repository.list_versions(namespace, key)
+        for recipe in recipes:
+            if recipe.status != "active" or recipe.stability != "stable":
+                continue
+            try:
+                validate_stable_recipe(
+                    Recipe.model_validate(_runtime_recipe_payload_from_model(recipe))
+                )
+            except (ValidationError, RecipeValidationError, ValueError):
+                continue
+            return recipe
+        return None
+
+    def _agent_lifecycle_single_shop_reason(
+        self,
+        extra_config: dict[str, Any],
+    ) -> str:
+        if extra_config.get("agent_recipe_validation") is True:
+            return "agent_recipe_validation_requires_single_shop"
+        if extra_config.get("agent_recipe_recovery") is True:
+            return "agent_recipe_recovery_requires_single_shop"
+        if extra_config.get("agent_discovery") is True:
+            return "agent_discovery_requires_single_shop"
+        return ""
+
+    def _recipe_ref_namespace_key(self, recipe_ref: dict[str, Any]) -> tuple[str, str]:
+        namespace = str(recipe_ref.get("namespace") or "").strip()
+        key = str(recipe_ref.get("key") or "").strip()
+        return namespace, key
+
+    def _recipe_ref_version(self, recipe_ref: dict[str, Any]) -> int | None:
+        value = recipe_ref.get("version")
+        if value is None:
+            return None
+        try:
+            version = int(value)
+        except (TypeError, ValueError):
+            return None
+        return version if version > 0 else None
+
+    def _agent_batch_rejected(
+        self,
+        *,
+        reason: str,
+        shop_count: int,
+        recipe_ref: dict[str, Any] | None,
+    ) -> ScrapingFailedException:
+        return ScrapingFailedException(
+            reason,
+            error_data={
+                "reason": reason,
+                "shop_count": shop_count,
+                "recipe_ref": dict(recipe_ref or {}),
+            },
+        )
+
+    def _build_agent_recipe_failed_item(
+        self,
+        *,
+        runtime: ShopDashboardRuntimeConfig,
+        plan_unit: CollectionPlanUnit,
+        error_code: str,
+        error: str,
+        recipe_status: str,
+        recipe_stability: str | None,
+    ) -> dict[str, Any]:
+        item = {
+            "status": "failed",
+            "reason": "agent_recipe_failed",
+            "metric_date": plan_unit.metric_date,
+            "shop_id": runtime.shop_id,
+            "target_shop_id": plan_unit.shop_id,
+            "actual_shop_id": None,
+            "mismatch_status": "unknown",
+            "rule_id": runtime.rule_id,
+            "execution_id": runtime.execution_id,
+            "retry_count": 0,
+            "agent_trace": [
+                {
+                    "stage": "browser_agent",
+                    "status": "failed",
+                    "error": error_code,
+                }
+            ],
+            "error_code": error_code,
+            "recommended_next_step": "single_shop_recovery",
+            "recipe_status": recipe_status,
+        }
+        if recipe_stability:
+            item["recipe_stability"] = recipe_stability
+        if error:
+            item["error"] = error
+        return item
+
+    async def _mark_batch_recipe_degraded(
+        self,
+        *,
+        context: _BatchAgentContext,
+        reason: str,
+        session_factory: SessionFactory,
+    ) -> None:
+        if context.degraded:
+            return
+        async with context.lock:
+            if context.degraded:
+                return
+            if context.recipe_id is not None and context.recipe_version is not None:
+                async with session_factory() as db_session:
+                    repository = AgentRecipeRepository(db_session)
+                    await repository.mark_degraded(
+                        recipe_id=context.recipe_id,
+                        expected_version=context.recipe_version,
+                        reason=reason,
+                    )
+                    await db_session.commit()
+            context.degraded = True
+            context.degraded_reason = reason
+            context.recipe_stability = "candidate"
+
+    def _is_agent_recipe_failure(self, exc: Exception) -> bool:
+        return self._extract_agent_failure_code(exc) in {
+            "observation_empty",
+            "assertion_failed",
+            "browser_agent_output_missing_required_fields",
+            "browser_agent_output_invalid_score_field",
+        }
+
+    def _is_recoverable_unit_failure(self, exc: Exception) -> bool:
+        if isinstance(exc, DataIncompleteError):
+            return True
+        return self._extract_agent_failure_code(exc) in {
+            "timeout",
+            "observation_empty",
+            "assertion_failed",
+            "browser_agent_output_missing_required_fields",
+            "browser_agent_output_invalid_score_field",
+        }
+
+    def _build_recoverable_unit_failed_item(
+        self,
+        *,
+        runtime: ShopDashboardRuntimeConfig,
+        plan_unit: CollectionPlanUnit,
+        error_code: str,
+        error: str,
+        account_id_status: str,
+    ) -> dict[str, Any]:
+        return {
+            "status": "failed",
+            "source": "browser_agent",
+            "reason": "data_incomplete",
+            "metric_date": plan_unit.metric_date,
+            "shop_id": runtime.shop_id,
+            "target_shop_id": plan_unit.shop_id,
+            "actual_shop_id": None,
+            "mismatch_status": "unknown",
+            "rule_id": runtime.rule_id,
+            "execution_id": runtime.execution_id,
+            "retry_count": 0,
+            "agent_trace": [
+                {
+                    "stage": "browser_agent",
+                    "status": "failed",
+                    "error": error_code,
+                }
+            ],
+            "error_code": error_code,
+            "error": error,
+            "recommended_next_step": "single_shop_recovery",
+            "account_id_status": account_id_status,
+        }
+
+    def _extract_agent_failure_code(self, exc: Exception) -> str:
+        error_data = getattr(exc, "error_data", None)
+        if isinstance(error_data, dict):
+            for key in ("failure_kind", "error_code", "code"):
+                value = str(error_data.get(key) or "").strip()
+                if value:
+                    return value
+        message = str(exc).strip()
+        for prefix in (
+            "observation_empty",
+            "assertion_failed",
+            "browser_agent_output_missing_required_fields",
+            "browser_agent_output_invalid_score_field",
+        ):
+            if message.startswith(prefix) or prefix in message:
+                return prefix
+        return message.split(":", 1)[0].strip() or type(exc).__name__
 
     def _raise_when_all_units_failed(self, result: dict[str, Any]) -> None:
         planned_units = int(result.get("planned_units", 0) or 0)
@@ -1057,20 +1612,19 @@ class CollectionUseCase:
             for item in failed_items
             if str(item.get("reason") or "").strip()
         ]
-        if (
-            failed_items
-            and len(failure_reasons) == len(failed_items)
-            and all(
-                reason == "account_shop_switch_unsupported"
-                for reason in failure_reasons
-            )
-        ):
-            result["recommended_collection_mode"] = "per_shop_account"
-            return
         primary_error = ""
         for item in failed_items:
             reason = str(item.get("reason") or "").strip()
+            error_code = str(item.get("error_code") or "").strip()
             error = str(item.get("error") or "").strip()
+            if error_code:
+                error_detail = (
+                    f"{error_code}: {error}"
+                    if error and error != error_code
+                    else error_code
+                )
+                primary_error = f"{reason}: {error_detail}" if reason else error_detail
+                break
             if error:
                 primary_error = f"{reason}: {error}" if reason else error
                 break
@@ -1096,6 +1650,7 @@ class CollectionUseCase:
         *,
         runtime: ShopDashboardRuntimeConfig,
         metric_date: str,
+        plan_unit: Any | None = None,
         lock_manager: Any,
         state_store: Any,
         login_state_manager: Any,
@@ -1103,6 +1658,7 @@ class CollectionUseCase:
         return self.executor.collect_one_day(
             runtime=runtime,
             metric_date=metric_date,
+            plan_unit=plan_unit,
             lock_manager=lock_manager,
             state_store=state_store,
             login_state_manager=login_state_manager,
@@ -1121,6 +1677,77 @@ class CollectionUseCase:
         if candidate:
             return candidate
         return str(fallback_shop_id or "").strip()
+
+    async def _persist_payload(
+        self,
+        *,
+        session_factory: SessionFactory,
+        runtime: ShopDashboardRuntimeConfig,
+        metric_date: str,
+        payload: Any,
+    ) -> None:
+        if not isinstance(payload, dict):
+            return
+        async with session_factory() as persist_session:
+            await self.result_persister.persist(
+                session=persist_session,
+                runtime=runtime,
+                metric_date=metric_date,
+                payload=payload,
+            )
+
+    def _is_success_payload(self, payload: dict[str, Any]) -> bool:
+        return str(payload.get("status", "success")).strip().lower() == "success"
+
+    async def _collect_unit_payload(
+        self,
+        *,
+        runtime: ShopDashboardRuntimeConfig,
+        metric_date: str,
+        plan_unit: Any | None = None,
+        lock_manager: Any,
+        state_store: Any,
+        login_state_manager: Any,
+        session_factory: SessionFactory,
+    ) -> dict[str, Any]:
+        stage_runtime = await self._load_browser_agent_recipe(
+            runtime=runtime,
+            session_factory=session_factory,
+        )
+        return await asyncio.to_thread(
+            self._collect_one_unit_payload,
+            runtime=stage_runtime,
+            metric_date=metric_date,
+            plan_unit=plan_unit,
+            lock_manager=lock_manager,
+            state_store=state_store,
+            login_state_manager=login_state_manager,
+        )
+
+    async def _load_browser_agent_recipe(
+        self,
+        *,
+        runtime: ShopDashboardRuntimeConfig,
+        session_factory: SessionFactory,
+    ) -> ShopDashboardRuntimeConfig:
+        extra_config = dict(runtime.extra_config or {})
+        if isinstance(extra_config.get("agent_recipe_inline"), dict):
+            return runtime
+        recipe_ref = runtime.agent_recipe_ref
+        if not isinstance(recipe_ref, dict) or isinstance(
+            recipe_ref.get("recipe"), dict
+        ):
+            return runtime
+        async with session_factory() as db_session:
+            recipe = await load_agent_recipe_from_db(db_session, recipe_ref)
+        if recipe is None:
+            return runtime
+        extra_config["agent_recipe_inline"] = (
+            _recipe_payload_from_model(recipe)
+            if hasattr(recipe, "entrypoint")
+            else dict(recipe)
+        )
+        return replace(runtime, extra_config=extra_config)
 
     def _resolve_storage_account_id(
         self,
@@ -1344,112 +1971,6 @@ class CollectionUseCase:
             operation,
             error,
         )
-
-    async def _bootstrap_shops(
-        self,
-        *,
-        bootstrapper: Bootstrapper,
-        runtime: ShopDashboardRuntimeConfig,
-        shop_ids: list[str],
-        verify_metric_date_by_shop: Mapping[str, str],
-    ) -> dict[str, dict[str, Any]]:
-        bootstrap_shops = getattr(bootstrapper, "bootstrap_shops")
-        kwargs: dict[str, Any] = {
-            "runtime": runtime,
-            "shop_ids": shop_ids,
-        }
-        result = await self._invoke_with_optional_kwargs(
-            call=bootstrap_shops,
-            kwargs=kwargs,
-            optional_kwargs={
-                "verify_metric_date_by_shop": dict(verify_metric_date_by_shop)
-            },
-        )
-        if isinstance(result, dict):
-            return result
-        return {}
-
-    async def _bootstrap_shop(
-        self,
-        *,
-        bootstrapper: Bootstrapper,
-        runtime: ShopDashboardRuntimeConfig,
-        shop_id: str,
-        verify_metric_date: str,
-    ) -> dict[str, Any]:
-        bootstrap_shop = getattr(bootstrapper, "bootstrap_shop")
-        kwargs: dict[str, Any] = {
-            "runtime": runtime,
-            "shop_id": shop_id,
-        }
-        result = await self._invoke_with_optional_kwargs(
-            call=bootstrap_shop,
-            kwargs=kwargs,
-            optional_kwargs={"verify_metric_date": verify_metric_date},
-        )
-        if isinstance(result, dict):
-            return result
-        return {
-            "shop_id": shop_id,
-            "target_shop_id": shop_id,
-            "bootstrap_failed": True,
-            "status": "failed",
-            "error": "bootstrap_result_invalid",
-            "error_code": "verify_request_failed",
-        }
-
-    async def _invoke_with_optional_kwargs(
-        self,
-        *,
-        call: Any,
-        kwargs: dict[str, Any],
-        optional_kwargs: dict[str, Any],
-    ) -> Any:
-        merged = dict(kwargs)
-        try:
-            signature = inspect.signature(call)
-        except (TypeError, ValueError):
-            merged.update(optional_kwargs)
-            result = self._invoke_call(call=call, kwargs=merged)
-            if inspect.isawaitable(result):
-                return await result
-            return result
-        for parameter in signature.parameters.values():
-            if parameter.kind == inspect.Parameter.VAR_KEYWORD:
-                merged.update(optional_kwargs)
-                result = self._invoke_call(call=call, kwargs=merged)
-                if inspect.isawaitable(result):
-                    return await result
-                return result
-        for argument_name, value in optional_kwargs.items():
-            if argument_name in signature.parameters:
-                merged[argument_name] = value
-        result = self._invoke_call(call=call, kwargs=merged)
-        if inspect.isawaitable(result):
-            return await result
-        return result
-
-    def _invoke_call(self, *, call: Any, kwargs: dict[str, Any]) -> Any:
-        try:
-            return call(**kwargs)
-        except TypeError as exc:
-            if not self._is_unexpected_keyword_error(exc, kwargs):
-                raise
-            stripped_kwargs = {
-                key: value
-                for key, value in kwargs.items()
-                if key in {"runtime", "shop_ids", "shop_id"}
-            }
-            return call(**stripped_kwargs)
-
-    def _is_unexpected_keyword_error(
-        self, exc: TypeError, kwargs: dict[str, Any]
-    ) -> bool:
-        message = str(exc)
-        if "unexpected keyword argument" not in message:
-            return False
-        optional_names = set(kwargs) - {"runtime", "shop_ids", "shop_id"}
-        return any(name in message for name in optional_names)
 
     def _build_idempotency_key(
         self,

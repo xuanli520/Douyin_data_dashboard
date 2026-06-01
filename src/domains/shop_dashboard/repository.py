@@ -1,19 +1,13 @@
-from collections import defaultdict
 from datetime import date
 from typing import Any
 
-from sqlalchemy import and_, delete, func, inspect as sa_inspect, literal_column, select
+from sqlalchemy import and_, func, inspect as sa_inspect, literal_column, select
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.exceptions import BusinessException
-from src.domains.shop_dashboard.models import (
-    ShopDashboardColdMetric,
-    ShopDashboardReview,
-    ShopDashboardScore,
-    ShopDashboardViolation,
-)
+from src.domains.shop_dashboard.models import ShopDashboardScore
 from src.shared.errors import ErrorCode
 from src.shared.mixins import now
 from src.shared.repository import BaseRepository
@@ -28,41 +22,48 @@ class ShopDashboardRepository(BaseRepository):
         *,
         shop_id: str,
         metric_date: date,
-        total_score: float,
-        product_score: float,
-        logistics_score: float,
-        service_score: float,
+        total_score: float | None,
+        product_score: float | None,
+        logistics_score: float | None,
+        service_score: float | None,
         bad_behavior_score: float | None = None,
         shop_name: str | None = None,
         source: str,
+        status: str = "success",
+        reason: str | None = None,
+        error_code: str | None = None,
     ) -> ShopDashboardScore:
-        normalized_bad_behavior_score = (
-            0.0 if bad_behavior_score is None else float(bad_behavior_score)
-        )
+        normalized_status = str(status or "success").strip() or "success"
         normalized_shop_name = str(shop_name or "").strip() or None
         insert_timestamp = now()
         update_timestamp = now()
         values = {
             "shop_id": shop_id,
             "metric_date": metric_date,
-            "total_score": total_score,
-            "product_score": product_score,
-            "logistics_score": logistics_score,
-            "service_score": service_score,
-            "bad_behavior_score": normalized_bad_behavior_score,
+            "total_score": _score_value(total_score),
+            "product_score": _score_value(product_score),
+            "logistics_score": _score_value(logistics_score),
+            "service_score": _score_value(service_score),
+            "bad_behavior_score": _score_value(bad_behavior_score),
             "shop_name": normalized_shop_name,
             "source": source,
+            "status": normalized_status,
+            "reason": _text_or_none(reason),
+            "error_code": _text_or_none(error_code),
             "created_at": insert_timestamp,
             "updated_at": insert_timestamp,
         }
         update_values = {
-            "total_score": total_score,
-            "product_score": product_score,
-            "logistics_score": logistics_score,
-            "service_score": service_score,
-            "bad_behavior_score": normalized_bad_behavior_score,
+            "total_score": _score_value(total_score),
+            "product_score": _score_value(product_score),
+            "logistics_score": _score_value(logistics_score),
+            "service_score": _score_value(service_score),
+            "bad_behavior_score": _score_value(bad_behavior_score),
             "shop_name": normalized_shop_name,
             "source": source,
+            "status": normalized_status,
+            "reason": _text_or_none(reason),
+            "error_code": _text_or_none(error_code),
             "updated_at": update_timestamp,
         }
         bind = self.session.get_bind()
@@ -122,102 +123,6 @@ class ShopDashboardRepository(BaseRepository):
         sa_inspect(score).info["insert_or_update"] = operation
         return score
 
-    async def replace_reviews(
-        self,
-        *,
-        shop_id: str,
-        metric_date: date,
-        reviews: list[dict],
-    ) -> list[ShopDashboardReview]:
-        await self.session.execute(
-            delete(ShopDashboardReview).where(
-                ShopDashboardReview.shop_id == shop_id,
-                ShopDashboardReview.metric_date == metric_date,
-            )
-        )
-
-        rows = [
-            ShopDashboardReview(
-                shop_id=shop_id,
-                metric_date=metric_date,
-                review_id=str(item["review_id"]),
-                content=str(item["content"]),
-                is_replied=bool(item.get("is_replied", False)),
-                source=str(item["source"]),
-            )
-            for item in reviews
-        ]
-        self.session.add_all(rows)
-        await self._flush()
-        return rows
-
-    async def replace_violations(
-        self,
-        *,
-        shop_id: str,
-        metric_date: date,
-        violations: list[dict],
-    ) -> list[ShopDashboardViolation]:
-        await self.session.execute(
-            delete(ShopDashboardViolation).where(
-                ShopDashboardViolation.shop_id == shop_id,
-                ShopDashboardViolation.metric_date == metric_date,
-            )
-        )
-
-        rows = [
-            ShopDashboardViolation(
-                shop_id=shop_id,
-                metric_date=metric_date,
-                violation_id=str(item["violation_id"]),
-                violation_type=str(item["violation_type"]),
-                description=item.get("description"),
-                score=int(item.get("score", 0)),
-                source=str(item["source"]),
-            )
-            for item in violations
-        ]
-        self.session.add_all(rows)
-        await self._flush()
-        return rows
-
-    async def upsert_cold_metrics(
-        self,
-        *,
-        shop_id: str,
-        metric_date: date,
-        reason: str,
-        violations_detail: list[dict[str, Any]],
-        arbitration_detail: list[dict[str, Any]],
-        dsr_trend: list[dict[str, Any]],
-        source: str = "llm",
-    ) -> ShopDashboardColdMetric:
-        stmt = select(ShopDashboardColdMetric).where(
-            ShopDashboardColdMetric.shop_id == shop_id,
-            ShopDashboardColdMetric.metric_date == metric_date,
-            ShopDashboardColdMetric.reason == reason,
-        )
-        row = (await self.session.execute(stmt)).scalar_one_or_none()
-        if row is None:
-            row = ShopDashboardColdMetric(
-                shop_id=shop_id,
-                metric_date=metric_date,
-                reason=reason,
-                violations_detail=violations_detail,
-                arbitration_detail=arbitration_detail,
-                dsr_trend=dsr_trend,
-                source=source,
-            )
-            self.session.add(row)
-        else:
-            row.violations_detail = violations_detail
-            row.arbitration_detail = arbitration_detail
-            row.dsr_trend = dsr_trend
-            row.source = source
-        await self._flush()
-        await self.session.refresh(row)
-        return row
-
     async def build_agent_context(
         self,
         *,
@@ -231,71 +136,16 @@ class ShopDashboardRepository(BaseRepository):
         )
         score = (await self.session.execute(score_stmt)).scalar_one_or_none()
 
-        reviews_stmt = (
-            select(ShopDashboardReview)
-            .where(
-                ShopDashboardReview.shop_id == shop_id,
-                ShopDashboardReview.metric_date == metric_date,
-            )
-            .order_by(ShopDashboardReview.review_id)
-        )
-        reviews = (await self.session.execute(reviews_stmt)).scalars().all()
-
-        violations_stmt = (
-            select(ShopDashboardViolation)
-            .where(
-                ShopDashboardViolation.shop_id == shop_id,
-                ShopDashboardViolation.metric_date == metric_date,
-            )
-            .order_by(ShopDashboardViolation.violation_id)
-        )
-        violations = (await self.session.execute(violations_stmt)).scalars().all()
-
-        cold_stmt = select(ShopDashboardColdMetric).where(
-            ShopDashboardColdMetric.shop_id == shop_id,
-            ShopDashboardColdMetric.metric_date == metric_date,
-            ShopDashboardColdMetric.reason == reason,
-        )
-        cold = (await self.session.execute(cold_stmt)).scalar_one_or_none()
-
         return {
             "shop_id": shop_id,
             "metric_date": metric_date.isoformat(),
-            "total_score": float(score.total_score) if score else 0.0,
-            "product_score": float(score.product_score) if score else 0.0,
-            "logistics_score": float(score.logistics_score) if score else 0.0,
-            "service_score": float(score.service_score) if score else 0.0,
-            "bad_behavior_score": float(score.bad_behavior_score) if score else 0.0,
-            "reviews": {
-                "summary": {},
-                "items": [
-                    {
-                        "id": row.review_id,
-                        "content": row.content,
-                        "is_replied": row.is_replied,
-                    }
-                    for row in reviews
-                ],
-            },
-            "violations": {
-                "summary": {},
-                "waiting_list": [
-                    {
-                        "id": row.violation_id,
-                        "type": row.violation_type,
-                        "description": row.description,
-                        "score": row.score,
-                    }
-                    for row in violations
-                ],
-            },
-            "violations_detail": (
-                list(cold.violations_detail) if cold is not None else []
+            "total_score": _score_or_zero(score.total_score if score else None),
+            "product_score": _score_or_zero(score.product_score if score else None),
+            "logistics_score": _score_or_zero(score.logistics_score if score else None),
+            "service_score": _score_or_zero(score.service_score if score else None),
+            "bad_behavior_score": _score_or_zero(
+                score.bad_behavior_score if score else None
             ),
-            "arbitration_detail": (
-                list(cold.arbitration_detail) if cold is not None else []
-            ),
-            "dsr_trend": list(cold.dsr_trend) if cold is not None else [],
             "raw": {},
         }
 
@@ -318,11 +168,58 @@ class ShopDashboardRepository(BaseRepository):
         )
         return (await self.session.execute(stmt)).scalar_one()
 
-    async def list_shops(self) -> list[dict[str, Any]]:
+    async def list_shops(
+        self,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[dict[str, Any]]:
+        latest_metric_date_stmt = select(
+            ShopDashboardScore.shop_id.label("shop_id"),
+            func.max(ShopDashboardScore.metric_date).label("metric_date"),
+        )
+        if start_date is not None and end_date is not None:
+            latest_metric_date_stmt = latest_metric_date_stmt.where(
+                ShopDashboardScore.metric_date >= start_date,
+                ShopDashboardScore.metric_date <= end_date,
+            )
+        latest_metric_date_subquery = latest_metric_date_stmt.group_by(
+            ShopDashboardScore.shop_id
+        ).subquery()
+        stmt = (
+            select(ShopDashboardScore)
+            .join(
+                latest_metric_date_subquery,
+                and_(
+                    ShopDashboardScore.shop_id == latest_metric_date_subquery.c.shop_id,
+                    ShopDashboardScore.metric_date
+                    == latest_metric_date_subquery.c.metric_date,
+                ),
+            )
+            .order_by(ShopDashboardScore.shop_id.asc())
+        )
+        rows = (await self.session.execute(stmt)).scalars().all()
+
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            items.append(_score_row_item(row, include_updated_at=True))
+
+        return items
+
+    async def list_latest_per_shop(
+        self,
+        *,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict[str, Any]]:
         latest_metric_date_subquery = (
             select(
                 ShopDashboardScore.shop_id.label("shop_id"),
                 func.max(ShopDashboardScore.metric_date).label("metric_date"),
+            )
+            .where(
+                ShopDashboardScore.metric_date >= start_date,
+                ShopDashboardScore.metric_date <= end_date,
             )
             .group_by(ShopDashboardScore.shop_id)
             .subquery()
@@ -343,20 +240,7 @@ class ShopDashboardRepository(BaseRepository):
 
         items: list[dict[str, Any]] = []
         for row in rows:
-            items.append(
-                {
-                    "shop_id": row.shop_id,
-                    "shop_name": row.shop_name or "",
-                    "metric_date": row.metric_date.isoformat(),
-                    "source": row.source,
-                    "total_score": float(row.total_score),
-                    "product_score": float(row.product_score),
-                    "logistics_score": float(row.logistics_score),
-                    "service_score": float(row.service_score),
-                    "bad_behavior_score": float(row.bad_behavior_score),
-                    "updated_at": row.updated_at.isoformat(),
-                }
-            )
+            items.append(_score_row_item(row))
 
         return items
 
@@ -382,72 +266,12 @@ class ShopDashboardRepository(BaseRepository):
         )
         scores = (await self.session.execute(score_stmt)).scalars().all()
 
-        review_stmt = select(ShopDashboardReview).where(
-            ShopDashboardReview.shop_id == shop_id,
-            ShopDashboardReview.metric_date >= start_date,
-            ShopDashboardReview.metric_date <= end_date,
-        )
-        violation_stmt = select(ShopDashboardViolation).where(
-            ShopDashboardViolation.shop_id == shop_id,
-            ShopDashboardViolation.metric_date >= start_date,
-            ShopDashboardViolation.metric_date <= end_date,
-        )
-        cold_stmt = select(ShopDashboardColdMetric).where(
-            ShopDashboardColdMetric.shop_id == shop_id,
-            ShopDashboardColdMetric.metric_date >= start_date,
-            ShopDashboardColdMetric.metric_date <= end_date,
-        )
-
-        review_rows = (await self.session.execute(review_stmt)).scalars().all()
-        violation_rows = (await self.session.execute(violation_stmt)).scalars().all()
-        cold_rows = (await self.session.execute(cold_stmt)).scalars().all()
-
-        reviews_by_day: dict[date, list[dict[str, Any]]] = defaultdict(list)
-        for row in review_rows:
-            reviews_by_day[row.metric_date].append(
-                {
-                    "id": row.review_id,
-                    "content": row.content,
-                    "is_replied": row.is_replied,
-                    "source": row.source,
-                }
-            )
-
-        violations_by_day: dict[date, list[dict[str, Any]]] = defaultdict(list)
-        for row in violation_rows:
-            violations_by_day[row.metric_date].append(
-                {
-                    "id": row.violation_id,
-                    "type": row.violation_type,
-                    "description": row.description,
-                    "score": row.score,
-                    "source": row.source,
-                }
-            )
-
-        cold_by_day: dict[date, list[dict[str, Any]]] = defaultdict(list)
-        for row in cold_rows:
-            cold_by_day[row.metric_date].append(
-                {
-                    "reason": row.reason,
-                    "source": row.source,
-                    "violations_detail": list(row.violations_detail),
-                    "arbitration_detail": list(row.arbitration_detail),
-                    "dsr_trend": list(row.dsr_trend),
-                }
-            )
-
         latest_score_by_day: dict[date, ShopDashboardScore] = {}
         for row in scores:
             if row.metric_date not in latest_score_by_day:
                 latest_score_by_day[row.metric_date] = row
 
-        metric_dates = sorted(
-            set(latest_score_by_day)
-            | set(reviews_by_day)
-            | set(violations_by_day)
-            | set(cold_by_day)
-        )
+        metric_dates = sorted(latest_score_by_day)
         if not metric_dates:
             return []
 
@@ -455,19 +279,64 @@ class ShopDashboardRepository(BaseRepository):
         for metric_date in metric_dates:
             row = latest_score_by_day.get(metric_date)
             items.append(
-                {
-                    "shop_id": shop_id,
-                    "shop_name": (row.shop_name if row else None) or "",
-                    "metric_date": metric_date.isoformat(),
-                    "source": row.source if row else "",
-                    "total_score": float(row.total_score) if row else 0.0,
-                    "product_score": float(row.product_score) if row else 0.0,
-                    "logistics_score": float(row.logistics_score) if row else 0.0,
-                    "service_score": float(row.service_score) if row else 0.0,
-                    "bad_behavior_score": float(row.bad_behavior_score) if row else 0.0,
-                    "reviews": reviews_by_day.get(metric_date, []),
-                    "violations": violations_by_day.get(metric_date, []),
-                    "cold_metrics": cold_by_day.get(metric_date, []),
-                }
+                _score_row_item(row)
+                if row is not None
+                else _missing_score_item(shop_id=shop_id, metric_date=metric_date)
             )
         return items
+
+
+def _score_row_item(
+    row: ShopDashboardScore,
+    *,
+    include_updated_at: bool = False,
+) -> dict[str, Any]:
+    item = {
+        "shop_id": row.shop_id,
+        "shop_name": row.shop_name or "",
+        "metric_date": row.metric_date.isoformat(),
+        "source": row.source,
+        "status": row.status,
+        "reason": row.reason,
+        "error_code": row.error_code,
+        "total_score": _score_value(row.total_score),
+        "product_score": _score_value(row.product_score),
+        "logistics_score": _score_value(row.logistics_score),
+        "service_score": _score_value(row.service_score),
+        "bad_behavior_score": _score_value(row.bad_behavior_score),
+    }
+    if include_updated_at:
+        item["updated_at"] = row.updated_at.isoformat()
+    return item
+
+
+def _missing_score_item(*, shop_id: str, metric_date: date) -> dict[str, Any]:
+    return {
+        "shop_id": shop_id,
+        "shop_name": "",
+        "metric_date": metric_date.isoformat(),
+        "source": "",
+        "status": "missing",
+        "reason": None,
+        "error_code": None,
+        "total_score": None,
+        "product_score": None,
+        "logistics_score": None,
+        "service_score": None,
+        "bad_behavior_score": None,
+    }
+
+
+def _score_value(value: Any) -> float | None:
+    if value is None:
+        return None
+    return float(value)
+
+
+def _score_or_zero(value: Any) -> float:
+    return _score_value(value) or 0.0
+
+
+def _text_or_none(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None

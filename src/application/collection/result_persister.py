@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
 from datetime import date
 from typing import Any
 
@@ -9,11 +8,11 @@ from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import src.cache as cache_module
+from src.domains.agent_result.repository import AgentResultRepository
 from src.domains.experience.services import ExperienceQueryService
 from src.domains.shop_dashboard.repository import ShopDashboardRepository
 from src.middleware.monitor import observe_shop_dashboard_score_upsert
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
-from src.shared.payload_extractors import extract_nested_list
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +26,6 @@ class CollectionResultPersister:
         metric_date: str,
         payload: dict[str, Any],
     ) -> None:
-        repo = ShopDashboardRepository(session)
         metric_day = date.fromisoformat(metric_date)
         metric_day_text = metric_day.isoformat()
         runtime_shop_id = _normalize_shop_id(runtime.shop_id)
@@ -56,79 +54,42 @@ class CollectionResultPersister:
                 metric_day_text,
             )
             return
-        source = str(payload.get("source", "script"))
-        score = await repo.upsert_score(
-            shop_id=resolved_shop_id,
-            metric_date=metric_day,
-            total_score=float(payload.get("total_score", 0.0)),
-            product_score=float(payload.get("product_score", 0.0)),
-            logistics_score=float(payload.get("logistics_score", 0.0)),
-            service_score=float(payload.get("service_score", 0.0)),
-            bad_behavior_score=float(payload.get("bad_behavior_score", 0.0)),
-            shop_name=str(payload.get("shop_name", "")).strip() or None,
-            source=source,
-        )
-        insert_or_update = sa_inspect(score).info.get("insert_or_update", "update")
-        observe_shop_dashboard_score_upsert(
-            insert_or_update=str(insert_or_update),
-            shop_id=resolved_shop_id,
-            metric_date=metric_day_text,
-        )
-
-        reviews = payload.get("reviews", {}).get("items", [])
-        review_rows = []
-        for review in reviews:
-            review_rows.append(
-                {
-                    "review_id": review.get("id") or review.get("review_id") or "",
-                    "content": review.get("content") or "",
-                    "is_replied": bool(review.get("shop_reply")),
-                    "source": source,
-                }
+        source = str(payload.get("source", "browser_agent"))
+        status = str(payload.get("status") or "success").strip() or "success"
+        persist_dashboard_score = _should_persist_dashboard_score(runtime)
+        if persist_dashboard_score:
+            repo = ShopDashboardRepository(session)
+            score = await repo.upsert_score(
+                shop_id=resolved_shop_id,
+                metric_date=metric_day,
+                total_score=_to_float_or_none(payload.get("total_score")),
+                product_score=_to_float_or_none(payload.get("product_score")),
+                logistics_score=_to_float_or_none(payload.get("logistics_score")),
+                service_score=_to_float_or_none(payload.get("service_score")),
+                bad_behavior_score=_to_float_or_none(payload.get("bad_behavior_score")),
+                shop_name=str(payload.get("shop_name", "")).strip() or None,
+                source=source,
+                status=status,
+                reason=payload.get("reason"),
+                error_code=payload.get("error_code"),
             )
-        await repo.replace_reviews(
-            shop_id=resolved_shop_id,
-            metric_date=metric_day,
-            reviews=review_rows,
-        )
-
-        violations = _extract_violation_items(payload)
-        violation_rows = []
-        for item in violations:
-            violation_rows.append(
-                {
-                    "violation_id": item.get("ticket_id")
-                    or item.get("ticketId")
-                    or item.get("id")
-                    or item.get("rule_id")
-                    or item.get("penalty_id")
-                    or item.get("rule")
-                    or "",
-                    "violation_type": item.get("type")
-                    or item.get("rule_type")
-                    or item.get("violation_type")
-                    or item.get("penalty_type")
-                    or "unknown",
-                    "description": item.get("description")
-                    or item.get("reason")
-                    or item.get("rule"),
-                    "score": _to_int(
-                        item.get("score")
-                        or item.get("deduct_score")
-                        or item.get("deductScore")
-                        or item.get("point")
-                        or item.get("points")
-                        or 0
-                    ),
-                    "source": source,
-                }
+            insert_or_update = sa_inspect(score).info.get("insert_or_update", "update")
+            observe_shop_dashboard_score_upsert(
+                insert_or_update=str(insert_or_update),
+                shop_id=resolved_shop_id,
+                metric_date=metric_day_text,
             )
-        await repo.replace_violations(
-            shop_id=resolved_shop_id,
-            metric_date=metric_day,
-            violations=violation_rows,
+        await self._persist_agent_result(
+            session=session,
+            runtime=runtime,
+            payload=payload,
+            resolved_shop_id=resolved_shop_id,
+            metric_day=metric_day,
+            fallback_status=status,
         )
         await session.commit()
+        if not persist_dashboard_score:
+            return
         try:
             await self._invalidate_experience_cache(
                 session=session,
@@ -162,41 +123,45 @@ class CollectionResultPersister:
             metric_date=metric_day,
         )
 
+    async def _persist_agent_result(
+        self,
+        *,
+        session: AsyncSession,
+        runtime: ShopDashboardRuntimeConfig,
+        payload: dict[str, Any],
+        resolved_shop_id: str,
+        metric_day: date,
+        fallback_status: str,
+    ) -> None:
+        agent = _agent_metadata(payload)
+        recipe = _recipe_metadata(payload=payload, runtime=runtime)
+        if recipe is None:
+            return
+        recipe_id = _to_int_or_none(recipe.get("id") or recipe.get("recipe_id"))
+        if recipe_id is None:
+            return
+        namespace = str(recipe.get("namespace") or "").strip() or "shop_dashboard"
+        status = str(agent.get("status") or fallback_status).strip() or fallback_status
+        await AgentResultRepository(session).upsert(
+            namespace=namespace,
+            resource_key=resolved_shop_id,
+            resource_date=metric_day,
+            recipe_id=recipe_id,
+            output=_agent_result_output(payload),
+            status=status,
+            error_message=_text_or_none(
+                payload.get("reason") or payload.get("error_code")
+            ),
+        )
 
-def _extract_violation_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    violations = payload.get("violations")
-    if isinstance(violations, dict):
-        direct = _normalize_violation_items(violations.get("waiting_list"))
-        if direct:
-            return direct
 
-    raw = payload.get("raw")
-    if isinstance(raw, dict):
-        raw_violations = raw.get("violations")
-        if isinstance(raw_violations, dict):
-            extracted = extract_nested_list(raw_violations.get("waiting_list"))
-            fallback = _normalize_violation_items(extracted)
-            if fallback:
-                return fallback
-
-    return []
-
-
-def _normalize_violation_items(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    rows: list[dict[str, Any]] = []
-    for item in value:
-        if isinstance(item, Mapping):
-            rows.append(dict(item))
-    return rows
-
-
-def _to_int(value: Any) -> int:
+def _to_float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
     try:
-        return int(float(value))
+        return float(value)
     except (TypeError, ValueError):
-        return 0
+        return None
 
 
 def _normalize_shop_id(value: Any) -> str:
@@ -206,3 +171,78 @@ def _normalize_shop_id(value: Any) -> str:
     if normalized.isdigit():
         return str(int(normalized))
     return normalized
+
+
+def _should_persist_dashboard_score(runtime: ShopDashboardRuntimeConfig) -> bool:
+    extra_config = getattr(runtime, "extra_config", None)
+    if isinstance(extra_config, dict) and extra_config.get("agent_result_only") is True:
+        return False
+    return str(getattr(runtime, "target_type", "") or "").strip().upper() in {
+        "",
+        "SHOP_OVERVIEW",
+    }
+
+
+def _agent_result_output(payload: dict[str, Any]) -> dict[str, Any]:
+    excluded = {
+        "actual_shop_id",
+        "shop_id",
+        "target_shop_id",
+        "shop_name",
+        "metric_date",
+        "source",
+        "status",
+        "rule_id",
+        "execution_id",
+        "total_score",
+        "product_score",
+        "logistics_score",
+        "service_score",
+        "bad_behavior_score",
+        "reason",
+        "error_code",
+        "raw",
+    }
+    return {key: value for key, value in payload.items() if key not in excluded}
+
+
+def _agent_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    raw = payload.get("raw")
+    if not isinstance(raw, dict):
+        return {}
+    agent = raw.get("agent")
+    return dict(agent) if isinstance(agent, dict) else {}
+
+
+def _recipe_metadata(
+    *,
+    payload: dict[str, Any],
+    runtime: ShopDashboardRuntimeConfig,
+) -> dict[str, Any] | None:
+    agent = _agent_metadata(payload)
+    recipe = agent.get("recipe")
+    if isinstance(recipe, dict):
+        return recipe
+    extra_config = getattr(runtime, "extra_config", None)
+    if isinstance(extra_config, dict):
+        inline_recipe = extra_config.get("agent_recipe_inline")
+        if isinstance(inline_recipe, dict):
+            return inline_recipe
+    recipe_ref = getattr(runtime, "agent_recipe_ref", None)
+    if isinstance(recipe_ref, dict):
+        recipe = recipe_ref.get("recipe")
+        if isinstance(recipe, dict):
+            return recipe
+    return None
+
+
+def _to_int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _text_or_none(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None

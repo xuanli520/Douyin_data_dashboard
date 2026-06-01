@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
 
 
 class SessionStateStore:
-    def __init__(self, base_dir: str | Path) -> None:
+    def __init__(self, base_dir: str | Path, *, create: bool = True) -> None:
         self._base_dir = Path(base_dir)
-        self._base_dir.mkdir(parents=True, exist_ok=True)
+        if create:
+            self._base_dir.mkdir(parents=True, exist_ok=True)
 
     def exists(self, account_id: str) -> bool:
         return self._path(account_id).exists()
@@ -115,6 +117,68 @@ class SessionStateStore:
         if target.exists():
             target.unlink()
 
+    def invalidate_account(self, account_id: str) -> None:
+        safe_account_id = self._safe_name(account_id)
+        if not safe_account_id:
+            return
+        self._remove_path(self._path(account_id))
+        self._remove_path(self._base_dir / "bundles" / safe_account_id)
+        self._remove_path(self._base_dir / "playwright_states" / safe_account_id)
+
+    def playwright_state_path(
+        self, account_id: str, shop_id: str | None = None
+    ) -> Path:
+        if shop_id:
+            return self._playwright_state_path(account_id, shop_id)
+        return self._path(account_id)
+
+    def exists_playwright_state(
+        self, account_id: str, shop_id: str | None = None
+    ) -> bool:
+        return self.playwright_state_path(account_id, shop_id).exists()
+
+    def save_playwright_state(
+        self,
+        account_id: str,
+        state: dict[str, Any],
+        shop_id: str | None = None,
+    ) -> Path:
+        normalized = self._normalize_playwright_state_payload(state)
+        target = self.playwright_state_path(account_id, shop_id)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, temp_file = tempfile.mkstemp(
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            dir=target.parent,
+        )
+        temp_path = Path(temp_file)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(normalized, handle, ensure_ascii=False, separators=(",", ":"))
+                handle.flush()
+                os.fsync(handle.fileno())
+            temp_path.replace(target)
+        finally:
+            if temp_path.exists():
+                temp_path.unlink()
+        return target
+
+    def load_playwright_state(
+        self,
+        account_id: str,
+        shop_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        target = self.playwright_state_path(account_id, shop_id)
+        if not target.exists():
+            return None
+        try:
+            payload = json.loads(target.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        return self._normalize_playwright_state_payload(payload)
+
     def load_bundle_cookie_mapping(
         self, account_id: str, shop_id: str
     ) -> dict[str, str]:
@@ -131,13 +195,32 @@ class SessionStateStore:
         }
 
     def _path(self, account_id: str) -> Path:
-        safe_name = str(account_id).replace("\\", "_").replace("/", "_").strip()
-        return self._base_dir / f"{safe_name}.json"
+        return self._base_dir / f"{self._safe_name(account_id)}.json"
 
     def _bundle_path(self, account_id: str, shop_id: str) -> Path:
-        safe_account_id = str(account_id).replace("\\", "_").replace("/", "_").strip()
-        safe_shop_id = str(shop_id).replace("\\", "_").replace("/", "_").strip()
+        safe_account_id = self._safe_name(account_id)
+        safe_shop_id = self._safe_name(shop_id)
         return self._base_dir / "bundles" / safe_account_id / f"{safe_shop_id}.json"
+
+    def _playwright_state_path(self, account_id: str, shop_id: str) -> Path:
+        safe_account_id = self._safe_name(account_id)
+        safe_shop_id = self._safe_name(shop_id)
+        return (
+            self._base_dir
+            / "playwright_states"
+            / safe_account_id
+            / f"{safe_shop_id}.json"
+        )
+
+    def _safe_name(self, value: str) -> str:
+        return str(value).replace("\\", "_").replace("/", "_").strip()
+
+    def _remove_path(self, target: Path) -> None:
+        if target.is_dir() and not target.is_symlink():
+            shutil.rmtree(target)
+            return
+        if target.exists() or target.is_symlink():
+            target.unlink()
 
     def _normalize_bundle_payload(
         self, shop_id: str, bundle: dict[str, Any]
@@ -185,4 +268,15 @@ class SessionStateStore:
             "verify_status": verify_status,
             "verified_at": verified_at,
             "session_version": session_version,
+        }
+
+    def _normalize_playwright_state_payload(
+        self,
+        state: dict[str, Any],
+    ) -> dict[str, Any]:
+        cookies = state.get("cookies")
+        origins = state.get("origins")
+        return {
+            "cookies": cookies if isinstance(cookies, list) else [],
+            "origins": origins if isinstance(origins, list) else [],
         }

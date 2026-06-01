@@ -51,6 +51,7 @@ def _get_engine_options(url: str, echo: bool) -> dict[str, Any]:
         pool_size=db_settings.pool_size,
         max_overflow=db_settings.max_overflow,
         pool_recycle=db_settings.pool_recycle,
+        pool_pre_ping=True,
     )
     return options
 
@@ -189,13 +190,13 @@ def run_coro(coro: Coroutine[Any, Any, T]) -> T:
 
     if loop is None or loop.is_closed():
         try:
-            return asyncio.run(coro)
+            asyncio.get_running_loop()
         except RuntimeError:
-            new_loop = asyncio.new_event_loop()
-            try:
-                return new_loop.run_until_complete(coro)
-            finally:
-                new_loop.close()
+            return asyncio.run(coro)
+        coro.close()
+        raise RuntimeError(
+            "run_coro cannot run without a bound worker loop while an event loop is running"
+        )
 
     future = asyncio.run_coroutine_threadsafe(coro, loop)
     try:

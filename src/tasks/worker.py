@@ -10,7 +10,9 @@ from typing import Callable
 
 from src import session
 from src.config import get_settings
-from src.tasks.collection import douyin_shop_agent, douyin_shop_dashboard
+from src.tasks.collection import douyin_shop_discovery
+from src.tasks.collection import douyin_shop_dashboard
+from src.tasks.collection import douyin_shop_login
 from src.tasks.etl import orders as etl_orders
 from src.tasks.etl import products as etl_products
 
@@ -24,8 +26,11 @@ def _queue_runners(etl_processes: int) -> dict[str, Callable[[], None]]:
         "collection_shop_dashboard": lambda: (
             douyin_shop_dashboard.sync_shop_dashboard.consume()
         ),
-        "collection_shop_dashboard_agent": lambda: (
-            douyin_shop_agent.sync_shop_dashboard_agent.consume()
+        "collection_shop_dashboard_discovery": lambda: (
+            douyin_shop_discovery.run_agent_discovery.consume()
+        ),
+        "collection_shop_dashboard_login": lambda: (
+            douyin_shop_login.run_login_session.consume()
         ),
         "etl_orders": lambda: etl_orders.process_orders.multi_process_consume(
             etl_processes
@@ -35,9 +40,6 @@ def _queue_runners(etl_processes: int) -> dict[str, Callable[[], None]]:
         ),
         "collection_shop_dashboard_dlx": lambda: (
             douyin_shop_dashboard.handle_collection_shop_dashboard_dead_letter.consume()
-        ),
-        "collection_shop_dashboard_agent_dlx": lambda: (
-            douyin_shop_agent.handle_collection_shop_dashboard_agent_dead_letter.consume()
         ),
         "etl_orders_dlx": lambda: etl_orders.handle_etl_orders_dead_letter.consume(),
         "etl_products_dlx": lambda: (
@@ -64,19 +66,10 @@ def _wait_forever(
     threads: Sequence[Thread] | Thread | None = None,
 ) -> None:
     worker_stop_event = stop_event or Event()
-    thread_list = (
-        list(threads)
-        if isinstance(threads, Sequence)
-        else ([threads] if threads is not None else [])
-    )
+    _ = threads
     try:
         while not worker_stop_event.wait(5):
-            for thread in thread_list:
-                if not thread.is_alive():
-                    logger.error(
-                        "worker thread exited unexpectedly name=%s", thread.name
-                    )
-                    return
+            pass
     except KeyboardInterrupt:
         worker_stop_event.set()
     logger.info("Shutting down workers")

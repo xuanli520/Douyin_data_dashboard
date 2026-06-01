@@ -9,6 +9,8 @@ import pytest
 from sqlalchemy import select
 
 from src import session as db_session_module
+from src.domains.agent_recipe.models import AGENT_RECIPE_STABILITY_STABLE
+from src.domains.agent_recipe.repository import AgentRecipeRepository
 from src.domains.data_source.enums import DataSourceStatus
 from src.domains.data_source.enums import DataSourceType
 from src.domains.data_source.models import DataSource
@@ -18,7 +20,6 @@ from src.domains.task.enums import TaskExecutionStatus
 from src.domains.task.models import TaskExecution
 from src.shared.idempotency import FunboostIdempotencyHelper
 from src.tasks.collection import douyin_shop_dashboard as module
-from src.tasks.exceptions import ScrapingFailedException
 
 
 class _FakeRedis:
@@ -125,74 +126,6 @@ class _FakeLoginStateManager:
         self.redis_client = redis_client
 
 
-class _FakeSessionBootstrapper:
-    def __init__(self, state_store):
-        self.state_store = state_store
-
-    async def bootstrap_shops(
-        self,
-        *,
-        runtime,
-        shop_ids,
-        verify_metric_date_by_shop=None,
-        force_serial=None,
-    ):
-        _ = verify_metric_date_by_shop
-        _ = force_serial
-        account_id = str(getattr(runtime, "account_id", "") or "").strip() or "acct-1"
-        result = {}
-        for shop_id in shop_ids:
-            shop_text = str(shop_id)
-            self.state_store.save_bundle(
-                account_id,
-                shop_text,
-                {
-                    "cookies": dict(getattr(runtime, "cookies", {}) or {}),
-                    "common_query": dict(getattr(runtime, "common_query", {}) or {}),
-                    "validated_shop_id": shop_text,
-                    "verified_actual_shop_id": shop_text,
-                    "verify_status": "passed",
-                    "verified_at": "2026-03-10T00:00:00+00:00",
-                    "session_version": "2",
-                },
-            )
-            result[shop_text] = {
-                "shop_id": shop_text,
-                "target_shop_id": shop_text,
-                "bootstrap_failed": False,
-                "bootstrap_verify_status": "passed",
-                "bootstrap_verify_actual_shop_id": shop_text,
-                "bootstrap_verify_error_code": "",
-            }
-        return result
-
-    async def bootstrap_shop(self, *, runtime, shop_id, verify_metric_date=None):
-        _ = verify_metric_date
-        account_id = str(getattr(runtime, "account_id", "") or "").strip() or "acct-1"
-        shop_text = str(shop_id)
-        self.state_store.save_bundle(
-            account_id,
-            shop_text,
-            {
-                "cookies": dict(getattr(runtime, "cookies", {}) or {}),
-                "common_query": dict(getattr(runtime, "common_query", {}) or {}),
-                "validated_shop_id": shop_text,
-                "verified_actual_shop_id": shop_text,
-                "verify_status": "passed",
-                "verified_at": "2026-03-10T00:00:00+00:00",
-                "session_version": "2",
-            },
-        )
-        return {
-            "shop_id": shop_text,
-            "target_shop_id": shop_text,
-            "bootstrap_failed": False,
-            "bootstrap_verify_status": "passed",
-            "bootstrap_verify_actual_shop_id": shop_text,
-            "bootstrap_verify_error_code": "",
-        }
-
-
 class _FakeIdempotencyHelper:
     def __init__(self, *_args, **_kwargs):
         pass
@@ -210,6 +143,37 @@ class _FakeIdempotencyHelper:
 
     def release_lock(self, _key, _token):
         return None
+
+
+def _recipe_payload() -> dict[str, Any]:
+    return {
+        "entrypoint": {"url": "https://example.test/dashboard"},
+        "steps": [{"id": "open", "action": "goto"}],
+        "observations": {
+            "total": {
+                "id": "total",
+                "kind": "text",
+                "locator": {"kind": "css", "value": ".total"},
+            }
+        },
+        "assertions": [{"id": "total_exists", "kind": "exists", "source": "total"}],
+        "recovery_policy": {"enabled": True, "max_attempts": 1},
+        "security_policy": {"allowed_origins": ["https://example.test"]},
+    }
+
+
+async def _seed_stable_agent_recipe(test_db) -> None:
+    async with test_db() as db_session:
+        repo = AgentRecipeRepository(db_session)
+        await repo.create(
+            {
+                "namespace": "generic",
+                "key": "overview",
+                "stability": AGENT_RECIPE_STABILITY_STABLE,
+                **_recipe_payload(),
+            }
+        )
+        await db_session.commit()
 
 
 async def _seed_runtime_entities(
@@ -289,76 +253,68 @@ def _install_real_pipeline_env(monkeypatch, test_db, redis_client: _FakeRedis) -
         raising=False,
     )
     monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
-    monkeypatch.setattr(
-        module,
-        "SessionBootstrapper",
-        _FakeSessionBootstrapper,
-        raising=False,
-    )
     monkeypatch.setattr(module, "LockManager", _FakeLockManager)
     monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
 
 
 @pytest.mark.asyncio
-async def test_pipeline_http_fail_then_llm_runs_real_collection_usecase(
+async def test_pipeline_browser_agent_runs_real_collection_usecase(
     test_db,
     monkeypatch,
 ):
-    data_source_id, rule_id = await _seed_runtime_entities(test_db)
+    data_source_id, rule_id = await _seed_runtime_entities(
+        test_db,
+        rule_extra_config={"agent_recipe": {"namespace": "generic", "key": "overview"}},
+    )
     redis_client = _FakeRedis()
     _install_real_pipeline_env(monkeypatch, test_db, redis_client)
-    monkeypatch.setattr(module.fct, "task_id", "queue-real-pipeline-llm", raising=False)
+    monkeypatch.setattr(
+        module.fct,
+        "task_id",
+        "queue-real-pipeline-browser-agent",
+        raising=False,
+    )
 
-    class _FakeHttpScraper:
-        def __init__(self, **_kwargs):
-            pass
+    class _FakeAdapter:
+        def __init__(self, settings):
+            self.settings = settings
 
-        def __enter__(self):
-            return self
+        def collect(self, *, runtime, metric_date, state_store, plan_unit=None):
+            _ = (state_store, plan_unit)
+            return {
+                "shop_id": runtime.shop_id,
+                "actual_shop_id": runtime.shop_id,
+                "metric_date": metric_date,
+                "source": "browser_agent",
+                "total_score": 4.8,
+                "product_score": 4.7,
+                "logistics_score": 4.9,
+                "service_score": 4.6,
+                "reviews": {"summary": {}, "items": []},
+                "violations": {"summary": {}, "waiting_list": []},
+                "raw": {},
+            }
 
-        def __exit__(self, _exc_type, _exc_value, _traceback):
-            return None
-
-        def fetch_dashboard_with_context(self, _runtime, _metric_date):
-            raise ScrapingFailedException("http failed")
-
-        def close(self):
-            return None
-
-    class _FakeAgent:
-        def supplement_cold_data(self, result, shop_id, metric_date, reason):
-            _ = (shop_id, metric_date)
-            patched = dict(result)
-            raw = dict(patched.get("raw") or {})
-            raw["llm_patch"] = {"status": "success", "reason": reason}
-            patched["raw"] = raw
-            return patched
-
-        def close(self):
-            return None
-
-    monkeypatch.setattr(module, "HttpScraper", _FakeHttpScraper)
-    monkeypatch.setattr(module, "LLMDashboardAgent", lambda: _FakeAgent())
+    monkeypatch.setattr(module, "BrowserAgentAdapter", _FakeAdapter)
 
     result = await asyncio.to_thread(
         module.sync_shop_dashboard,
         data_source_id=data_source_id,
         rule_id=rule_id,
-        execution_id="exec-real-pipeline-llm",
+        execution_id="exec-real-pipeline-browser-agent",
     )
 
-    assert result["items"][0]["source"] == "llm"
-    assert result["items"][0]["retry_count"] == 1
-    assert result["items"][0]["fallback_trace"] == [
-        {"stage": "http", "status": "failed", "error": "http failed"},
-        {"stage": "agent", "status": "success"},
+    assert result["items"][0]["source"] == "browser_agent"
+    assert result["items"][0]["retry_count"] == 0
+    assert result["items"][0]["agent_trace"] == [
+        {"stage": "browser_agent", "status": "success"},
     ]
 
     async with test_db() as db_session:
         execution = (
             await db_session.execute(
                 select(TaskExecution).where(
-                    TaskExecution.queue_task_id == "queue-real-pipeline-llm"
+                    TaskExecution.queue_task_id == "queue-real-pipeline-browser-agent"
                 )
             )
         ).scalar_one()
@@ -374,15 +330,18 @@ async def test_pipeline_http_fail_then_llm_runs_real_collection_usecase(
     assert execution.status == TaskExecutionStatus.SUCCESS
     assert execution.processed_rows == 1
     assert score is not None
-    assert score.source == "llm"
+    assert score.source == "browser_agent"
 
 
 @pytest.mark.asyncio
-async def test_pipeline_cookie_only_http_success_persists_real_usecase_path(
+async def test_pipeline_cookie_only_browser_agent_persists_real_usecase_path(
     test_db,
     monkeypatch,
 ):
-    data_source_id, rule_id = await _seed_runtime_entities(test_db)
+    data_source_id, rule_id = await _seed_runtime_entities(
+        test_db,
+        rule_extra_config={"agent_recipe": {"namespace": "generic", "key": "overview"}},
+    )
     redis_client = _FakeRedis()
     _install_real_pipeline_env(monkeypatch, test_db, redis_client)
     monkeypatch.setattr(
@@ -392,22 +351,18 @@ async def test_pipeline_cookie_only_http_success_persists_real_usecase_path(
         raising=False,
     )
 
-    class _SuccessHttpScraper:
-        def __init__(self, **_kwargs):
-            pass
+    class _FakeAdapter:
+        def __init__(self, settings):
+            self.settings = settings
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, _exc_type, _exc_value, _traceback):
-            return None
-
-        def fetch_dashboard_with_context(self, runtime, metric_date):
+        def collect(self, *, runtime, metric_date, state_store, plan_unit=None):
+            _ = (state_store, plan_unit)
             assert runtime.cookies["sessionid"] == "token"
             return {
                 "shop_id": runtime.shop_id,
+                "actual_shop_id": runtime.shop_id,
                 "metric_date": metric_date,
-                "source": "script",
+                "source": "browser_agent",
                 "total_score": 4.8,
                 "product_score": 4.7,
                 "logistics_score": 4.9,
@@ -417,10 +372,7 @@ async def test_pipeline_cookie_only_http_success_persists_real_usecase_path(
                 "raw": {},
             }
 
-        def close(self):
-            return None
-
-    monkeypatch.setattr(module, "HttpScraper", _SuccessHttpScraper)
+    monkeypatch.setattr(module, "BrowserAgentAdapter", _FakeAdapter)
 
     result = await asyncio.to_thread(
         module.sync_shop_dashboard,
@@ -429,10 +381,10 @@ async def test_pipeline_cookie_only_http_success_persists_real_usecase_path(
         execution_id="exec-real-pipeline-cookie-success",
     )
 
-    assert result["items"][0]["source"] == "script"
+    assert result["items"][0]["source"] == "browser_agent"
     assert result["items"][0]["retry_count"] == 0
-    assert result["items"][0]["fallback_trace"] == [
-        {"stage": "http", "status": "success"}
+    assert result["items"][0]["agent_trace"] == [
+        {"stage": "browser_agent", "status": "success"}
     ]
 
     async with test_db() as db_session:
@@ -454,14 +406,15 @@ async def test_pipeline_cookie_only_http_success_persists_real_usecase_path(
 
     assert execution.status == TaskExecutionStatus.SUCCESS
     assert score.total_score == pytest.approx(4.8)
-    assert score.source == "script"
+    assert score.source == "browser_agent"
 
 
 @pytest.mark.asyncio
-async def test_pipeline_rule_config_fields_flow_into_real_usecase_plan_and_query_context(
+async def test_pipeline_rule_config_fields_flow_into_real_usecase_plan(
     test_db,
     monkeypatch,
 ):
+    await _seed_stable_agent_recipe(test_db)
     data_source_id, rule_id = await _seed_runtime_entities(
         test_db,
         rule_filters={"shop_id": ["shop-1", "shop-2"], "region": "east"},
@@ -474,7 +427,10 @@ async def test_pipeline_rule_config_fields_flow_into_real_usecase_plan_and_query
         include_long_tail=True,
         session_level=True,
         rule_dedupe_key="{shop_id}:{window_start}:{window_end}:{rule_id}:{execution_id}",
-        rule_extra_config={"cursor": "cursor-1"},
+        rule_extra_config={
+            "cursor": "cursor-1",
+            "agent_recipe": {"namespace": "generic", "key": "overview"},
+        },
     )
     redis_client = _FakeRedis()
     _install_real_pipeline_env(monkeypatch, test_db, redis_client)
@@ -485,32 +441,36 @@ async def test_pipeline_rule_config_fields_flow_into_real_usecase_plan_and_query
         raising=False,
     )
 
-    from src.scrapers.shop_dashboard.query_builder import build_endpoint_query_context
-
     seen_contexts: list[dict[str, Any]] = []
 
     def _collect_one_day(
         runtime_config,
         metric_date,
         *,
+        plan_unit=None,
         lock_manager,
         state_store,
         login_state_manager,
     ):
-        _ = (lock_manager, state_store, login_state_manager)
-        context = build_endpoint_query_context(runtime_config, metric_date=metric_date)
+        _ = (plan_unit, lock_manager, state_store, login_state_manager)
         seen_contexts.append(
             {
                 "shop_id": runtime_config.shop_id,
                 "metric_date": metric_date,
-                "params": context.params,
+                "filters": runtime_config.filters,
+                "dimensions": runtime_config.dimensions,
+                "metrics": runtime_config.metrics,
+                "top_n": runtime_config.top_n,
+                "sort_by": runtime_config.sort_by,
+                "include_long_tail": runtime_config.include_long_tail,
+                "session_level": runtime_config.session_level,
             }
         )
         return {
             "status": "success",
             "shop_id": runtime_config.shop_id,
             "metric_date": metric_date,
-            "source": "script",
+            "source": "browser_agent",
             "total_score": 4.8,
             "product_score": 4.7,
             "logistics_score": 4.9,
@@ -535,11 +495,10 @@ async def test_pipeline_rule_config_fields_flow_into_real_usecase_plan_and_query
     assert len(seen_contexts) == 4
     assert {item["shop_id"] for item in seen_contexts} == {"shop-1", "shop-2"}
     for item in seen_contexts:
-        params = item["params"]
-        assert params["filters"]["region"] == "east"
-        assert params["dimensions"] == ["shop", "category"]
-        assert params["metrics"] == ["overview", "analysis"]
-        assert params["top_n"] == 50
-        assert params["sort_by"] == "-total_score"
-        assert params["include_long_tail"] is True
-        assert params["session_level"] is True
+        assert item["filters"]["region"] == "east"
+        assert item["dimensions"] == ["shop", "category"]
+        assert item["metrics"] == ["overview", "analysis"]
+        assert item["top_n"] == 50
+        assert item["sort_by"] == "-total_score"
+        assert item["include_long_tail"] is True
+        assert item["session_level"] is True

@@ -43,7 +43,6 @@ shop_dashboard_collection_total = Counter(
         "status",
         "shop_mode",
         "shop_resolve_source",
-        "bootstrap_status",
         "circuit_break_status",
     ],
 )
@@ -56,20 +55,8 @@ shop_dashboard_collection_duration_seconds = Histogram(
         "status",
         "shop_mode",
         "shop_resolve_source",
-        "bootstrap_status",
         "circuit_break_status",
     ],
-)
-
-shop_dashboard_bootstrap_verify_failed_total = Counter(
-    "shop_dashboard_bootstrap_verify_failed_total",
-    "Shop dashboard bootstrap verify failed count",
-    ["error_code"],
-)
-
-shop_dashboard_account_switch_unsupported_total = Counter(
-    "shop_dashboard_account_switch_unsupported_total",
-    "Shop dashboard account switch unsupported count",
 )
 
 shop_dashboard_redis_degraded_total = Counter(
@@ -98,14 +85,12 @@ def observe_shop_dashboard_collection(
     duration_seconds: float,
     shop_mode: str = "unknown",
     shop_resolve_source: str = "unknown",
-    bootstrap_status: str = "unknown",
     circuit_break_status: str = "unknown",
 ) -> None:
     safe_source = source if source else "unknown"
     safe_status = status if status else "unknown"
     safe_shop_mode = shop_mode if shop_mode else "unknown"
     safe_shop_resolve_source = shop_resolve_source if shop_resolve_source else "unknown"
-    safe_bootstrap_status = bootstrap_status if bootstrap_status else "unknown"
     safe_circuit_break_status = (
         circuit_break_status if circuit_break_status else "unknown"
     )
@@ -114,7 +99,6 @@ def observe_shop_dashboard_collection(
         status=safe_status,
         shop_mode=safe_shop_mode,
         shop_resolve_source=safe_shop_resolve_source,
-        bootstrap_status=safe_bootstrap_status,
         circuit_break_status=safe_circuit_break_status,
     ).inc()
     shop_dashboard_collection_duration_seconds.labels(
@@ -122,20 +106,8 @@ def observe_shop_dashboard_collection(
         status=safe_status,
         shop_mode=safe_shop_mode,
         shop_resolve_source=safe_shop_resolve_source,
-        bootstrap_status=safe_bootstrap_status,
         circuit_break_status=safe_circuit_break_status,
     ).observe(max(duration_seconds, 0.0))
-
-
-def observe_shop_dashboard_bootstrap_verify_failed(*, error_code: str) -> None:
-    safe_error_code = error_code if error_code else "unknown"
-    shop_dashboard_bootstrap_verify_failed_total.labels(
-        error_code=safe_error_code
-    ).inc()
-
-
-def observe_shop_dashboard_account_switch_unsupported() -> None:
-    shop_dashboard_account_switch_unsupported_total.inc()
 
 
 def observe_shop_dashboard_redis_degraded(*, component: str) -> None:

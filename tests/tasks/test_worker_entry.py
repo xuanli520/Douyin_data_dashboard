@@ -6,7 +6,7 @@ def test_tasks_package_imports_task_modules():
     import src.tasks as tasks
 
     assert hasattr(tasks, "douyin_shop_dashboard")
-    assert hasattr(tasks, "douyin_shop_agent")
+    assert hasattr(tasks, "douyin_shop_login")
     assert hasattr(tasks, "etl_orders")
     assert hasattr(tasks, "etl_products")
 
@@ -28,9 +28,15 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
         raising=False,
     )
     monkeypatch.setattr(
-        module.douyin_shop_agent.sync_shop_dashboard_agent,
+        module.douyin_shop_discovery.run_agent_discovery,
         "consume",
-        lambda: calls.append("collection_shop_dashboard_agent"),
+        lambda: calls.append("collection_shop_dashboard_discovery"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        module.douyin_shop_login.run_login_session,
+        "consume",
+        lambda: calls.append("collection_shop_dashboard_login"),
         raising=False,
     )
     monkeypatch.setattr(
@@ -49,12 +55,6 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
         module.douyin_shop_dashboard.handle_collection_shop_dashboard_dead_letter,
         "consume",
         lambda: calls.append("collection_shop_dashboard_dlx"),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        module.douyin_shop_agent.handle_collection_shop_dashboard_agent_dead_letter,
-        "consume",
-        lambda: calls.append("collection_shop_dashboard_agent_dlx"),
         raising=False,
     )
     monkeypatch.setattr(
@@ -93,19 +93,19 @@ def test_worker_run_all_dispatches_consumers(monkeypatch):
     assert len(waited_threads) == 6
     assert {thread.name for thread in waited_threads} == {
         "worker-collection_shop_dashboard",
-        "worker-collection_shop_dashboard_agent",
+        "worker-collection_shop_dashboard_discovery",
+        "worker-collection_shop_dashboard_login",
         "worker-collection_shop_dashboard_dlx",
-        "worker-collection_shop_dashboard_agent_dlx",
         "worker-etl_orders_dlx",
         "worker-etl_products_dlx",
     }
     assert {
         "collection_shop_dashboard",
-        "collection_shop_dashboard_agent",
+        "collection_shop_dashboard_discovery",
+        "collection_shop_dashboard_login",
         ("etl_orders", 2),
         ("etl_products", 2),
         "collection_shop_dashboard_dlx",
-        "collection_shop_dashboard_agent_dlx",
         "etl_orders_dlx",
         "etl_products_dlx",
     } == set(calls)
@@ -146,6 +146,33 @@ def test_worker_run_all_waits_for_non_blocking_consumers(monkeypatch):
     module.run_all(etl_processes=2)
 
     assert calls == ["consume_started", "wait_forever"]
+
+
+def test_wait_forever_keeps_alive_when_runner_thread_returned():
+    from src.tasks import worker as module
+
+    class _StopEvent:
+        def __init__(self):
+            self.calls = 0
+
+        def wait(self, _timeout):
+            self.calls += 1
+            return self.calls >= 2
+
+        def set(self):
+            return None
+
+    class _ReturnedThread:
+        name = "worker-returned"
+
+        def is_alive(self):
+            return False
+
+    stop_event = _StopEvent()
+
+    module._wait_forever(stop_event, [_ReturnedThread()])
+
+    assert stop_event.calls == 2
 
 
 def test_worker_run_all_keeps_parent_alive_when_multiprocess_runner_returns(

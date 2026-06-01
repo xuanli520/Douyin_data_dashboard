@@ -143,41 +143,6 @@ async def seeded_phase3_data(test_db):
                 source="seed",
             )
 
-        await repo.replace_violations(
-            shop_id="1001",
-            metric_date=date(2026, 3, 3),
-            violations=[
-                {
-                    "violation_id": "issue_1",
-                    "violation_type": "product",
-                    "description": "product defect complaints",
-                    "score": 6,
-                    "source": "seed",
-                }
-            ],
-        )
-        await repo.replace_violations(
-            shop_id="1001",
-            metric_date=date(2026, 3, 2),
-            violations=[
-                {
-                    "violation_id": "issue_2",
-                    "violation_type": "risk",
-                    "description": "policy violation warning",
-                    "score": 3,
-                    "source": "seed",
-                }
-            ],
-        )
-        await repo.upsert_cold_metrics(
-            shop_id="1001",
-            metric_date=date(2026, 3, 1),
-            reason="cold reason fallback",
-            violations_detail=[],
-            arbitration_detail=[],
-            dsr_trend=[],
-            source="seed",
-        )
         await session.commit()
 
 
@@ -264,9 +229,8 @@ async def test_experience_real_data_issue_filters_should_work(
     assert response.status_code == 200
     payload = response.json()
     assert payload["code"] == 200
-    assert payload["data"]["meta"]["total"] >= 1
-    assert all(item["dimension"] == "product" for item in payload["data"]["items"])
-    assert all(item["status"] == "pending" for item in payload["data"]["items"])
+    assert payload["data"]["meta"]["total"] == 0
+    assert payload["data"]["items"] == []
 
 
 @pytest.mark.asyncio

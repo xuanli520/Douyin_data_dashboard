@@ -3,14 +3,9 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
-try:
-    from playwright.async_api import Page
-except ImportError:  # pragma: no cover
-    Page = Any  # type: ignore[assignment]
-
 
 async def check_login_status(
-    page: Page,
+    page: Any,
     dom_selector: str = '[data-testid="user-avatar"]',
     dom_timeout_ms: int = 3000,
     api_timeout_seconds: float = 5.0,

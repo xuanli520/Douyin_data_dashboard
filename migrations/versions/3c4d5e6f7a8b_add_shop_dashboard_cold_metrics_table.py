@@ -54,12 +54,19 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    if not inspector.has_table("shop_dashboard_cold_metrics"):
+        return
+
     op.drop_index(
         op.f("ix_shop_dashboard_cold_metrics_metric_date"),
         table_name="shop_dashboard_cold_metrics",
+        if_exists=True,
     )
     op.drop_index(
         op.f("ix_shop_dashboard_cold_metrics_shop_id"),
         table_name="shop_dashboard_cold_metrics",
+        if_exists=True,
     )
     op.drop_table("shop_dashboard_cold_metrics")

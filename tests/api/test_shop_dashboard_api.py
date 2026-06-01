@@ -105,32 +105,7 @@ async def test_shops_query_only(api_client, permission_data, test_db):
             logistics_score=4.9,
             service_score=4.8,
             shop_name="demo-shop",
-            source="script",
-        )
-        await repo.replace_reviews(
-            shop_id="shop-1",
-            metric_date=metric_date,
-            reviews=[
-                {
-                    "review_id": "r-1",
-                    "content": "good",
-                    "is_replied": True,
-                    "source": "script",
-                }
-            ],
-        )
-        await repo.replace_violations(
-            shop_id="shop-1",
-            metric_date=metric_date,
-            violations=[
-                {
-                    "violation_id": "v-1",
-                    "violation_type": "A",
-                    "description": "desc",
-                    "score": 1,
-                    "source": "script",
-                }
-            ],
+            source="browser_agent",
         )
         await session.commit()
 
@@ -162,7 +137,7 @@ async def test_shops_root_returns_all_shops(api_client, permission_data, test_db
             service_score=4.5,
             bad_behavior_score=0.0,
             shop_name="shop-two",
-            source="script",
+            source="browser_agent",
         )
         await repo.upsert_score(
             shop_id="shop-1",
@@ -173,7 +148,7 @@ async def test_shops_root_returns_all_shops(api_client, permission_data, test_db
             service_score=4.3,
             bad_behavior_score=0.0,
             shop_name="shop-one-old",
-            source="script",
+            source="browser_agent",
         )
         await repo.upsert_score(
             shop_id="shop-1",
@@ -184,7 +159,7 @@ async def test_shops_root_returns_all_shops(api_client, permission_data, test_db
             service_score=4.9,
             bad_behavior_score=0.0,
             shop_name="shop-one-new",
-            source="script",
+            source="browser_agent",
         )
         await session.commit()
 
@@ -200,6 +175,42 @@ async def test_shops_root_returns_all_shops(api_client, permission_data, test_db
     assert [item["shop_id"] for item in items] == ["shop-1", "shop-2"]
     assert items[0]["shop_name"] == "shop-one-new"
     assert items[0]["metric_date"] == "2026-03-02"
+
+
+@pytest.mark.asyncio
+async def test_shop_score_csv_downloads(api_client, permission_data, test_db):
+    async with test_db() as session:
+        repo = ShopDashboardRepository(session)
+        await repo.upsert_score(
+            shop_id="shop-1",
+            metric_date=date(2026, 3, 1),
+            total_score=4.3,
+            product_score=4.2,
+            logistics_score=4.4,
+            service_score=4.3,
+            bad_behavior_score=0.0,
+            shop_name="shop-one",
+            source="browser_agent",
+        )
+        await session.commit()
+
+    auth_headers = await get_auth_headers(
+        api_client,
+        "shopsuser@example.com",
+        "shops123",
+    )
+
+    response = await api_client.get(
+        "/api/v1/shops/shop-1/scores/csv?date_from=2026-03-01&date_to=2026-03-02",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert response.text.splitlines() == [
+        "shop_id,shop_name,metric_date,total_score,product_score,logistics_score,service_score,bad_behavior_score",
+        "shop-1,shop-one,2026-03-01,4.3,4.2,4.4,4.3,0.0",
+    ]
 
 
 @pytest.mark.asyncio

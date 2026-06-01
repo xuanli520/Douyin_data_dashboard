@@ -8,7 +8,6 @@ from typing import Protocol
 from src.scrapers.shop_dashboard.lock_manager import LockManager
 from src.scrapers.shop_dashboard.login_state_manager import LoginStateManager
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
-from src.scrapers.shop_dashboard.session_bootstrapper import SessionBootstrapper
 from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
 from src.shared.idempotency import FunboostIdempotencyHelper
 
@@ -48,12 +47,6 @@ class CollectionExecutor(Protocol):
         redis_client: Any,
     ) -> LoginStateManager: ...
 
-    def create_bootstrapper(
-        self,
-        *,
-        state_store: SessionStateStore,
-    ) -> SessionBootstrapper: ...
-
     def build_business_key(
         self,
         runtime: ShopDashboardRuntimeConfig,
@@ -68,6 +61,7 @@ class CollectionExecutor(Protocol):
         *,
         runtime: ShopDashboardRuntimeConfig,
         metric_date: str,
+        plan_unit: Any | None = None,
         lock_manager: LockManager,
         state_store: SessionStateStore,
         login_state_manager: LoginStateManager,
@@ -147,20 +141,6 @@ class TaskModuleCollectionExecutor:
             redis_client=redis_client,
         )
 
-    def create_bootstrapper(
-        self,
-        *,
-        state_store: SessionStateStore,
-    ) -> SessionBootstrapper:
-        bootstrapper_cls = getattr(
-            self._task_module,
-            "SessionBootstrapper",
-            SessionBootstrapper,
-        )
-        return bootstrapper_cls(
-            state_store=state_store,
-        )
-
     def build_business_key(
         self,
         runtime: ShopDashboardRuntimeConfig,
@@ -190,6 +170,7 @@ class TaskModuleCollectionExecutor:
         *,
         runtime: ShopDashboardRuntimeConfig,
         metric_date: str,
+        plan_unit: Any | None = None,
         lock_manager: LockManager,
         state_store: SessionStateStore,
         login_state_manager: LoginStateManager,
@@ -202,6 +183,7 @@ class TaskModuleCollectionExecutor:
         if not callable(collect_one_day):
             raise AttributeError("missing collection entrypoint")
         keyword_args = {
+            "plan_unit": plan_unit,
             "lock_manager": lock_manager,
             "state_store": state_store,
             "login_state_manager": login_state_manager,

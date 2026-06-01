@@ -3,8 +3,15 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import Depends
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.agent.exceptions import RecipeValidationError
+from src.core.agent.models import Recipe
+from src.domains.agent_recipe.repository import AgentRecipeRepository
+from src.domains.agent_recipe.validation import is_shop_score_recipe
+from src.domains.agent_recipe.validation import validate_shop_score_recipe
+from src.domains.agent_recipe.validation import validate_stable_recipe
 from src.domains.collection_job.enums import CollectionJobStatus
 from src.domains.collection_job.models import CollectionJob
 from src.domains.collection_job.repository import CollectionJobRepository
@@ -31,6 +38,7 @@ from src.exceptions import BusinessException
 from src.scrapers.shop_dashboard.shop_selection_validator import (
     ensure_explicit_shop_selection_valid,
     has_explicit_shop_selection,
+    normalize_shop_selection,
     normalize_shop_selection_payload,
 )
 from src.session import get_session
@@ -91,6 +99,7 @@ class ScrapingRuleService:
                     ErrorCode.DATA_VALIDATION_FAILED,
                     str(exc),
                 ) from exc
+        await self._validate_agent_recipe_config(normalized_config)
         rule_data.update(
             ScrapingRuleConfigMapper.map_to_model_fields(normalized_config)
         )
@@ -236,6 +245,13 @@ class ScrapingRuleService:
                         ErrorCode.DATA_VALIDATION_FAILED,
                         str(exc),
                     ) from exc
+            current_config = ScrapingRuleConfigMapper.build_config_from_model(rule)
+            await self._validate_agent_recipe_config(
+                {
+                    **current_config,
+                    **normalized_config,
+                }
+            )
             update_data.update(
                 ScrapingRuleConfigMapper.map_to_model_fields(normalized_config)
             )
@@ -391,6 +407,42 @@ class ScrapingRuleService:
             data_source_name=rule.data_source.name if rule.data_source else None,
         )
 
+    async def _validate_agent_recipe_config(self, config: dict[str, Any]) -> None:
+        needs_stable = _needs_stable_agent_recipe(config)
+        recipe_ref = _agent_recipe_ref(config.get("agent_recipe"))
+        if recipe_ref is None:
+            if needs_stable:
+                raise BusinessException(
+                    ErrorCode.DATA_VALIDATION_FAILED,
+                    "Stable Agent Recipe is required for all-shop collection",
+                )
+            return
+
+        recipe = await AgentRecipeRepository(self.session).get_active_version(
+            recipe_ref["namespace"],
+            recipe_ref["key"],
+            recipe_ref["version"],
+        )
+        if recipe is None:
+            raise BusinessException(
+                ErrorCode.DATA_VALIDATION_FAILED,
+                "Agent Recipe is not active or does not exist",
+            )
+        if needs_stable and recipe.stability != "stable":
+            raise BusinessException(
+                ErrorCode.DATA_VALIDATION_FAILED,
+                "All-shop collection requires stable Agent Recipe",
+            )
+
+        try:
+            parsed = Recipe.model_validate(_agent_recipe_payload_from_model(recipe))
+            if needs_stable or recipe.stability == "stable":
+                validate_stable_recipe(parsed)
+            elif is_shop_score_recipe(recipe.namespace, recipe.key):
+                validate_shop_score_recipe(parsed)
+        except (ValidationError, RecipeValidationError, ValueError) as exc:
+            raise BusinessException(ErrorCode.DATA_VALIDATION_FAILED, str(exc)) from exc
+
 
 async def get_scraping_rule_service(
     session: AsyncSession = Depends(get_session),
@@ -400,3 +452,73 @@ async def get_scraping_rule_service(
         session=session,
         data_source_lookup=ds_repo.get_by_id,
     )
+
+
+def _needs_stable_agent_recipe(config: dict[str, Any]) -> bool:
+    selection_payload = _agent_recipe_shop_selection_payload(config)
+    if selection_payload is None:
+        return False
+    selection = normalize_shop_selection(selection_payload)
+    return selection.all or len(selection.shop_ids) != 1
+
+
+def _agent_recipe_shop_selection_payload(
+    config: dict[str, Any],
+) -> dict[str, Any] | None:
+    payload = {
+        key: config[key] for key in ("all", "shop_id", "shop_ids") if key in config
+    }
+    filters = config.get("filters")
+    if (
+        isinstance(filters, dict)
+        and "shop_id" in filters
+        and "shop_id" not in payload
+        and "shop_ids" not in payload
+    ):
+        payload["shop_ids"] = filters["shop_id"]
+    return payload or None
+
+
+def _agent_recipe_ref(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise BusinessException(
+            ErrorCode.DATA_VALIDATION_FAILED,
+            "Agent Recipe is invalid",
+        )
+    namespace = str(value.get("namespace") or "").strip()
+    key = str(value.get("key") or "").strip()
+    version = _positive_int(value.get("version"))
+    if not namespace or not key or version is None:
+        raise BusinessException(
+            ErrorCode.DATA_VALIDATION_FAILED,
+            "Agent Recipe version is required",
+        )
+    return {
+        "namespace": namespace,
+        "key": key,
+        "version": version,
+    }
+
+
+def _positive_int(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _agent_recipe_payload_from_model(recipe: Any) -> dict[str, Any]:
+    return {
+        "namespace": recipe.namespace,
+        "key": recipe.key,
+        "version": recipe.version,
+        "entrypoint": recipe.entrypoint,
+        "steps": recipe.steps,
+        "observations": recipe.observations,
+        "assertions": recipe.assertions,
+        "recovery_policy": recipe.recovery_policy,
+        "security_policy": recipe.security_policy,
+    }

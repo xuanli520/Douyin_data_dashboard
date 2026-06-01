@@ -1,0 +1,15 @@
+{
+  "name": "douyin-data-dashboard-browser-agent",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "@playwright/cli": "0.1.13"
+  },
+  "scripts": {
+    "playwright-cli": "playwright-cli"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

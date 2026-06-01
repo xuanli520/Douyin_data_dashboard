@@ -1,0 +1,54 @@
+login_recipe:
+  entrypoint: https://fxg.jinritemai.com/login/common
+  steps:
+    - id: fill_phone
+      action: fill
+      target: 手机号码
+      locators:
+        - css: "input[placeholder*='手机号']"
+        - role: spinbutton
+          name: 手机号码
+        - text: 手机号码
+      value_from: phone
+    - id: send_code
+      action: click
+      target: 发送验证码
+      locators:
+        - css: ".account-center-code-captcha.active"
+        - text: 获取验证码
+        - text: 发送验证码
+    - id: request_code
+      action: request_verification_code
+    - id: fill_code
+      action: fill
+      target: 验证码
+      locators:
+        - css: "input[placeholder*='验证码']"
+        - role: spinbutton
+          name: 验证码
+      value_from: code
+    - id: accept_doudian_policy
+      action: click
+      target: 抖店协议
+      locators:
+        - css: ".auxo-checkbox"
+        - css: ".auxo-checkbox-wrapper"
+    - id: select_shop
+      action: click_js
+      target: 店铺
+      optional: true
+      locators:
+        - text: 抖店工作台
+        - text: 普通店
+        - text: 初始化
+    - id: submit_login
+      action: click_js
+      target: 登录按钮
+      optional: true
+      locators:
+        - css: "button.account-center-action-button"
+        - css: ".account-center-action-button"
+        - role: button
+          name: 登录
+    - id: check_login
+      action: check_login_status
