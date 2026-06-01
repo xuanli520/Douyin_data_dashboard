@@ -195,8 +195,14 @@ def _recipe_payload() -> dict[str, Any]:
     return {
         "entrypoint": {"url": "https://example.test/dashboard"},
         "steps": [{"id": "open", "action": "goto"}],
-        "observations": {"total": {"locator": ".total"}},
-        "assertions": [{"type": "exists", "observation": "total"}],
+        "observations": {
+            "total": {
+                "id": "total",
+                "kind": "text",
+                "locator": {"kind": "css", "value": ".total"},
+            }
+        },
+        "assertions": [{"id": "total_exists", "kind": "exists", "source": "total"}],
         "recovery_policy": {"enabled": True, "max_attempts": 1},
         "security_policy": {"allowed_origins": ["https://example.test"]},
     }
@@ -206,6 +212,8 @@ async def _seed_agent_recipe(
     test_db,
     *,
     stability: str = "candidate",
+    version: int = 1,
+    payload: dict[str, Any] | None = None,
 ):
     async with test_db() as db_session:
         repo = AgentRecipeRepository(db_session)
@@ -213,8 +221,9 @@ async def _seed_agent_recipe(
             {
                 "namespace": "shop_dashboard",
                 "key": "overview",
+                "version": version,
                 "stability": stability,
-                **_recipe_payload(),
+                **(payload or _recipe_payload()),
             }
         )
         await db_session.commit()
@@ -655,6 +664,90 @@ async def test_batch_collection_allows_stable_recipe_and_disables_recovery(
     assert seen_extra_config[0]["agent_batch_mode"] is True
     assert seen_extra_config[0]["agent_recovery_enabled"] is False
     assert seen_extra_config[0]["agent_recipe_inline"]["stability"] == "stable"
+
+
+@pytest.mark.asyncio
+async def test_batch_collection_falls_back_to_older_valid_stable_recipe(
+    test_db,
+    monkeypatch,
+):
+    await _seed_agent_recipe(
+        test_db,
+        stability=AGENT_RECIPE_STABILITY_STABLE,
+        version=1,
+    )
+    await _seed_agent_recipe(
+        test_db,
+        stability=AGENT_RECIPE_STABILITY_STABLE,
+        version=2,
+        payload={
+            "entrypoint": {"url": "https://example.test/dashboard"},
+            "steps": [{"id": "open", "action": "goto"}],
+            "observations": {},
+            "assertions": [],
+            "recovery_policy": {"enabled": True, "max_attempts": 1},
+            "security_policy": {"allowed_origins": ["https://example.test"]},
+        },
+    )
+    data_source_id, rule_id = await _seed_entities(
+        test_db,
+        ds_extra_config={
+            "agent_recipe": {"namespace": "shop_dashboard", "key": "overview"}
+        },
+        rule_filters={"shop_id": ["shop-1", "shop-2"]},
+    )
+    seen_extra_config = []
+    monkeypatch.setattr(
+        db_session_module,
+        "async_session_factory",
+        test_db,
+        raising=False,
+    )
+
+    def _collect_success(runtime_config, metric_date, **kwargs):
+        _ = kwargs
+        seen_extra_config.append(dict(runtime_config.extra_config or {}))
+        return {
+            "status": "success",
+            "shop_id": runtime_config.shop_id,
+            "actual_shop_id": runtime_config.shop_id,
+            "metric_date": metric_date,
+            "rule_id": runtime_config.rule_id,
+            "execution_id": runtime_config.execution_id,
+            "source": "browser_agent",
+            "total_score": 4.8,
+            "product_score": 4.7,
+            "logistics_score": 4.9,
+            "service_score": 4.6,
+            "bad_behavior_score": 0.0,
+            "reviews": {"summary": {}, "items": []},
+            "violations": {"summary": {}, "waiting_list": []},
+            "raw": {},
+        }
+
+    monkeypatch.setattr(module, "_collect_one_day", _collect_success)
+    monkeypatch.setattr(module, "SessionStateStore", _FakeStateStore)
+    monkeypatch.setattr(module, "LockManager", _FakeLockManager)
+    monkeypatch.setattr(module, "LoginStateManager", _FakeLoginStateManager)
+    monkeypatch.setattr(
+        module,
+        "_materialize_runtime_storage_state",
+        lambda runtime, _store: runtime,
+    )
+
+    result = await CollectionUseCase()._execute_async(
+        data_source_id=data_source_id,
+        rule_id=rule_id,
+        execution_id="exec-batch-stable-fallback",
+        queue_task_id="queue-batch-stable-fallback",
+        triggered_by=1,
+        overrides={},
+        redis_client=_FakeRedis(),
+    )
+
+    assert result["completed_units"] == 2
+    assert len(seen_extra_config) == 2
+    assert seen_extra_config[0]["agent_recipe_inline"]["version"] == 1
 
 
 @pytest.mark.asyncio

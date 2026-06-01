@@ -6,11 +6,19 @@ from src.domains.agent_recipe.services import AgentRecipeService
 def _recipe_payload() -> dict:
     return {
         "entrypoint": {"url": "https://example.com"},
-        "steps": [{"action": "goto", "target": "dashboard"}],
-        "observations": {"shop_name": {"locator": "#shop-name"}},
-        "assertions": [{"type": "exists", "observation": "shop_name"}],
+        "steps": [{"id": "open", "action": "goto"}],
+        "observations": {
+            "shop_name": {
+                "id": "shop_name",
+                "kind": "text",
+                "locator": {"kind": "css", "value": "#shop-name"},
+            }
+        },
+        "assertions": [
+            {"id": "shop_name_exists", "kind": "exists", "source": "shop_name"}
+        ],
         "recovery_policy": {"max_attempts": 1},
-        "security_policy": {"allowed_domains": ["example.com"]},
+        "security_policy": {"allowed_origins": ["https://example.com"]},
     }
 
 
@@ -31,11 +39,19 @@ async def test_agent_recipe_version_rows_are_append_only(test_db):
                 key="overview",
                 expected_version=1,
                 entrypoint={"url": "https://example.com/v2"},
-                steps=[{"action": "goto", "target": "summary"}],
-                observations={"summary": {"locator": "#summary"}},
-                assertions=[{"type": "exists", "observation": "summary"}],
+                steps=[{"id": "open", "action": "goto"}],
+                observations={
+                    "summary": {
+                        "id": "summary",
+                        "kind": "text",
+                        "locator": {"kind": "css", "value": "#summary"},
+                    }
+                },
+                assertions=[
+                    {"id": "summary_exists", "kind": "exists", "source": "summary"}
+                ],
                 recovery_policy={"max_attempts": 2},
-                security_policy={"allowed_domains": ["example.com"]},
+                security_policy={"allowed_origins": ["https://example.com"]},
             )
         )
 

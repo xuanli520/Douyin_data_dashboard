@@ -20,6 +20,9 @@ from src.core.agent.recovery import RecoveryResult
 from src.core.agent.recovery import RecoveryService
 from src.config.shop_dashboard import resolve_llm_endpoint
 from src.domains.agent_recipe.repository import AgentRecipeRepository
+from src.domains.agent_recipe.validation import is_shop_score_recipe
+from src.domains.agent_recipe.validation import validate_shop_score_recipe
+from src.domains.agent_recipe.validation import validate_stable_recipe
 from src.scrapers.shop_dashboard.exceptions import DataIncompleteError
 from src.scrapers.shop_dashboard.exceptions import LoginExpiredError
 from src.scrapers.shop_dashboard.exceptions import ShopDashboardScraperError
@@ -194,7 +197,9 @@ class BrowserAgentAdapter:
             else dict(value)
         )
         recipe_id = _extract_int(payload.get("id") or payload.get("recipe_id"))
+        stability = str(payload.get("stability") or "").strip()
         recipe = self._recipe_from_payload(payload)
+        _validate_loaded_recipe(recipe, stability=stability)
         stored_payload = recipe.model_dump(mode="json")
         if recipe_id is not None:
             stored_payload["id"] = recipe_id
@@ -252,6 +257,13 @@ class BrowserAgentAdapter:
         async def _load() -> Any | None:
             async with session_factory() as db_session:
                 repository = AgentRecipeRepository(db_session)
+                version = _extract_int(recipe_ref.get("version"))
+                if version is not None:
+                    return await repository.get_active_version(
+                        namespace,
+                        key,
+                        version,
+                    )
                 return await repository.get_active(namespace, key)
 
         return session_module.run_coro(_load())
@@ -571,6 +583,9 @@ async def load_agent_recipe_from_db(
     if not namespace or not key:
         return None
     repository = AgentRecipeRepository(session)
+    version = _extract_int(recipe_ref.get("version"))
+    if version is not None:
+        return await repository.get_active_version(namespace, key, version)
     return await repository.get_active(namespace, key)
 
 
@@ -672,6 +687,21 @@ def _validate_required_output(payload: dict[str, Any]) -> None:
             raise DataIncompleteError(
                 f"browser_agent_output_invalid_score_field: {field}"
             ) from exc
+
+
+def _validate_loaded_recipe(recipe: Recipe, *, stability: str = "") -> None:
+    if not is_shop_score_recipe(recipe.namespace, recipe.key):
+        return
+    try:
+        if stability == "stable":
+            validate_stable_recipe(recipe)
+        else:
+            validate_shop_score_recipe(recipe)
+    except ValueError as exc:
+        raise ShopDashboardScraperError(
+            str(exc),
+            error_data={"reason": "agent_recipe_invalid"},
+        ) from exc
 
 
 def _requires_dashboard_scores(runtime: ShopDashboardRuntimeConfig) -> bool:
@@ -868,6 +898,7 @@ def _extract_recipe_id(value: Any) -> int | None:
 
 def _extract_int(value: Any) -> int | None:
     try:
-        return int(value)
+        parsed = int(value)
     except (TypeError, ValueError):
         return None
+    return parsed if parsed > 0 else None

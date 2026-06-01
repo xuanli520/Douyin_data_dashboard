@@ -9,6 +9,7 @@ from fastapi import (
     Depends,
     File,
     HTTPException,
+    Query,
     UploadFile,
     WebSocket,
     status,
@@ -20,16 +21,23 @@ from src.auth import User, current_user
 from src.auth.permissions import ShopDashboardPermission
 from src.auth.rbac import require_permissions
 from src.api.v1.agent_auth import authorize_agent_websocket
+from src.config import get_settings
 from src.core.agent.discovery_event_store import (
     DiscoveryEventStore,
     _RUN_EVENTS as _STORE_RUN_EVENTS,
     stream_events,
+)
+from src.domains.agent_recipe.discovery_state import (
+    inspect_discovery_storage_state_async,
+    resolve_discovery_storage_state_path_async,
 )
 from src.domains.agent_recipe.schemas import AgentRecipeMarkStable
 from src.domains.agent_recipe.services import (
     AgentRecipeService,
     get_agent_recipe_service,
 )
+from src.domains.agent_recipe.validation import SHOP_SCORE_RECIPE_REF
+from src.domains.agent_recipe.validation import is_shop_score_recipe
 from src.responses.base import Response
 
 router = APIRouter(prefix="/agent-discovery", tags=["agent-discovery"])
@@ -46,8 +54,8 @@ class AgentDiscoveryRequest(BaseModel):
     account_id: str | None = Field(default=None, min_length=1, max_length=128)
     goal: str = Field(..., min_length=1)
     entrypoint_url: str = Field(..., min_length=1)
-    namespace_hint: str | None = None
-    key_hint: str | None = None
+    namespace_hint: str | None = SHOP_SCORE_RECIPE_REF[0]
+    key_hint: str | None = SHOP_SCORE_RECIPE_REF[1]
     max_steps: int | None = Field(default=None, ge=1, le=100)
 
 
@@ -63,6 +71,7 @@ async def trigger_agent_discovery(
     _user: User = Depends(current_user),
     _=Depends(require_permissions(_DISCOVERY_PERMISSION, bypass_superuser=True)),
 ) -> Response[dict[str, Any]]:
+    await _ensure_discovery_login_state(payload)
     run_id = uuid4().hex
     append_discovery_event(
         run_id,
@@ -84,6 +93,27 @@ async def trigger_agent_discovery(
     )
 
 
+@router.get("/login-state", response_model=Response[dict[str, Any]])
+async def get_agent_discovery_login_state(
+    account_id: str = Query(..., min_length=1, max_length=128),
+    shop_id: str | None = Query(default=None, min_length=1, max_length=128),
+    _user: User = Depends(current_user),
+    _=Depends(require_permissions(_DISCOVERY_PERMISSION, bypass_superuser=True)),
+) -> Response[dict[str, Any]]:
+    state = await inspect_discovery_storage_state_async(
+        get_settings().shop_dashboard,
+        account_id,
+        shop_id,
+    )
+    return Response.success(
+        data={
+            "account_id": account_id,
+            "shop_id": shop_id,
+            **state,
+        }
+    )
+
+
 @router.post(
     "/recipes/{recipe_id}/mark-stable",
     response_model=Response[dict[str, Any]],
@@ -95,12 +125,18 @@ async def mark_agent_recipe_stable(
     _=Depends(require_permissions(_DISCOVERY_PERMISSION, bypass_superuser=True)),
     service: AgentRecipeService = Depends(get_agent_recipe_service),
 ) -> Response[dict[str, Any]]:
-    updated = await service.mark_stable(
-        AgentRecipeMarkStable(
-            recipe_id=recipe_id,
-            expected_version=payload.expected_version,
+    try:
+        updated = await service.mark_stable(
+            AgentRecipeMarkStable(
+                recipe_id=recipe_id,
+                expected_version=payload.expected_version,
+            )
         )
-    )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
     if not updated:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -163,7 +199,7 @@ async def import_agent_recipe(
         recipe = await service.import_recipe(await file.read())
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
     if recipe is None:
@@ -244,8 +280,8 @@ def _publish_discovery_task(
             account_id=payload.account_id,
             goal=payload.goal,
             entrypoint_url=payload.entrypoint_url,
-            namespace_hint=payload.namespace_hint,
-            key_hint=payload.key_hint,
+            namespace_hint=payload.namespace_hint or SHOP_SCORE_RECIPE_REF[0],
+            key_hint=payload.key_hint or SHOP_SCORE_RECIPE_REF[1],
             max_steps=payload.max_steps,
         )
     except Exception:
@@ -264,4 +300,26 @@ def _publish_discovery_task(
                 "status": "failed",
                 "message": "failed to enqueue discovery task",
             },
+        )
+
+
+async def _ensure_discovery_login_state(payload: AgentDiscoveryRequest) -> None:
+    namespace = payload.namespace_hint or SHOP_SCORE_RECIPE_REF[0]
+    key = payload.key_hint or SHOP_SCORE_RECIPE_REF[1]
+    if not is_shop_score_recipe(namespace, key):
+        return
+    if not payload.account_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="shop dashboard account_id is required before discovery",
+        )
+    storage_state_path = await resolve_discovery_storage_state_path_async(
+        get_settings().shop_dashboard,
+        payload.account_id,
+        payload.shop_id,
+    )
+    if storage_state_path is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="shop dashboard login state is required before discovery",
         )

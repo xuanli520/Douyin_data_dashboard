@@ -56,8 +56,8 @@ class RecipeGenerator:
         if not isinstance(value, Mapping):
             raise RecipeGenerationError("recipe must be an object")
         recipe = _unwrap_recipe(value)
-        namespace = str(recipe.get("namespace") or request.namespace_hint or "").strip()
-        key = str(recipe.get("key") or request.key_hint or "").strip()
+        namespace = str(request.namespace_hint or recipe.get("namespace") or "").strip()
+        key = str(request.key_hint or recipe.get("key") or "").strip()
         if namespace:
             recipe["namespace"] = namespace
         if key:
@@ -181,7 +181,6 @@ class RecipeGenerator:
         if not isinstance(value, list):
             raise RecipeGenerationError("assertions must be a list")
         allowed_sources = set(observation_ids)
-        allowed_sources.update({"current_url", "page_title"})
         for assertion in value:
             if not isinstance(assertion, Mapping):
                 raise RecipeGenerationError("assertion must be an object")

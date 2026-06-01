@@ -1,17 +1,23 @@
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from src import session as session_module
 from src.application.collection.browser_agent_adapter import BrowserAgentAdapter
+from src.domains.agent_recipe.models import AGENT_RECIPE_STABILITY_CANDIDATE
 from src.core.agent.models import Failure
 from src.core.agent.models import RunResult
+from src.domains.agent_recipe.models import AGENT_RECIPE_STABILITY_STABLE
+from src.domains.agent_recipe.repository import AgentRecipeRepository
 from src.scrapers.shop_dashboard.exceptions import DataIncompleteError
+from src.scrapers.shop_dashboard.exceptions import ShopDashboardScraperError
 from src.scrapers.shop_dashboard.runtime import ShopDashboardRuntimeConfig
 from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
 
 
-def _runtime(extra_config=None):
+def _runtime(extra_config=None, agent_recipe_ref=None):
     return ShopDashboardRuntimeConfig(
         shop_mode="EXACT",
         resolved_shop_ids=["1001"],
@@ -38,7 +44,8 @@ def _runtime(extra_config=None):
         rule_id=9,
         execution_id="exec-1",
         common_query={},
-        agent_recipe_ref={"namespace": "generic", "key": "overview"},
+        agent_recipe_ref=agent_recipe_ref
+        or {"namespace": "generic", "key": "overview"},
         extra_config=extra_config or {},
         account_id="acct-1",
     )
@@ -64,6 +71,41 @@ def _recipe():
         "recovery_policy": {"enabled": True, "max_attempts": 1},
         "security_policy": {"allowed_origins": ["https://example.test"]},
     }
+
+
+def _shop_score_recipe(**overrides):
+    fields = (
+        "total_score",
+        "product_score",
+        "logistics_score",
+        "service_score",
+        "bad_behavior_score",
+    )
+    recipe = {
+        "namespace": "douyin_shop_dashboard",
+        "key": "experience_score_single_page",
+        "version": 1,
+        "stability": AGENT_RECIPE_STABILITY_STABLE,
+        "entrypoint": {"url": "https://fxg.jinritemai.com/tps/score/home"},
+        "steps": [{"id": "open", "action": "goto"}],
+        "observations": {
+            field: {
+                "id": field,
+                "kind": "text",
+                "locator": {"kind": "css", "value": f"#{field}"},
+                "parser": "number",
+                "required": True,
+            }
+            for field in fields
+        },
+        "assertions": [
+            {"id": f"{field}_required", "kind": "not_empty", "source": field}
+            for field in fields
+        ],
+        "security_policy": {"allowed_origins": ["https://fxg.jinritemai.com"]},
+    }
+    recipe.update(overrides)
+    return recipe
 
 
 def _agent_output(**overrides):
@@ -316,3 +358,82 @@ def test_browser_agent_adapter_disables_recovery_in_batch_mode(tmp_path):
         )
 
     assert exc_info.value.error_data["failure_kind"] == "observation_empty"
+
+
+def test_browser_agent_adapter_rejects_invalid_shop_score_recipe_from_db(
+    tmp_path,
+    test_db,
+    monkeypatch,
+):
+    async def _seed():
+        async with test_db() as session:
+            await AgentRecipeRepository(session).create(
+                _shop_score_recipe(observations={}, assertions=[])
+            )
+            await session.commit()
+
+    asyncio.run(_seed())
+    monkeypatch.setattr(
+        session_module,
+        "async_session_factory",
+        test_db,
+        raising=False,
+    )
+
+    adapter = BrowserAgentAdapter(
+        crawler_factory=lambda _path, _context: SimpleNamespace(
+            run=lambda _recipe, _context: (_ for _ in ()).throw(
+                AssertionError("invalid recipe should not run")
+            )
+        ),
+        settings=SimpleNamespace(
+            agent_browser_headed=False,
+            agent_allowed_origins=["https://fxg.jinritemai.com"],
+            agent_artifact_dir=str(tmp_path / "artifacts"),
+        ),
+    )
+
+    with pytest.raises(ShopDashboardScraperError) as exc_info:
+        adapter.collect(
+            runtime=_runtime(agent_recipe_ref={
+                "namespace": "douyin_shop_dashboard",
+                "key": "experience_score_single_page",
+                "version": 1,
+            }),
+            metric_date="2026-03-01",
+            state_store=SessionStateStore(tmp_path),
+        )
+
+    assert str(exc_info.value) == "agent recipe observations are required before stable"
+    assert exc_info.value.error_data["reason"] == "agent_recipe_invalid"
+
+
+def test_browser_agent_adapter_allows_valid_candidate_shop_score_recipe(tmp_path):
+    adapter = BrowserAgentAdapter(
+        crawler_factory=lambda _path, _context: SimpleNamespace(
+            run=lambda _recipe, _context: RunResult(
+                status="succeeded",
+                output=_agent_output(),
+            )
+        ),
+        settings=SimpleNamespace(
+            agent_browser_headed=False,
+            agent_allowed_origins=["https://fxg.jinritemai.com"],
+            agent_artifact_dir=str(tmp_path / "artifacts"),
+        ),
+    )
+
+    payload = adapter.collect(
+        runtime=_runtime(
+            {
+                "agent_recipe_inline": _shop_score_recipe(
+                    stability=AGENT_RECIPE_STABILITY_CANDIDATE
+                )
+            }
+        ),
+        metric_date="2026-03-01",
+        state_store=SessionStateStore(tmp_path),
+    )
+
+    assert payload["source"] == "browser_agent"
+    assert payload["total_score"] == 90

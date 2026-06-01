@@ -7,6 +7,8 @@ from fastapi import Depends
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.agent.exceptions import RecipeValidationError
+from src.core.agent.models import Recipe
 from src.domains.agent_recipe.repository import AgentRecipeRepository
 from src.domains.agent_recipe.schemas import (
     AgentRecipeCreate,
@@ -18,6 +20,7 @@ from src.domains.agent_recipe.schemas import (
     AgentRecipeResponse,
     AgentRecipeVersionCreate,
 )
+from src.domains.agent_recipe.validation import validate_stable_recipe
 from src.session import get_session
 
 
@@ -31,7 +34,7 @@ class AgentRecipeService:
         self.recipe_repo = recipe_repo or AgentRecipeRepository(session=session)
 
     async def create(self, data: AgentRecipeCreate) -> AgentRecipeResponse:
-        recipe = await self.recipe_repo.create(data.model_dump())
+        recipe = await self.recipe_repo.create(_recipe_create_data(data))
         await self._commit()
         return AgentRecipeResponse.model_validate(recipe)
 
@@ -52,12 +55,18 @@ class AgentRecipeService:
         namespace: str,
         key: str,
     ) -> AgentRecipeResponse | None:
-        recipe = await self.recipe_repo.get_stable_active(namespace, key)
-        if recipe is None:
-            if self.session.in_transaction():
-                await self.session.rollback()
-            return None
-        return AgentRecipeResponse.model_validate(recipe)
+        recipes = await self.recipe_repo.list_versions(namespace, key)
+        for recipe in recipes:
+            if recipe.status != "active" or recipe.stability != "stable":
+                continue
+            try:
+                _validate_stable_recipe(_recipe_payload_from_model(recipe))
+            except ValueError:
+                continue
+            return AgentRecipeResponse.model_validate(recipe)
+        if self.session.in_transaction():
+            await self.session.rollback()
+        return None
 
     async def list_versions(
         self,
@@ -80,6 +89,7 @@ class AgentRecipeService:
                     "version": item.version,
                     "status": item.status,
                     "stability": item.stability,
+                    "validation_error": _recipe_validation_error(item),
                 }
                 for item in recipes
             ]
@@ -100,12 +110,9 @@ class AgentRecipeService:
 
         recipe = await self.recipe_repo.create_next_version(
             current_recipe=current_recipe,
-            data=data.model_dump(
-                exclude={
-                    "namespace",
-                    "key",
-                    "expected_version",
-                }
+            data=_recipe_version_data(
+                data,
+                version=(current_recipe.version or 0) + 1,
             ),
         )
         await self._commit()
@@ -125,6 +132,9 @@ class AgentRecipeService:
         return True
 
     async def mark_stable(self, data: AgentRecipeMarkStable) -> bool:
+        recipe = await self.recipe_repo.get_by_id(data.recipe_id)
+        if recipe is not None and recipe.version == data.expected_version:
+            _validate_stable_recipe(_recipe_payload_from_model(recipe))
         updated = await self.recipe_repo.mark_stable(
             recipe_id=data.recipe_id,
             expected_version=data.expected_version,
@@ -172,7 +182,7 @@ class AgentRecipeService:
             if self.session.in_transaction():
                 await self.session.rollback()
             return None
-        recipe = await self.recipe_repo.create(
+        recipe_data = _recipe_create_data(
             AgentRecipeCreate(
                 namespace=document.namespace,
                 key=document.key,
@@ -183,8 +193,9 @@ class AgentRecipeService:
                 assertions=document.assertions,
                 recovery_policy=document.recovery_policy,
                 security_policy=document.security_policy,
-            ).model_dump()
+            )
         )
+        recipe = await self.recipe_repo.create(recipe_data)
         await self._commit()
         return AgentRecipeImportResponse(
             id=recipe.id or 0,
@@ -219,6 +230,63 @@ def _load_export_payload(content: bytes | str) -> AgentRecipeExportPayload:
         return AgentRecipeExportPayload.model_validate(_normalize_recipe_export(raw))
     except ValidationError as exc:
         raise ValueError("invalid agent recipe payload") from exc
+
+
+def _recipe_create_data(data: AgentRecipeCreate) -> dict[str, Any]:
+    recipe = _validated_recipe(data.model_dump())
+    if data.stability == "stable":
+        validate_stable_recipe(recipe)
+    payload = recipe.model_dump(mode="json", exclude={"metadata"})
+    payload["status"] = data.status
+    payload["stability"] = data.stability
+    return payload
+
+
+def _recipe_version_data(data: AgentRecipeVersionCreate, *, version: int) -> dict[str, Any]:
+    raw = data.model_dump(exclude={"expected_version"})
+    raw["version"] = version
+    recipe = _validated_recipe(raw)
+    return recipe.model_dump(
+        mode="json",
+        exclude={"namespace", "key", "version", "metadata"},
+    )
+
+
+def _validated_recipe(raw: dict[str, Any]) -> Recipe:
+    try:
+        return Recipe.model_validate(_normalize_recipe_document(raw))
+    except (ValidationError, RecipeValidationError, ValueError) as exc:
+        raise ValueError("invalid agent recipe payload") from exc
+
+
+def _recipe_payload_from_model(recipe: Any) -> dict[str, Any]:
+    return {
+        "namespace": recipe.namespace,
+        "key": recipe.key,
+        "version": recipe.version,
+        "entrypoint": recipe.entrypoint,
+        "steps": recipe.steps,
+        "observations": recipe.observations,
+        "assertions": recipe.assertions,
+        "recovery_policy": recipe.recovery_policy,
+        "security_policy": recipe.security_policy,
+    }
+
+
+def _validate_stable_recipe(raw: dict[str, Any]) -> Recipe:
+    recipe = _validated_recipe(raw)
+    validate_stable_recipe(recipe)
+    return recipe
+
+
+def _recipe_validation_error(recipe: Any) -> str | None:
+    if recipe.status != "active" or recipe.stability != "stable":
+        return None
+    try:
+        _validate_stable_recipe(_recipe_payload_from_model(recipe))
+    except ValueError as exc:
+        return str(exc)
+    return None
 
 
 def _normalize_recipe_export(raw: Any) -> dict[str, Any]:

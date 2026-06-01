@@ -467,6 +467,11 @@ class DataSourceService:
                 {
                     "extra_config": extra_config,
                     "updated_by_id": user_id,
+                    "last_error_at": None,
+                    "last_error_msg": None,
+                    "status": ModelDataSourceStatus.ACTIVE
+                    if ds.status == ModelDataSourceStatus.ERROR
+                    else ds.status,
                 },
             )
         )
@@ -606,6 +611,8 @@ class DataSourceService:
 
     def _build_data_source_config(self, ds: DataSource) -> dict[str, Any]:
         config = dict(ds.extra_config or {})
+        if not _has_valid_storage_state_cookies(config):
+            config.pop("shop_dashboard_login_state_meta", None)
         config.pop("shop_dashboard_login_state", None)
         return config
 

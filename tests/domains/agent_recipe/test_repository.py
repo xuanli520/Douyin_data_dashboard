@@ -77,6 +77,35 @@ class TestAgentRecipeRepositoryIntegration:
             assert active.version == 3
             assert stable is None
 
+    async def test_get_active_version_requires_requested_active_version(self, test_db):
+        async with test_db() as session:
+            repo = AgentRecipeRepository(session)
+            await repo.create(
+                {
+                    "namespace": "shop_dashboard",
+                    "key": "overview",
+                    "version": 1,
+                    "status": AGENT_RECIPE_STATUS_DISABLED,
+                    **_recipe_payload(),
+                }
+            )
+            await repo.create(
+                {
+                    "namespace": "shop_dashboard",
+                    "key": "overview",
+                    "version": 2,
+                    "status": AGENT_RECIPE_STATUS_ACTIVE,
+                    **_recipe_payload(),
+                }
+            )
+
+            disabled = await repo.get_active_version("shop_dashboard", "overview", 1)
+            active = await repo.get_active_version("shop_dashboard", "overview", 2)
+
+            assert disabled is None
+            assert active is not None
+            assert active.version == 2
+
     async def test_get_stable_active_returns_highest_stable_version(self, test_db):
         async with test_db() as session:
             repo = AgentRecipeRepository(session)
@@ -104,7 +133,7 @@ class TestAgentRecipeRepositoryIntegration:
             assert stable.version == 1
             assert stable.stability == AGENT_RECIPE_STABILITY_STABLE
 
-    async def test_create_next_version_disables_current_active(self, test_db):
+    async def test_create_next_candidate_keeps_current_active(self, test_db):
         async with test_db() as session:
             repo = AgentRecipeRepository(session)
             created = await repo.create(
@@ -136,10 +165,46 @@ class TestAgentRecipeRepositoryIntegration:
             assert next_recipe.version == 2
             assert next_recipe.stability == AGENT_RECIPE_STABILITY_CANDIDATE
             assert previous is not None
-            assert previous.status == AGENT_RECIPE_STATUS_DISABLED
+            assert previous.status == AGENT_RECIPE_STATUS_ACTIVE
             assert active is not None
             assert active.id == next_recipe.id
             assert [item.version for item in versions] == [2, 1]
+
+    async def test_create_next_stable_keeps_current_active_for_pinned_versions(
+        self,
+        test_db,
+    ):
+        async with test_db() as session:
+            repo = AgentRecipeRepository(session)
+            created = await repo.create(
+                {
+                    "namespace": "shop_dashboard",
+                    "key": "overview",
+                    **_recipe_payload(),
+                }
+            )
+
+            current = await repo.get_active_for_update("shop_dashboard", "overview")
+            next_recipe = await repo.create_next_version(
+                current_recipe=current,
+                data={
+                    "entrypoint": {"url": "https://example.com/next"},
+                    "steps": [{"action": "goto", "target": "trend"}],
+                    "observations": {"gmv": {"locator": "#gmv"}},
+                    "assertions": [{"type": "exists", "observation": "gmv"}],
+                    "recovery_policy": {"max_attempts": 2},
+                    "security_policy": {"allowed_domains": ["example.com"]},
+                    "stability": AGENT_RECIPE_STABILITY_STABLE,
+                },
+            )
+            await session.commit()
+
+            previous = await repo.get_by_id(created.id if created.id is not None else 0)
+
+            assert next_recipe.version == 2
+            assert next_recipe.stability == AGENT_RECIPE_STABILITY_STABLE
+            assert previous is not None
+            assert previous.status == AGENT_RECIPE_STATUS_ACTIVE
 
     async def test_mark_degraded_updates_only_current_active_version(self, test_db):
         async with test_db() as session:

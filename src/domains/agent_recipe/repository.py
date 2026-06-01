@@ -4,7 +4,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.domains.agent_recipe.models import (
     AGENT_RECIPE_STATUS_ACTIVE,
     AGENT_RECIPE_STATUS_DEGRADED,
-    AGENT_RECIPE_STATUS_DISABLED,
     AGENT_RECIPE_STABILITY_CANDIDATE,
     AGENT_RECIPE_STABILITY_STABLE,
     AgentRecipe,
@@ -59,6 +58,24 @@ class AgentRecipeRepository(BaseRepository):
         )
         return (await self.session.execute(stmt)).scalars().first()
 
+    async def get_active_version(
+        self,
+        namespace: str,
+        key: str,
+        version: int,
+    ) -> AgentRecipe | None:
+        stmt = (
+            select(AgentRecipe)
+            .where(
+                AgentRecipe.namespace == namespace,
+                AgentRecipe.key == key,
+                AgentRecipe.version == version,
+                AgentRecipe.status == AGENT_RECIPE_STATUS_ACTIVE,
+            )
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).scalars().first()
+
     async def get_stable_active(self, namespace: str, key: str) -> AgentRecipe | None:
         stmt = (
             select(AgentRecipe)
@@ -69,6 +86,25 @@ class AgentRecipeRepository(BaseRepository):
                 AgentRecipe.stability == AGENT_RECIPE_STABILITY_STABLE,
             )
             .order_by(desc(AgentRecipe.version), desc(AgentRecipe.id))
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).scalars().first()
+
+    async def get_stable_active_version(
+        self,
+        namespace: str,
+        key: str,
+        version: int,
+    ) -> AgentRecipe | None:
+        stmt = (
+            select(AgentRecipe)
+            .where(
+                AgentRecipe.namespace == namespace,
+                AgentRecipe.key == key,
+                AgentRecipe.version == version,
+                AgentRecipe.status == AGENT_RECIPE_STATUS_ACTIVE,
+                AgentRecipe.stability == AGENT_RECIPE_STABILITY_STABLE,
+            )
             .limit(1)
         )
         return (await self.session.execute(stmt)).scalars().first()
@@ -101,8 +137,8 @@ class AgentRecipeRepository(BaseRepository):
             namespace=current_recipe.namespace,
             key=current_recipe.key,
             version=(current_recipe.version or 0) + 1,
-            status=AGENT_RECIPE_STATUS_ACTIVE,
-            stability=AGENT_RECIPE_STABILITY_CANDIDATE,
+            status=data.get("status") or AGENT_RECIPE_STATUS_ACTIVE,
+            stability=data.get("stability") or AGENT_RECIPE_STABILITY_CANDIDATE,
             entrypoint=data["entrypoint"],
             steps=data["steps"],
             observations=data["observations"],
@@ -111,12 +147,7 @@ class AgentRecipeRepository(BaseRepository):
             security_policy=data["security_policy"],
         )
 
-        async def _create():
-            current_recipe.status = AGENT_RECIPE_STATUS_DISABLED
-            self.session.add(next_recipe)
-            return next_recipe
-
-        await self._tx(_create)
+        await self._add(next_recipe)
         await self.session.refresh(next_recipe)
         return next_recipe
 

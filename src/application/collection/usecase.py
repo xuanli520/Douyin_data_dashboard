@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from typing import Mapping
 
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 
 from src import session
@@ -28,6 +29,10 @@ from src.application.collection.result_persister import CollectionResultPersiste
 from src.application.collection.runtime_loader import CollectionRuntimeLoader
 from src.application.collection.runtime_loader import LoadedCollectionRuntime
 from src.config import get_settings
+from src.core.agent import Recipe
+from src.core.agent.exceptions import RecipeValidationError
+from src.domains.agent_recipe.validation import is_shop_score_recipe
+from src.domains.agent_recipe.validation import validate_stable_recipe
 from src.domains.task.exceptions import ScrapingFailedException
 from src.domains.task.exceptions import ShopDashboardNoTargetShopsException
 from src.domains.task.exceptions import ShopDashboardCookieExpiredException
@@ -87,6 +92,13 @@ def _resolve_state_store_base_dir() -> Path:
     if state_dir.is_absolute():
         return state_dir
     return _REPO_ROOT / state_dir
+
+
+def _runtime_recipe_payload_from_model(value: Any) -> dict[str, Any]:
+    payload = _recipe_payload_from_model(value)
+    payload.pop("id", None)
+    payload.pop("stability", None)
+    return payload
 
 
 class CollectionUseCase:
@@ -1319,9 +1331,31 @@ class CollectionUseCase:
 
         async with session_factory() as db_session:
             repository = AgentRecipeRepository(db_session)
-            stable_recipe = await repository.get_stable_active(namespace, key)
+            version = self._recipe_ref_version(recipe_ref)
+            stable_recipe = (
+                await repository.get_stable_active_version(namespace, key, version)
+                if version is not None
+                else await repository.get_stable_active(namespace, key)
+            )
+            if version is None and stable_recipe is not None:
+                try:
+                    validate_stable_recipe(
+                        Recipe.model_validate(
+                            _runtime_recipe_payload_from_model(stable_recipe)
+                        )
+                    )
+                except (ValidationError, RecipeValidationError, ValueError):
+                    stable_recipe = await self._find_valid_stable_recipe(
+                        repository,
+                        namespace,
+                        key,
+                    )
             if stable_recipe is None:
-                active_recipe = await repository.get_active(namespace, key)
+                active_recipe = (
+                    await repository.get_active_version(namespace, key, version)
+                    if version is not None
+                    else await repository.get_active(namespace, key)
+                )
                 versions = []
                 if active_recipe is None:
                     versions = await repository.list_versions(namespace, key)
@@ -1335,6 +1369,19 @@ class CollectionUseCase:
                     shop_count=shop_count,
                     recipe_ref=recipe_ref,
                 )
+            if is_shop_score_recipe(stable_recipe.namespace, stable_recipe.key):
+                try:
+                    validate_stable_recipe(
+                        Recipe.model_validate(
+                            _runtime_recipe_payload_from_model(stable_recipe)
+                        )
+                    )
+                except (ValidationError, RecipeValidationError, ValueError) as exc:
+                    raise self._agent_batch_rejected(
+                        reason=str(exc),
+                        shop_count=shop_count,
+                        recipe_ref=recipe_ref,
+                    ) from exc
 
         extra_config["agent_recovery_enabled"] = False
         extra_config["agent_batch_mode"] = True
@@ -1345,6 +1392,25 @@ class CollectionUseCase:
             recipe_version=stable_recipe.version,
             recipe_stability=stable_recipe.stability,
         )
+
+    async def _find_valid_stable_recipe(
+        self,
+        repository: AgentRecipeRepository,
+        namespace: str,
+        key: str,
+    ):
+        recipes = await repository.list_versions(namespace, key)
+        for recipe in recipes:
+            if recipe.status != "active" or recipe.stability != "stable":
+                continue
+            try:
+                validate_stable_recipe(
+                    Recipe.model_validate(_runtime_recipe_payload_from_model(recipe))
+                )
+            except (ValidationError, RecipeValidationError, ValueError):
+                continue
+            return recipe
+        return None
 
     def _agent_lifecycle_single_shop_reason(
         self,
@@ -1362,6 +1428,16 @@ class CollectionUseCase:
         namespace = str(recipe_ref.get("namespace") or "").strip()
         key = str(recipe_ref.get("key") or "").strip()
         return namespace, key
+
+    def _recipe_ref_version(self, recipe_ref: dict[str, Any]) -> int | None:
+        value = recipe_ref.get("version")
+        if value is None:
+            return None
+        try:
+            version = int(value)
+        except (TypeError, ValueError):
+            return None
+        return version if version > 0 else None
 
     def _agent_batch_rejected(
         self,

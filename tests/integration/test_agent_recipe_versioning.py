@@ -11,11 +11,19 @@ from src.domains.agent_recipe.services import AgentRecipeService
 def _recipe_payload() -> dict:
     return {
         "entrypoint": {"url": "https://example.com"},
-        "steps": [{"action": "goto", "target": "dashboard"}],
-        "observations": {"shop_name": {"locator": "#shop-name"}},
-        "assertions": [{"type": "exists", "observation": "shop_name"}],
+        "steps": [{"id": "open", "action": "goto"}],
+        "observations": {
+            "shop_name": {
+                "id": "shop_name",
+                "kind": "text",
+                "locator": {"kind": "css", "value": "#shop-name"},
+            }
+        },
+        "assertions": [
+            {"id": "shop_name_exists", "kind": "exists", "source": "shop_name"}
+        ],
         "recovery_policy": {"max_attempts": 1},
-        "security_policy": {"allowed_domains": ["example.com"]},
+        "security_policy": {"allowed_origins": ["https://example.com"]},
     }
 
 
@@ -36,11 +44,19 @@ async def test_agent_recipe_versioning_flow(test_db):
                 key="overview",
                 expected_version=created.version,
                 entrypoint={"url": "https://example.com/v2"},
-                steps=[{"action": "goto", "target": "trend"}],
-                observations={"trend": {"locator": "#trend"}},
-                assertions=[{"type": "exists", "observation": "trend"}],
+                steps=[{"id": "open", "action": "goto"}],
+                observations={
+                    "trend": {
+                        "id": "trend",
+                        "kind": "text",
+                        "locator": {"kind": "css", "value": "#trend"},
+                    }
+                },
+                assertions=[
+                    {"id": "trend_exists", "kind": "exists", "source": "trend"}
+                ],
                 recovery_policy={"max_attempts": 2},
-                security_policy={"allowed_domains": ["example.com"]},
+                security_policy={"allowed_origins": ["https://example.com"]},
             )
         )
 

@@ -275,3 +275,18 @@ class TestDataSourceServiceIntegration:
             fetched = await ds_repo.get_by_id(created.id)
             assert fetched.status == DataSourceStatus.ERROR
             assert fetched.last_error_msg is not None
+
+            await service.update_shop_dashboard_login_state(
+                created.id,
+                account_id="acct-1",
+                storage_state={
+                    "cookies": [{"name": "sid", "value": "token"}],
+                    "origins": [],
+                },
+                user_id=test_user.id,
+            )
+
+            fetched = await ds_repo.get_by_id(created.id)
+            assert fetched.status == DataSourceStatus.ACTIVE
+            assert fetched.last_error_at is None
+            assert fetched.last_error_msg is None

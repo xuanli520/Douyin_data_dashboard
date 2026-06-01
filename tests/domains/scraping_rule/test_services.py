@@ -4,6 +4,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from src.domains.agent_recipe.models import (
+    AGENT_RECIPE_STABILITY_CANDIDATE,
+    AGENT_RECIPE_STABILITY_STABLE,
+    AGENT_RECIPE_STATUS_ACTIVE,
+    AGENT_RECIPE_STATUS_DISABLED,
+)
+from src.domains.agent_recipe.repository import AgentRecipeRepository
 from src.domains.collection_job.enums import CollectionJobStatus
 from src.domains.collection_job.models import CollectionJob
 from src.domains.data_source.enums import (
@@ -76,6 +83,190 @@ async def test_scraping_rule_service_create_rule_inactive_data_source():
         )
 
     assert exc.value.code == ErrorCode.DATA_VALIDATION_FAILED
+
+
+@pytest.mark.asyncio
+async def test_scraping_rule_service_create_rule_requires_stable_recipe_for_all_shop(
+    test_db,
+):
+    async with test_db() as session:
+        data_source = await _seed_data_source(session)
+        service = ScrapingRuleService(
+            session=session,
+            data_source_lookup=DataSourceRepository(session).get_by_id,
+        )
+
+        with pytest.raises(BusinessException) as exc:
+            await service.create_rule(
+                data_source_id=data_source.id if data_source.id is not None else 0,
+                name="all-shop",
+                target_type=TargetType.SHOP_OVERVIEW,
+                config={"all": True},
+            )
+
+        assert exc.value.code == ErrorCode.DATA_VALIDATION_FAILED
+        assert exc.value.msg == (
+            "Stable Agent Recipe is required for all-shop collection"
+        )
+
+
+@pytest.mark.asyncio
+async def test_scraping_rule_service_create_rule_rejects_disabled_recipe(test_db):
+    async with test_db() as session:
+        data_source = await _seed_data_source(session)
+        await AgentRecipeRepository(session).create(
+            _shop_score_recipe_data(status=AGENT_RECIPE_STATUS_DISABLED)
+        )
+        service = ScrapingRuleService(
+            session=session,
+            data_source_lookup=DataSourceRepository(session).get_by_id,
+        )
+
+        with pytest.raises(BusinessException) as exc:
+            await service.create_rule(
+                data_source_id=data_source.id if data_source.id is not None else 0,
+                name="all-shop",
+                target_type=TargetType.SHOP_OVERVIEW,
+                config={"all": True, "agent_recipe": _shop_score_recipe_ref()},
+            )
+
+        assert exc.value.code == ErrorCode.DATA_VALIDATION_FAILED
+        assert exc.value.msg == "Agent Recipe is not active or does not exist"
+
+
+@pytest.mark.asyncio
+async def test_scraping_rule_service_create_rule_rejects_candidate_recipe_for_all_shop(
+    test_db,
+):
+    async with test_db() as session:
+        data_source = await _seed_data_source(session)
+        await AgentRecipeRepository(session).create(_shop_score_recipe_data())
+        service = ScrapingRuleService(
+            session=session,
+            data_source_lookup=DataSourceRepository(session).get_by_id,
+        )
+
+        with pytest.raises(BusinessException) as exc:
+            await service.create_rule(
+                data_source_id=data_source.id if data_source.id is not None else 0,
+                name="all-shop",
+                target_type=TargetType.SHOP_OVERVIEW,
+                config={"all": True, "agent_recipe": _shop_score_recipe_ref()},
+            )
+
+        assert exc.value.code == ErrorCode.DATA_VALIDATION_FAILED
+        assert exc.value.msg == (
+            "All-shop collection requires stable Agent Recipe"
+        )
+
+
+@pytest.mark.asyncio
+async def test_scraping_rule_service_create_rule_rejects_invalid_stable_recipe(test_db):
+    async with test_db() as session:
+        data_source = await _seed_data_source(session)
+        await AgentRecipeRepository(session).create(
+            _shop_score_recipe_data(
+                stability=AGENT_RECIPE_STABILITY_STABLE,
+                observations={},
+                assertions=[],
+            )
+        )
+        service = ScrapingRuleService(
+            session=session,
+            data_source_lookup=DataSourceRepository(session).get_by_id,
+        )
+
+        with pytest.raises(BusinessException) as exc:
+            await service.create_rule(
+                data_source_id=data_source.id if data_source.id is not None else 0,
+                name="all-shop",
+                target_type=TargetType.SHOP_OVERVIEW,
+                config={"all": True, "agent_recipe": _shop_score_recipe_ref()},
+            )
+
+        assert exc.value.code == ErrorCode.DATA_VALIDATION_FAILED
+        assert exc.value.msg == "agent recipe observations are required before stable"
+
+
+@pytest.mark.asyncio
+async def test_scraping_rule_service_create_rule_allows_valid_stable_recipe_for_all_shop(
+    test_db,
+):
+    async with test_db() as session:
+        data_source = await _seed_data_source(session)
+        await AgentRecipeRepository(session).create(
+            _shop_score_recipe_data(stability=AGENT_RECIPE_STABILITY_STABLE)
+        )
+        service = ScrapingRuleService(
+            session=session,
+            data_source_lookup=DataSourceRepository(session).get_by_id,
+        )
+
+        created = await service.create_rule(
+            data_source_id=data_source.id if data_source.id is not None else 0,
+            name="all-shop",
+            target_type=TargetType.SHOP_OVERVIEW,
+            config={"all": True, "agent_recipe": _shop_score_recipe_ref()},
+        )
+
+        assert created.config["agent_recipe"] == _shop_score_recipe_ref()
+
+
+@pytest.mark.asyncio
+async def test_scraping_rule_service_create_rule_treats_filter_shop_ids_as_multi_shop(
+    test_db,
+):
+    async with test_db() as session:
+        data_source = await _seed_data_source(session)
+        await AgentRecipeRepository(session).create(_shop_score_recipe_data())
+        service = ScrapingRuleService(
+            session=session,
+            data_source_lookup=DataSourceRepository(session).get_by_id,
+        )
+
+        with pytest.raises(BusinessException) as exc:
+            await service.create_rule(
+                data_source_id=data_source.id if data_source.id is not None else 0,
+                name="filter-multi-shop",
+                target_type=TargetType.SHOP_OVERVIEW,
+                config={
+                    "filters": {"shop_id": ["shop-a", "shop-b"]},
+                    "agent_recipe": _shop_score_recipe_ref(),
+                },
+            )
+
+        assert exc.value.code == ErrorCode.DATA_VALIDATION_FAILED
+        assert exc.value.msg == "All-shop collection requires stable Agent Recipe"
+
+
+@pytest.mark.asyncio
+async def test_scraping_rule_service_update_rule_validates_effective_multi_shop_config(
+    test_db,
+):
+    async with test_db() as session:
+        data_source = await _seed_data_source(session)
+        await AgentRecipeRepository(session).create(_shop_score_recipe_data())
+        rule = ScrapingRule(
+            name="multi-shop",
+            data_source_id=data_source.id if data_source.id is not None else 0,
+            target_type=TargetType.SHOP_OVERVIEW,
+            extra_config={"shop_ids": ["shop-a", "shop-b"]},
+        )
+        session.add(rule)
+        await session.flush()
+        service = ScrapingRuleService(
+            session=session,
+            data_source_lookup=DataSourceRepository(session).get_by_id,
+        )
+
+        with pytest.raises(BusinessException) as exc:
+            await service.update_rule(
+                rule.id if rule.id is not None else 0,
+                ScrapingRuleUpdate(config={"agent_recipe": _shop_score_recipe_ref()}),
+            )
+
+        assert exc.value.code == ErrorCode.DATA_VALIDATION_FAILED
+        assert exc.value.msg == "All-shop collection requires stable Agent Recipe"
 
 
 @pytest.mark.asyncio
@@ -337,3 +528,71 @@ async def test_delete_rule_not_found_should_raise_business_exception():
         await service.delete_rule(1)
 
     assert exc_info.value.code == ErrorCode.SCRAPING_RULE_NOT_FOUND
+
+
+async def _seed_data_source(session):
+    data_source = DataSource(
+        name="ds-agent-recipe",
+        source_type=DataSourceType.DOUYIN_SHOP,
+        status=DataSourceStatus.ACTIVE,
+    )
+    session.add(data_source)
+    await session.flush()
+    return data_source
+
+
+def _shop_score_recipe_ref(version: int = 1) -> dict[str, object]:
+    return {
+        "namespace": "douyin_shop_dashboard",
+        "key": "experience_score_single_page",
+        "version": version,
+    }
+
+
+def _shop_score_recipe_data(
+    *,
+    status: str = AGENT_RECIPE_STATUS_ACTIVE,
+    stability: str = AGENT_RECIPE_STABILITY_CANDIDATE,
+    observations: dict | None = None,
+    assertions: list | None = None,
+) -> dict:
+    fields = (
+        "total_score",
+        "product_score",
+        "logistics_score",
+        "service_score",
+        "bad_behavior_score",
+    )
+    return {
+        **_shop_score_recipe_ref(),
+        "status": status,
+        "stability": stability,
+        "entrypoint": {"url": "https://fxg.jinritemai.com/tps/score/home"},
+        "steps": [
+            {
+                "id": "open_entrypoint",
+                "action": "goto",
+                "value": "https://fxg.jinritemai.com/tps/score/home",
+            }
+        ],
+        "observations": observations
+        if observations is not None
+        else {
+            field: {
+                "id": field,
+                "kind": "text",
+                "locator": {"kind": "css", "value": f"#{field}"},
+                "parser": "number",
+                "required": True,
+            }
+            for field in fields
+        },
+        "assertions": assertions
+        if assertions is not None
+        else [
+            {"id": f"{field}_required", "kind": "not_empty", "source": field}
+            for field in fields
+        ],
+        "recovery_policy": {"enabled": True, "minimum_confidence": 0.7, "max_attempts": 1},
+        "security_policy": {"allowed_origins": ["https://fxg.jinritemai.com"]},
+    }

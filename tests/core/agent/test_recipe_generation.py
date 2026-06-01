@@ -55,6 +55,23 @@ def test_recipe_generator_accepts_valid_recipe():
     assert recipe["key"] == "generated_recipe"
 
 
+def test_recipe_generator_uses_request_hints_as_authoritative():
+    generator = RecipeGenerator(_FakeLLM(_build_recipe(namespace="wrong", key="wrong")))
+
+    recipe = generator.generate(
+        RecipeSummaryRequest(
+            goal="collect values",
+            entrypoint_url="https://example.com/app",
+            trajectory={"entries": []},
+            namespace_hint="douyin_shop_dashboard",
+            key_hint="experience_score_single_page",
+        )
+    )
+
+    assert recipe["namespace"] == "douyin_shop_dashboard"
+    assert recipe["key"] == "experience_score_single_page"
+
+
 def test_recipe_generator_rejects_unknown_action():
     generator = RecipeGenerator(_FakeLLM(_build_recipe(steps=[{"action": "evaluate"}])))
 
