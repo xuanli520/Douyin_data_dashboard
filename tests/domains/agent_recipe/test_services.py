@@ -77,7 +77,9 @@ class TestAgentRecipeServiceIntegration:
                             "locator": {"kind": "css", "value": "#gmv"},
                         }
                     },
-                    assertions=[{"id": "gmv_exists", "kind": "exists", "source": "gmv"}],
+                    assertions=[
+                        {"id": "gmv_exists", "kind": "exists", "source": "gmv"}
+                    ],
                     recovery_policy={"max_attempts": 2},
                     security_policy={"allowed_origins": ["https://example.com"]},
                 )

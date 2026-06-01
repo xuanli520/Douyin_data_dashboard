@@ -34,9 +34,7 @@ class UserManager(IntegerIDMixin, BaseUserManager[User, int]):
     def verification_token_secret(self):
         return self.settings.auth.jwt_secret
 
-    async def authenticate(
-        self, credentials: OAuth2PasswordRequestForm
-    ) -> User | None:
+    async def authenticate(self, credentials: OAuth2PasswordRequestForm) -> User | None:
         try:
             user = await self.get_by_email(credentials.username)
         except exceptions.UserNotExists:
@@ -57,7 +55,9 @@ class UserManager(IntegerIDMixin, BaseUserManager[User, int]):
         return user
 
     async def _get_by_username(self, username: str) -> User | None:
-        statement = select(User).where(func.lower(User.username) == func.lower(username))
+        statement = select(User).where(
+            func.lower(User.username) == func.lower(username)
+        )
         results = await self.user_db.session.execute(statement)
         return results.unique().scalar_one_or_none()
 

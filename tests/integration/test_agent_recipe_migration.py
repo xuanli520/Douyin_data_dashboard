@@ -113,7 +113,9 @@ def test_agent_recipe_migration_upgrade_and_downgrade(monkeypatch):
             assert "status" in columns
             assert "stability" in columns
             assert "ux_agent_recipes_namespace_key_version" in unique_constraints
-            assert "ix_agent_recipes_namespace_key_status_stability_version" in index_names
+            assert (
+                "ix_agent_recipes_namespace_key_status_stability_version" in index_names
+            )
 
             command.downgrade(config, "20260325_01")
         finally:

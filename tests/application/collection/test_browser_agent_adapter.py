@@ -395,11 +395,13 @@ def test_browser_agent_adapter_rejects_invalid_shop_score_recipe_from_db(
 
     with pytest.raises(ShopDashboardScraperError) as exc_info:
         adapter.collect(
-            runtime=_runtime(agent_recipe_ref={
-                "namespace": "douyin_shop_dashboard",
-                "key": "experience_score_single_page",
-                "version": 1,
-            }),
+            runtime=_runtime(
+                agent_recipe_ref={
+                    "namespace": "douyin_shop_dashboard",
+                    "key": "experience_score_single_page",
+                    "version": 1,
+                }
+            ),
             metric_date="2026-03-01",
             state_store=SessionStateStore(tmp_path),
         )

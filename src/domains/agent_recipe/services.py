@@ -242,7 +242,9 @@ def _recipe_create_data(data: AgentRecipeCreate) -> dict[str, Any]:
     return payload
 
 
-def _recipe_version_data(data: AgentRecipeVersionCreate, *, version: int) -> dict[str, Any]:
+def _recipe_version_data(
+    data: AgentRecipeVersionCreate, *, version: int
+) -> dict[str, Any]:
     raw = data.model_dump(exclude={"expected_version"})
     raw["version"] = version
     recipe = _validated_recipe(raw)

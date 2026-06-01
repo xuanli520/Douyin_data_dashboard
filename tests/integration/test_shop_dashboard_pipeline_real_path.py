@@ -149,8 +149,14 @@ def _recipe_payload() -> dict[str, Any]:
     return {
         "entrypoint": {"url": "https://example.test/dashboard"},
         "steps": [{"id": "open", "action": "goto"}],
-        "observations": {"total": {"locator": ".total"}},
-        "assertions": [{"type": "exists", "observation": "total"}],
+        "observations": {
+            "total": {
+                "id": "total",
+                "kind": "text",
+                "locator": {"kind": "css", "value": ".total"},
+            }
+        },
+        "assertions": [{"id": "total_exists", "kind": "exists", "source": "total"}],
         "recovery_policy": {"enabled": True, "max_attempts": 1},
         "security_policy": {"allowed_origins": ["https://example.test"]},
     }

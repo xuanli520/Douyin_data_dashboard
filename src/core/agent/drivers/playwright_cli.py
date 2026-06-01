@@ -171,7 +171,9 @@ class PlaywrightCLIDriver:
         return DriverResult(data={"amount": amount})
 
     def scroll_to_element(self, locator: LocatorSpec) -> DriverResult:
-        self._run_code(f"await {_locator_expression(locator)}.scrollIntoViewIfNeeded();")
+        self._run_code(
+            f"await {_locator_expression(locator)}.scrollIntoViewIfNeeded();"
+        )
         self._capture_page_metadata(self._run(["snapshot"]).stdout)
         return DriverResult(data={"locator": locator.value})
 

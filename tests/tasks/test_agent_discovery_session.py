@@ -3,7 +3,9 @@ import json
 from types import SimpleNamespace
 
 from src.domains.data_source.models import DataSource
-from src.domains.agent_recipe.discovery_state import resolve_discovery_storage_state_path
+from src.domains.agent_recipe.discovery_state import (
+    resolve_discovery_storage_state_path,
+)
 from src.domains.agent_recipe.repository import AgentRecipeRepository
 from src.scrapers.shop_dashboard.session_state_store import SessionStateStore
 from src.tasks.collection import douyin_shop_discovery as module
@@ -150,8 +152,13 @@ def test_discovery_storage_state_prefers_shop_state(tmp_path):
     shop_path = store.save_playwright_state("acct-1", {"cookies": []}, "shop-1")
     settings = SimpleNamespace(runtime_state_dir=str(tmp_path))
 
-    assert resolve_discovery_storage_state_path(settings, "acct-1", "shop-1") == shop_path
-    assert resolve_discovery_storage_state_path(settings, "acct-1", "shop-2") == account_path
+    assert (
+        resolve_discovery_storage_state_path(settings, "acct-1", "shop-1") == shop_path
+    )
+    assert (
+        resolve_discovery_storage_state_path(settings, "acct-1", "shop-2")
+        == account_path
+    )
 
 
 def test_discovery_storage_state_materializes_data_source_state(
@@ -221,7 +228,10 @@ def test_parse_shop_score_recipe_requires_number_parser():
     try:
         module._parse_recipe_payload(recipe)
     except ValueError as exc:
-        assert str(exc) == "agent recipe score observations must use number parser: total_score"
+        assert (
+            str(exc)
+            == "agent recipe score observations must use number parser: total_score"
+        )
     else:
         raise AssertionError("expected recipe validation error")
 

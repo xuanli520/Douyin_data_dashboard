@@ -155,9 +155,7 @@ async def test_scraping_rule_service_create_rule_rejects_candidate_recipe_for_al
             )
 
         assert exc.value.code == ErrorCode.DATA_VALIDATION_FAILED
-        assert exc.value.msg == (
-            "All-shop collection requires stable Agent Recipe"
-        )
+        assert exc.value.msg == ("All-shop collection requires stable Agent Recipe")
 
 
 @pytest.mark.asyncio
@@ -593,6 +591,10 @@ def _shop_score_recipe_data(
             {"id": f"{field}_required", "kind": "not_empty", "source": field}
             for field in fields
         ],
-        "recovery_policy": {"enabled": True, "minimum_confidence": 0.7, "max_attempts": 1},
+        "recovery_policy": {
+            "enabled": True,
+            "minimum_confidence": 0.7,
+            "max_attempts": 1,
+        },
         "security_policy": {"allowed_origins": ["https://fxg.jinritemai.com"]},
     }

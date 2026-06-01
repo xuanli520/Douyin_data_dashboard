@@ -462,11 +462,11 @@ def _needs_stable_agent_recipe(config: dict[str, Any]) -> bool:
     return selection.all or len(selection.shop_ids) != 1
 
 
-def _agent_recipe_shop_selection_payload(config: dict[str, Any]) -> dict[str, Any] | None:
+def _agent_recipe_shop_selection_payload(
+    config: dict[str, Any],
+) -> dict[str, Any] | None:
     payload = {
-        key: config[key]
-        for key in ("all", "shop_id", "shop_ids")
-        if key in config
+        key: config[key] for key in ("all", "shop_id", "shop_ids") if key in config
     }
     filters = config.get("filters")
     if (

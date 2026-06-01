@@ -90,7 +90,11 @@ def test_recipe_generator_drops_done_control_step():
         _FakeLLM(
             _build_recipe(
                 steps=[
-                    {"id": "open", "action": "goto", "value": "https://example.com/app"},
+                    {
+                        "id": "open",
+                        "action": "goto",
+                        "value": "https://example.com/app",
+                    },
                     {"id": "finish", "action": "done"},
                 ]
             )

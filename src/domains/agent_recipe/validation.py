@@ -52,8 +52,7 @@ def validate_shop_score_recipe(recipe: Recipe) -> None:
     ]
     if optional:
         raise ValueError(
-            "agent recipe score observations must be required: "
-            + ", ".join(optional)
+            "agent recipe score observations must be required: " + ", ".join(optional)
         )
 
     not_empty_sources = {

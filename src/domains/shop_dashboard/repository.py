@@ -183,9 +183,9 @@ class ShopDashboardRepository(BaseRepository):
                 ShopDashboardScore.metric_date >= start_date,
                 ShopDashboardScore.metric_date <= end_date,
             )
-        latest_metric_date_subquery = (
-            latest_metric_date_stmt.group_by(ShopDashboardScore.shop_id).subquery()
-        )
+        latest_metric_date_subquery = latest_metric_date_stmt.group_by(
+            ShopDashboardScore.shop_id
+        ).subquery()
         stmt = (
             select(ShopDashboardScore)
             .join(

@@ -21,7 +21,9 @@ from src.core.agent.models import SecurityPolicy
 from src.core.agent.replay import ReplayRunner
 from src.core.agent.security import validate_locator, validate_navigation_target
 from src.core.agent.tools import ToolCall
-from src.domains.agent_recipe.discovery_state import resolve_discovery_storage_state_path
+from src.domains.agent_recipe.discovery_state import (
+    resolve_discovery_storage_state_path,
+)
 from src.domains.agent_recipe.repository import AgentRecipeRepository
 from src.domains.agent_recipe.validation import SHOP_SCORE_FIELDS
 from src.domains.agent_recipe.validation import SHOP_SCORE_RECIPE_REF
@@ -403,8 +405,13 @@ class _DiscoveryReplayCrawler:
             str(replay_context.get("account_id") or ""),
             self._shop_id,
         )
-        if is_shop_score_recipe(parsed.namespace, parsed.key) and storage_state_path is None:
-            raise RuntimeError("shop dashboard login state is required before discovery")
+        if (
+            is_shop_score_recipe(parsed.namespace, parsed.key)
+            and storage_state_path is None
+        ):
+            raise RuntimeError(
+                "shop dashboard login state is required before discovery"
+            )
         run_context = RunContext(
             session_id=str(
                 replay_context.get("session_id") or f"{self._run_id}-replay"

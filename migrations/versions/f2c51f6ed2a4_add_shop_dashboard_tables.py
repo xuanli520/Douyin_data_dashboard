@@ -116,32 +116,44 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index(
-        op.f("ix_shop_dashboard_violations_shop_id"),
-        table_name="shop_dashboard_violations",
-    )
-    op.drop_index(
-        op.f("ix_shop_dashboard_violations_metric_date"),
-        table_name="shop_dashboard_violations",
-    )
-    op.drop_table("shop_dashboard_violations")
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
 
-    op.drop_index(
-        op.f("ix_shop_dashboard_reviews_shop_id"),
-        table_name="shop_dashboard_reviews",
-    )
-    op.drop_index(
-        op.f("ix_shop_dashboard_reviews_metric_date"),
-        table_name="shop_dashboard_reviews",
-    )
-    op.drop_table("shop_dashboard_reviews")
+    if inspector.has_table("shop_dashboard_violations"):
+        op.drop_index(
+            op.f("ix_shop_dashboard_violations_shop_id"),
+            table_name="shop_dashboard_violations",
+            if_exists=True,
+        )
+        op.drop_index(
+            op.f("ix_shop_dashboard_violations_metric_date"),
+            table_name="shop_dashboard_violations",
+            if_exists=True,
+        )
+        op.drop_table("shop_dashboard_violations")
 
-    op.drop_index(
-        op.f("ix_shop_dashboard_scores_shop_id"),
-        table_name="shop_dashboard_scores",
-    )
-    op.drop_index(
-        op.f("ix_shop_dashboard_scores_metric_date"),
-        table_name="shop_dashboard_scores",
-    )
-    op.drop_table("shop_dashboard_scores")
+    if inspector.has_table("shop_dashboard_reviews"):
+        op.drop_index(
+            op.f("ix_shop_dashboard_reviews_shop_id"),
+            table_name="shop_dashboard_reviews",
+            if_exists=True,
+        )
+        op.drop_index(
+            op.f("ix_shop_dashboard_reviews_metric_date"),
+            table_name="shop_dashboard_reviews",
+            if_exists=True,
+        )
+        op.drop_table("shop_dashboard_reviews")
+
+    if inspector.has_table("shop_dashboard_scores"):
+        op.drop_index(
+            op.f("ix_shop_dashboard_scores_shop_id"),
+            table_name="shop_dashboard_scores",
+            if_exists=True,
+        )
+        op.drop_index(
+            op.f("ix_shop_dashboard_scores_metric_date"),
+            table_name="shop_dashboard_scores",
+            if_exists=True,
+        )
+        op.drop_table("shop_dashboard_scores")

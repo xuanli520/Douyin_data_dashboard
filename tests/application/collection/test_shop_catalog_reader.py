@@ -2,8 +2,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.application.collection.account_shop_catalog_service import AccountShopCatalogResult
-from src.application.collection.shop_catalog_reader import ShopDashboardShopCatalogReader
+from src.application.collection.account_shop_catalog_service import (
+    AccountShopCatalogResult,
+)
+from src.application.collection.shop_catalog_reader import (
+    ShopDashboardShopCatalogReader,
+)
 from src.domains.data_source.enums import DataSourceType
 from src.exceptions import BusinessException
 from src.shared.errors import ErrorCode

@@ -242,7 +242,9 @@ async def test_persist_agent_result_only_skips_dashboard_score(test_db):
         assert result.output["score_table"]["rows"] == [["product", "100"]]
 
 
-async def test_persist_should_store_failed_agent_result_from_runtime_recipe(monkeypatch):
+async def test_persist_should_store_failed_agent_result_from_runtime_recipe(
+    monkeypatch,
+):
     import src.application.collection.result_persister as persister_module
 
     upserts = []
